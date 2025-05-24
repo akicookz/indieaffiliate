@@ -1,0 +1,107 @@
+# IndieAffiliate Project Cursor Rules
+
+## Stack & Technology
+
+- **Runtime**: Bun (always use `bun` for package management and script execution)
+- **Framework**: React with TypeScript
+- **Styling**: Tailwind CSS v4 with ShadCN/UI components
+- **Deployment**: Cloudflare Workers/Pages
+- **Build Tool**: Vite
+- **Package Manager**: Bun (never use npm or yarn)
+
+## Development Guidelines
+
+### Function Syntax
+
+- **ALWAYS** use function declarations instead of arrow functions
+- ✅ `function functionName() { }`
+- ❌ `const functionName = () => { }`
+- ✅ `export function ComponentName() { }`
+- ❌ `export const ComponentName = () => { }`
+
+### Package Management
+
+- Before installing any package, check `@package.json` to see if it's absolutely necessary
+- Always use `bun add` instead of `npm install` or `yarn add`
+- Use `bun run` for script execution
+- Use `bun dev` for development server
+
+### Code Quality
+
+- Use TypeScript for all files
+- Import paths should use `@/` alias for src directory
+- Follow React best practices with proper component structure
+- Use proper TypeScript types and interfaces
+
+## UI/UX Design System
+
+### Visual Design
+
+- **Primary Style**: Glassmorphism effect with subtle transparency
+- **Border Radius**: Use `rounded-2xl` for cards and components
+- **Card background**: Slightly darker version of the page background with subtle shadows
+- **Borders**: Subtle borders with low opacity
+- **Accent Color**: Purple (use very sparingly - only for key highlights)
+- **Layout**: Card-based UI with bento grid layouts
+
+### Typography
+
+- **Dashboard & UI Text**: Satoshi font family
+- **Marketing Headers**: Playfair Display font family
+- Ensure proper font loading and fallbacks
+
+### Component Development
+
+1. **First Priority**: Use `shadcn-ui-server` to check if component you want to make is already available, mcp server allows you to use following tools:
+
+   - `list_shadcn_components` - Get a list of all available shadcn/ui components
+   - `get_component_details` - Get detailed information about a specific component
+   - `get_component_examples` - Get usage examples for a specific component
+   - `search_components` - Search for components by keyword
+
+2. **Second Priority**: Look at existing components in /components and /ui folder and use that if it already exists
+3. **Last Resort**: Create new custom components following the design system
+
+### Component Structure
+
+- Use ShadCN/UI as the base component library
+- Extend with custom styling following glassmorphism principles
+- Implement proper responsive design
+- Use Tailwind CSS classes for styling
+
+## File Organization
+
+```
+src/
+├── components/
+│   ├── ui/          # ShadCN base components
+│   └── ...          # Custom components
+├── lib/             # Utilities and helpers
+├── hooks/           # Custom React hooks
+└── ...
+```
+
+## Development Workflow
+
+1. Check existing components before creating new ones
+2. Use TypeScript for type safety
+3. Follow component composition patterns
+4. Implement proper error handling
+5. Test components thoroughly
+6. Use proper semantic HTML
+
+## Performance Considerations
+
+- Optimize for Cloudflare Workers environment
+- Use code splitting appropriately
+- Implement proper caching strategies
+- Minimize bundle size
+
+## Accessibility
+
+- Implement proper ARIA labels
+- Ensure keyboard navigation
+- Maintain proper color contrast
+- Use semantic HTML elements
+
+Remember: This is a modern, glassmorphism-styled affiliate marketing platform built with cutting-edge technologies. Prioritize clean, maintainable code and beautiful, accessible user interfaces.
