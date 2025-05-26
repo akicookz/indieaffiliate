@@ -105,6 +105,42 @@ function Landing() {
         </div>
       </section>
 
+      {/* Screenshot Placeholder Section */}
+      <section className="py-16 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto">
+          <div className="relative">
+            {/* Screenshot Container */}
+            <div className="bg-background max-h-[600px] backdrop-blur-xl rounded-3xl shadow-2xl shadow-primary/5 border border-border/20 overflow-hidden">
+              <div className="aspect-[16/10]">
+                {/* Browser Chrome Mockup */}
+                <div className="mx-auto">
+                  <div className="flex items-center space-x-2 bg-background/80 backdrop-blur-sm rounded-lg px-4 py-2">
+                    <div className="flex space-x-1.5">
+                      <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                      <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                      <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                    </div>
+                    <div className="flex-1 bg-muted/50 rounded px-3 py-1 text-xs text-muted-foreground ml-4">
+                      app.indieaffiliate.com/dashboard
+                    </div>
+                  </div>
+                </div>
+
+                {/* Placeholder Content */}
+                <img
+                  src="/screenshots/dashboard.webp"
+                  alt="Dashboard"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            </div>
+
+            {/* Decorative Glow Effect */}
+            <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-secondary/5 rounded-3xl -z-10 blur-3xl transform scale-110"></div>
+          </div>
+        </div>
+      </section>
+
       {/* Features Bento Grid */}
       <section className="py-20 px-4 sm:px-6 lg:px-8">
         <div className="max-w-4xl mx-auto">
@@ -181,15 +217,19 @@ function Landing() {
             <Card className="bg-card/40 shadow-xs shadow-primary/10 backdrop-blur-xl rounded-3xl transition-all duration-300">
               <CardHeader className="pb-6">
                 <div className="flex items-center mb-4">
-                  <div className="w-12 h-12 bg-gradient-to-r from-blue-500/20 to-blue-600/20 rounded-lg border border-blue-200/30 flex items-center justify-center">
+                  <div className="w-12 h-12 bg-zinc-200 rounded-lg flex items-center justify-center">
                     <img
                       src="/logos/paypal.svg"
                       alt="PayPal"
-                      className="w-4 h-4"
+                      className="w-full h-full"
                     />
                   </div>
-                  <div className="w-12 h-12 bg-gradient-to-r from-green-500/20 to-green-600/20 rounded-lg border border-green-200/30 flex items-center justify-center -ml-2">
-                    <img src="/logos/wise.svg" alt="Wise" className="w-4 h-4" />
+                  <div className="w-12 h-12 bg-green-100 shadow-xs rounded-xl flex items-center justify-center -ml-3">
+                    <img
+                      src="/logos/wise.png"
+                      alt="Wise"
+                      className="w-10 h-10"
+                    />
                   </div>
                 </div>
                 <CardTitle className="text-xl">
@@ -203,18 +243,18 @@ function Landing() {
             <Card className="bg-card/40 shadow-xs shadow-primary/10 backdrop-blur-xl rounded-3xl transition-all duration-300">
               <CardHeader className="pb-6">
                 <div className="flex items-center mb-4">
-                  <div className="w-12 h-6 bg-gradient-to-r from-purple-500/20 to-purple-600/20 rounded-lg flex items-center justify-center">
-                    <img
-                      src="/logos/stripe.svg"
-                      alt="Stripe"
-                      className="w-4 h-4"
-                    />
-                  </div>
-                  <div className="w-12 h-6 bg-gradient-to-r from-orange-500/20 to-orange-600/20 rounded-lg border border-orange-200/30 flex items-center justify-center -ml-3">
+                  <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
                     <img
                       src="/logos/paddle.svg"
                       alt="Paddle"
-                      className="w-4 h-4"
+                      className="w-8 h-8"
+                    />
+                  </div>
+                  <div className="w-12 h-12 shadow-xs rounded-xl flex items-center justify-center -ml-3">
+                    <img
+                      src="/logos/stripe.svg"
+                      alt="Stripe"
+                      className="w-full h-full"
                     />
                   </div>
                 </div>
@@ -248,7 +288,7 @@ function Landing() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
             {/* FREE Plan */}
-            <Card className="bg-card/40 rounded-3xl backdrop-blur-xl transition-all duration-300 relative">
+            <Card className="bg-card/40 rounded-3xl backdrop-blur-xl transition-all duration-300 relative flex flex-col">
               <CardHeader className="text-center pb-6">
                 <CardTitle className="text-2xl">Starter</CardTitle>
                 <CardDescription>Perfect for getting started</CardDescription>
@@ -262,30 +302,34 @@ function Landing() {
                   9% fee above $2k MRR
                 </p>
               </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">1 admin seat</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Unlimited affiliates & clicks</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Default % commission only</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">CSV payout export</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">"Powered-by" footer</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Community Slack support</span>
+              <CardContent className="space-y-3 flex-grow flex flex-col">
+                <div className="flex-grow space-y-3">
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">1 admin seat</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">
+                      Unlimited affiliates & clicks
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Default % commission only</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">CSV payout export</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">"Powered-by" footer</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Community Slack support</span>
+                  </div>
                 </div>
                 <Button className="w-full mt-6" variant="outline">
                   Start Free
@@ -294,7 +338,7 @@ function Landing() {
             </Card>
 
             {/* GROWTH Plan */}
-            <Card className="bg-card/40 bg-gradient-to-r from-primary/10 via-yellow-50/30 to-primary/10 rounded-3xl backdrop-blur-xl border-border hover:border-primary transition-all duration-300 relative">
+            <Card className="bg-card/40 bg-gradient-to-r from-primary/10 via-yellow-50/30 to-primary/10 rounded-3xl backdrop-blur-xl border-border hover:border-primary transition-all duration-300 relative flex flex-col">
               <Badge className="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-primary rounded-full text-white">
                 Best value
               </Badge>
@@ -311,52 +355,56 @@ function Landing() {
                   3% overage above $10k MRR
                 </p>
               </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-sm text-muted-foreground mb-3">
-                  Everything in Free, plus:
-                </p>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">3 admin seats</span>
+              <CardContent className="space-y-3 flex-grow flex flex-col">
+                <div className="flex-grow space-y-3">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Everything in Free, plus:
+                  </p>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">3 admin seats</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Multiple commission rules</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Coupon codes</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Basic fraud filters</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Remove "Powered-by"</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">
+                      Zapier / webhook integrations
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Email & live-chat support</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">PayPal mass payouts</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Wise bulk payouts</span>
+                  </div>
                 </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Multiple commission rules</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Coupon codes</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Basic fraud filters</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Remove "Powered-by"</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Zapier / webhook integrations</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Email & live-chat support</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">PayPal mass payouts</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Wise bulk payouts</span>
-                </div>
-                <Button className="w-full mt-6">Start Free Trial</Button>
+                <Button className="w-full mt-6">Start 14-day free trial</Button>
               </CardContent>
             </Card>
 
             {/* SCALE Plan */}
-            <Card className="bg-card/40 rounded-3xl backdrop-blur-xl transition-all duration-300 relative">
+            <Card className="bg-card/40 rounded-3xl backdrop-blur-xl transition-all duration-300 relative flex flex-col">
               <CardHeader className="text-center pb-6">
                 <CardTitle className="text-2xl">Scale</CardTitle>
                 <CardDescription>For established businesses</CardDescription>
@@ -370,44 +418,48 @@ function Landing() {
                   1% overage above $20k MRR
                 </p>
               </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-sm text-muted-foreground mb-3">
-                  Everything in Growth, plus:
-                </p>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">10 admin seats</span>
+              <CardContent className="space-y-3 flex-grow flex flex-col">
+                <div className="flex-grow space-y-3">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Everything in Growth, plus:
+                  </p>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">10 admin seats</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Tiered commission levels</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">
+                      Automated / scheduled payouts
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Custom domain</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">White-label branding</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Priority support (24h SLA)</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Advanced fraud monitoring</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <Check className="w-4 h-4 text-green-600" />
+                    <span className="text-sm">Refund sync</span>
+                  </div>
                 </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Tiered commission levels</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Automated / scheduled payouts</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Custom domain</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">White-label branding</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Priority support (24h SLA)</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Advanced fraud monitoring</span>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <Check className="w-4 h-4 text-green-600" />
-                  <span className="text-sm">Refund sync</span>
-                </div>
-                <Button className="w-full mt-6" variant="outline">
-                  Start Free Trial
+                <Button variant="outline" className="w-full mt-6">
+                  Start 14-day free trial
                 </Button>
               </CardContent>
             </Card>
