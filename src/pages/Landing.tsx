@@ -1,0 +1,550 @@
+import {
+  ArrowRight,
+  BarChart3,
+  Users,
+  Zap,
+  TrendingUp,
+  Check,
+  Shield,
+  Palette,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+
+function Landing() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-card/50 to-blue-50/30">
+      {/* Navigation */}
+      <nav className="mx-auto max-w-4xl rounded-full shadow-sm backdrop-blur-xl bg-card/50 sticky top-4 z-50">
+        <div className="mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center">
+                <BarChart3 className="w-5 h-5 text-white" />
+              </div>
+              <span className="text-xl font-semibold text-primary">
+                IndieAffiliate
+              </span>
+            </div>
+            <div className="flex items-center space-x-4">
+              <Button variant="ghost" className="hidden md:inline-flex">
+                Features
+              </Button>
+              <Button variant="ghost" className="hidden md:inline-flex">
+                Pricing
+              </Button>
+              <Button variant="ghost">Sign In</Button>
+              <Button>Launch your program</Button>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      {/* Hero Section */}
+      <section className="relative pt-20 pb-16 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto text-center">
+          <Badge
+            variant="default"
+            className="rounded-full mb-6 px-4 py-1.5 shadow-sm shadow-primary/90"
+          >
+            <Zap className="w-3 h-3 mr-1" />
+            We have a free plan
+          </Badge>
+
+          <h1 className="text-4xl md:text-6xl lg:text-7xl font-semibold mb-6 bg-gradient-to-r from-foreground via-foreground to-foreground/80 bg-clip-text text-transparent leading-tight">
+            <span className="text-primary font-[family-name:var(--font-heading)] italic">
+              Affiliate Marketing
+            </span>
+            <br />
+            software for Indie Hackers
+          </h1>
+
+          <p className="text-lg text-muted-foreground mb-8 max-w-3xl mx-auto">
+            <span className="text-primary italic">
+              Reach your first $2,000 affiliate MRR before you pay us a dime.
+            </span>
+            <br />
+            Most affiliate softwares are one way exchange. They start charging
+            you before you even make a dollar. We are here to change that.
+          </p>
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
+            <Button size="default">
+              Launch your affiliate program for free
+              <ArrowRight className="ml-2 w-5 h-5" />
+            </Button>
+            <Button
+              variant="ghost"
+              className="border-border/60 bg-card text-primary"
+            >
+              View Demo
+            </Button>
+          </div>
+
+          {/* Social Proof */}
+          <div className="flex items-center justify-center space-x-2 text-sm text-muted-foreground">
+            <div className="flex -space-x-2">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div
+                  key={i}
+                  className="w-8 h-8 rounded-full bg-gradient-to-r from-primary/20 to-secondary/20 border-2 border-background flex items-center justify-center"
+                >
+                  <Users className="w-4 h-4 text-primary" />
+                </div>
+              ))}
+            </div>
+            <span>Trusted by 500+ indie hackers</span>
+          </div>
+        </div>
+      </section>
+
+      {/* Features Bento Grid */}
+      <section className="py-20 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl mb-4 font-heading italic">
+              Free and comes with features built-in.
+            </h2>
+            <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
+              Designed from ground up for indie hackers juggling multiple
+              projects.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* Unified Dashboard */}
+            <Card className="bg-card/40 shadow-xs shadow-primary/10 backdrop-blur-xl rounded-3xl transition-all duration-300 col-span-1 md:col-span-2">
+              <CardHeader>
+                <div className="w-12 h-12 bg-card rounded-2xl flex items-center justify-center mb-4">
+                  <BarChart3 className="w-6 h-6 text-primary" />
+                </div>
+                <CardTitle className="text-xl">Unified Dashboard</CardTitle>
+                <CardDescription>
+                  See how your affiliates are performing across all your
+                  projects.
+                </CardDescription>
+              </CardHeader>
+            </Card>
+
+            <Card className="bg-card/40 shadow-xs shadow-primary/10 backdrop-blur-xl rounded-3xl transition-all duration-300">
+              <CardHeader>
+                <div className="w-12 h-12 bg-gradient-to-r from-green-500/20 to-emerald-600/20 rounded-2xl flex items-center justify-center mb-4">
+                  <TrendingUp className="w-6 h-6 text-green-600" />
+                </div>
+                <CardTitle>Trends and Insights</CardTitle>
+                <CardDescription>
+                  Track top performing affiliates, campaigns
+                </CardDescription>
+              </CardHeader>
+            </Card>
+
+            {/* Fraud Detection */}
+            <Card className="bg-card/40 backdrop-blur-xl rounded-3xl transition-all duration-300">
+              <CardHeader>
+                <div className="w-12 h-12 bg-gradient-to-r from-red-500/20 to-orange-600/20 rounded-2xl flex items-center justify-center mb-4">
+                  <Shield className="w-6 h-6 text-red-600" />
+                </div>
+                <CardTitle>Fraud Detection</CardTitle>
+                <CardDescription>
+                  Automatically detect and flag self referrals before you do
+                  payouts.
+                </CardDescription>
+              </CardHeader>
+            </Card>
+
+            <Card className="bg-card/40 backdrop-blur-xl rounded-3xl transition-all duration-300 col-span-1 md:col-span-2">
+              <CardHeader>
+                <div className="w-12 h-12 bg-gradient-to-r from-yellow-500/20 to-orange-600/20 rounded-2xl flex items-center justify-center mb-4">
+                  <Palette className="w-6 h-6 text-yellow-600" />
+                </div>
+                <CardTitle className="text-xl">
+                  Branded partner portal
+                </CardTitle>
+                <CardDescription>
+                  Customize your partner portal to match brand of your each
+                  project.
+                </CardDescription>
+              </CardHeader>
+            </Card>
+          </div>
+
+          {/* Large Feature Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+            {/* Mass Payouts */}
+            <Card className="bg-card/40 shadow-xs shadow-primary/10 backdrop-blur-xl rounded-3xl transition-all duration-300">
+              <CardHeader className="pb-6">
+                <div className="flex items-center mb-4">
+                  <div className="w-12 h-12 bg-gradient-to-r from-blue-500/20 to-blue-600/20 rounded-lg border border-blue-200/30 flex items-center justify-center">
+                    <img
+                      src="/logos/paypal.svg"
+                      alt="PayPal"
+                      className="w-4 h-4"
+                    />
+                  </div>
+                  <div className="w-12 h-12 bg-gradient-to-r from-green-500/20 to-green-600/20 rounded-lg border border-green-200/30 flex items-center justify-center -ml-2">
+                    <img src="/logos/wise.svg" alt="Wise" className="w-4 h-4" />
+                  </div>
+                </div>
+                <CardTitle className="text-xl">
+                  Auto and Mass manual payouts
+                </CardTitle>
+                <CardDescription>Payouts to Paypal and Wise.</CardDescription>
+              </CardHeader>
+            </Card>
+
+            {/* Payment Integrations */}
+            <Card className="bg-card/40 shadow-xs shadow-primary/10 backdrop-blur-xl rounded-3xl transition-all duration-300">
+              <CardHeader className="pb-6">
+                <div className="flex items-center mb-4">
+                  <div className="w-12 h-6 bg-gradient-to-r from-purple-500/20 to-purple-600/20 rounded-lg flex items-center justify-center">
+                    <img
+                      src="/logos/stripe.svg"
+                      alt="Stripe"
+                      className="w-4 h-4"
+                    />
+                  </div>
+                  <div className="w-12 h-6 bg-gradient-to-r from-orange-500/20 to-orange-600/20 rounded-lg border border-orange-200/30 flex items-center justify-center -ml-3">
+                    <img
+                      src="/logos/paddle.svg"
+                      alt="Paddle"
+                      className="w-4 h-4"
+                    />
+                  </div>
+                </div>
+                <CardTitle className="text-xl">
+                  Stripe and Paddle Integration
+                </CardTitle>
+                <CardDescription>
+                  Integrate with Stripe and Paddle to automatically track
+                  conversions and calculate commissions.
+                </CardDescription>
+              </CardHeader>
+            </Card>
+          </div>
+        </div>
+      </section>
+
+      {/* Pricing Section */}
+      <section className="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-transparent to-accent/5">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl mb-4">
+              <span className="pr-2text-primary font-heading italic">
+                Unbeatable
+              </span>{" "}
+              pricing
+            </h2>
+            <p className="text-xl text-muted-foreground">
+              Fair pricing for every stage of your indie hacker journey.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
+            {/* FREE Plan */}
+            <Card className="bg-card/40 rounded-3xl backdrop-blur-xl transition-all duration-300 relative">
+              <CardHeader className="text-center pb-6">
+                <CardTitle className="text-2xl">Starter</CardTitle>
+                <CardDescription>Perfect for getting started</CardDescription>
+                <div className="mt-4">
+                  <span className="text-4xl font-bold">$0</span>
+                  <span className="text-muted-foreground">/month</span>
+                </div>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Up to $2k referral MRR
+                  <br />
+                  9% fee above $2k MRR
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">1 admin seat</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Unlimited affiliates & clicks</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Default % commission only</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">CSV payout export</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">"Powered-by" footer</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Community Slack support</span>
+                </div>
+                <Button className="w-full mt-6" variant="outline">
+                  Start Free
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* GROWTH Plan */}
+            <Card className="bg-card/40 bg-gradient-to-r from-primary/10 via-yellow-50/30 to-primary/10 rounded-3xl backdrop-blur-xl border-border hover:border-primary transition-all duration-300 relative">
+              <Badge className="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-primary rounded-full text-white">
+                Best value
+              </Badge>
+              <CardHeader className="text-center pb-6">
+                <CardTitle className="text-2xl">Growth</CardTitle>
+                <CardDescription>For growing indie businesses</CardDescription>
+                <div className="mt-4">
+                  <span className="text-4xl font-bold">$39</span>
+                  <span className="text-muted-foreground">/month</span>
+                </div>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Up to $10k referral MRR
+                  <br />
+                  3% overage above $10k MRR
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-muted-foreground mb-3">
+                  Everything in Free, plus:
+                </p>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">3 admin seats</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Multiple commission rules</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Coupon codes</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Basic fraud filters</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Remove "Powered-by"</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Zapier / webhook integrations</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Email & live-chat support</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">PayPal mass payouts</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Wise bulk payouts</span>
+                </div>
+                <Button className="w-full mt-6">Start Free Trial</Button>
+              </CardContent>
+            </Card>
+
+            {/* SCALE Plan */}
+            <Card className="bg-card/40 rounded-3xl backdrop-blur-xl transition-all duration-300 relative">
+              <CardHeader className="text-center pb-6">
+                <CardTitle className="text-2xl">Scale</CardTitle>
+                <CardDescription>For established businesses</CardDescription>
+                <div className="mt-4">
+                  <span className="text-4xl font-bold">$99</span>
+                  <span className="text-muted-foreground">/month</span>
+                </div>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Up to $20k referral MRR
+                  <br />
+                  1% overage above $20k MRR
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-muted-foreground mb-3">
+                  Everything in Growth, plus:
+                </p>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">10 admin seats</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Tiered commission levels</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Automated / scheduled payouts</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Custom domain</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">White-label branding</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Priority support (24h SLA)</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Advanced fraud monitoring</span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <Check className="w-4 h-4 text-green-600" />
+                  <span className="text-sm">Refund sync</span>
+                </div>
+                <Button className="w-full mt-6" variant="outline">
+                  Start Free Trial
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* ENTERPRISE Plan - Full Width */}
+          <div className="mt-8 max-w-5xl mx-auto">
+            <Card className="bg-card/40 w-full rounded-3xl backdrop-blur-xl transition-all duration-300">
+              <CardContent className="py-8 px-8">
+                <div className="flex flex-col md:flex-row items-center justify-between">
+                  <div className="text-center md:text-left mb-6 md:mb-0">
+                    <CardTitle className="text-3xl mb-2">Enterprise</CardTitle>
+                    <CardDescription className="text-lg mb-4">
+                      Custom solutions for scale
+                    </CardDescription>
+                    <div className="flex items-baseline justify-center md:justify-start">
+                      <span className="text-4xl font-bold">$149+</span>
+                      <span className="text-muted-foreground ml-1">/month</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-2">
+                      Unlimited referral MRR • No overage fees
+                    </p>
+                  </div>
+
+                  <div className="flex-1 md:ml-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+                      <div className="flex items-center space-x-3">
+                        <Check className="w-4 h-4 text-green-600" />
+                        <span className="text-sm">
+                          SSO (SAML/Okta) & advanced RBAC
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        <Check className="w-4 h-4 text-green-600" />
+                        <span className="text-sm">
+                          Dedicated infra & 99.9% SLA
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        <Check className="w-4 h-4 text-green-600" />
+                        <span className="text-sm">
+                          Multi-touch attribution & BI export
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        <Check className="w-4 h-4 text-green-600" />
+                        <span className="text-sm">
+                          White-glove onboarding, account manager
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-3 md:col-span-2">
+                        <Check className="w-4 h-4 text-green-600" />
+                        <span className="text-sm">
+                          Annual invoicing, security review
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-center md:text-right">
+                      <Button size="lg" variant="default">
+                        Contact Sales
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA Section */}
+      <section className="py-20 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-5xl mx-auto text-center">
+          <Card className="rounded-4xl bg-gradient-to-r from-primary/10 via-yellow-50/30 to-primary/10 backdrop-blur-xl ">
+            <CardContent className="py-16 px-8">
+              <h2 className="text-3xl md:text-4xl mb-4 font-heading italic">
+                Ready to grow your revenue?
+              </h2>
+              <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
+                It takes 10 minutes to launch your affiliate program.
+              </p>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+                <Button size="lg">
+                  Launch your program
+                  <ArrowRight className="ml-2 w-5 h-5" />
+                </Button>
+                <p className="text-sm text-muted-foreground">
+                  No credit card required • Free until $2,000 referral MRR
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="py-12">
+        <div className="bg-card/60 p-8 shadow-sm mx-auto max-w-5xl rounded-4xl border-border/40 backdrop-blur-xl">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+            <div className="col-span-1 md:col-span-2">
+              <div className="flex items-center space-x-2 mb-4">
+                <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center">
+                  <BarChart3 className="w-5 h-5 text-white" />
+                </div>
+                <span className="text-xl font-bold">IndieAffiliate</span>
+              </div>
+              <p className="text-muted-foreground max-w-md">
+                The affiliate management platform built specifically for indie
+                hackers and bootstrapped founders.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold mb-4">Product</h3>
+              <ul className="space-y-2 text-muted-foreground">
+                <li>Features</li>
+                <li>Pricing</li>
+                <li>Documentation</li>
+                <li>API</li>
+              </ul>
+            </div>
+            <div>
+              <h3 className="font-semibold mb-4">Company</h3>
+              <ul className="space-y-2 text-muted-foreground">
+                <li>About</li>
+                <li>Blog</li>
+                <li>Contact</li>
+                <li>Support</li>
+              </ul>
+            </div>
+          </div>
+          <div className="border-t border-border/40 mt-8 pt-8 text-center text-muted-foreground">
+            <p>&copy; 2024 IndieAffiliate. Built with ❤️ for indie hackers.</p>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+export default Landing;
