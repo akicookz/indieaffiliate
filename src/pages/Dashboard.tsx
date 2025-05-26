@@ -1,12 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  TrendingUp,
-  TrendingDown,
-  MousePointer,
-  Users,
-  UserPlus,
-} from "lucide-react";
+import { TrendingUp, MousePointer, Users, UserPlus } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -21,6 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import StatCard from "@/components/StatCard";
 
 interface DashboardData {
   name: string;
@@ -38,24 +33,29 @@ interface DashboardData {
     email: string;
     referredCustomers: number;
     totalRevenue: number;
+    project: string;
   }>;
   newReferredCustomers: Array<{
     id: string;
     createdDate: string;
     email: string;
     referredPartner: string;
-    status: "pending" | "approved" | "rejected";
+    status: "trialing" | "paid" | "cancelled";
+    project: string;
   }>;
 }
 
 function Dashboard() {
   const [period, setPeriod] = useState("7d");
+  const [selectedProject, setSelectedProject] = useState("all");
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["dashboard", period],
+    queryKey: ["dashboard", period, selectedProject],
     queryFn: async (): Promise<DashboardData> => {
-      // This would typically call your API with the period parameter
-      const response = await fetch(`/api/?period=${period}`);
+      // This would typically call your API with the period and project parameters
+      const response = await fetch(
+        `/api/?period=${period}&project=${selectedProject}`
+      );
       if (!response.ok) {
         throw new Error("Failed to fetch dashboard data");
       }
@@ -79,6 +79,7 @@ function Dashboard() {
             email: "sarah@example.com",
             referredCustomers: 23,
             totalRevenue: 4587.5,
+            project: "LinkyCal.com",
           },
           {
             id: "2",
@@ -86,6 +87,7 @@ function Dashboard() {
             email: "mike@example.com",
             referredCustomers: 18,
             totalRevenue: 3421.75,
+            project: "ImageAnimateAI.com",
           },
           {
             id: "3",
@@ -93,6 +95,7 @@ function Dashboard() {
             email: "emma@example.com",
             referredCustomers: 15,
             totalRevenue: 2934.8,
+            project: "LinkyCal.com",
           },
           {
             id: "4",
@@ -100,6 +103,7 @@ function Dashboard() {
             email: "alex@example.com",
             referredCustomers: 12,
             totalRevenue: 2156.9,
+            project: "LinkyCal.com",
           },
         ],
         newReferredCustomers: [
@@ -108,35 +112,40 @@ function Dashboard() {
             createdDate: "2024-01-15",
             email: "customer1@example.com",
             referredPartner: "Sarah Johnson",
-            status: "approved",
+            status: "paid",
+            project: "LinkyCal.com",
           },
           {
             id: "2",
             createdDate: "2024-01-14",
             email: "customer2@example.com",
             referredPartner: "Mike Chen",
-            status: "pending",
+            status: "trialing",
+            project: "ImageAnimateAI.com",
           },
           {
             id: "3",
             createdDate: "2024-01-14",
             email: "customer3@example.com",
             referredPartner: "Emma Davis",
-            status: "approved",
+            status: "paid",
+            project: "LinkyCal.com",
           },
           {
             id: "4",
             createdDate: "2024-01-13",
             email: "customer4@example.com",
             referredPartner: "Alex Rodriguez",
-            status: "rejected",
+            status: "cancelled",
+            project: "ImageAnimateAI.com",
           },
           {
             id: "5",
             createdDate: "2024-01-13",
             email: "customer5@example.com",
             referredPartner: "Sarah Johnson",
-            status: "pending",
+            status: "trialing",
+            project: "LinkyCal.com",
           },
         ],
       };
@@ -163,14 +172,14 @@ function Dashboard() {
 
   function getStatusBadge(status: string) {
     const styles = {
-      approved: "bg-green-100 text-green-800 border-green-200",
-      pending: "bg-yellow-100 text-yellow-800 border-yellow-200",
-      rejected: "bg-red-100 text-red-800 border-red-200",
+      paid: "bg-green-100 text-green-800",
+      trialing: "bg-yellow-100 text-yellow-800",
+      cancelled: "bg-red-100 text-red-800 border border-red-300",
     };
 
     return (
       <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border ${
           styles[status as keyof typeof styles]
         }`}
       >
@@ -180,20 +189,30 @@ function Dashboard() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header with Period Selector */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">
-            Welcome back, {data?.name}!
-          </h1>
-          <p className="text-foreground/70">
-            Here's your affiliate marketing overview
-          </p>
+    <div className="space-y-6 bg-background">
+      {/* Header with Filters */}
+      <div className="flex gap-4 items-center">
+        <div className="w-48">
+          <Select value={selectedProject} onValueChange={setSelectedProject}>
+            <SelectTrigger className="bg-card">
+              <span>
+                {selectedProject === "all" && "All Projects"}
+                {selectedProject === "linkycal" && "LinkyCal.com"}
+                {selectedProject === "imageanimateai" && "ImageAnimateAI.com"}
+                {selectedProject === "launchfast" && "LaunchFast.shop"}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Projects</SelectItem>
+              <SelectItem value="linkycal">LinkyCal.com</SelectItem>
+              <SelectItem value="imageanimateai">ImageAnimateAI.com</SelectItem>
+              <SelectItem value="launchfast">LaunchFast.shop</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <div className="w-48">
           <Select value={period} onValueChange={setPeriod}>
-            <SelectTrigger>
+            <SelectTrigger className="bg-card">
               <span>
                 {period === "7d" && "Last 7 days"}
                 {period === "30d" && "Last 30 days"}
@@ -211,97 +230,47 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Revenue Card */}
-      <div className="bg-card/60 backdrop-blur-sm border border-border/50 rounded-2xl p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-medium text-muted-foreground mb-1">
-              Total Revenue
-            </h3>
-            <p className="text-4xl font-bold text-foreground">
-              ${data?.revenue.total.toLocaleString()}
-            </p>
-          </div>
-          <div className="flex items-center space-x-2">
-            {data?.revenue.isPositive ? (
-              <TrendingUp className="h-6 w-6 text-green-600" />
-            ) : (
-              <TrendingDown className="h-6 w-6 text-red-600" />
-            )}
-            <span
-              className={`text-lg font-semibold ${
-                data?.revenue.isPositive ? "text-green-600" : "text-red-600"
-              }`}
-            >
-              {data?.revenue.isPositive ? "+" : ""}
-              {data?.revenue.change}%
-            </span>
-          </div>
-        </div>
-      </div>
-
       {/* Metrics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-card/60 backdrop-blur-sm border border-border/50 rounded-2xl p-6">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <MousePointer className="h-6 w-6 text-blue-600" />
-            </div>
-            <div>
-              <h3 className="text-sm font-medium text-muted-foreground mb-1">
-                Clicks
-              </h3>
-              <p className="text-2xl font-bold text-foreground">
-                {data?.clicks.toLocaleString()}
-              </p>
-            </div>
-          </div>
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+        <StatCard
+          title="Revenue"
+          value={`$${data?.revenue.total.toLocaleString()}`}
+          Icon={TrendingUp}
+          isPositive={data?.revenue.isPositive}
+          change={data?.revenue.change}
+        />
 
-        <div className="bg-card/60 backdrop-blur-sm border border-border/50 rounded-2xl p-6">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-purple-100 rounded-lg">
-              <Users className="h-6 w-6 text-purple-600" />
-            </div>
-            <div>
-              <h3 className="text-sm font-medium text-muted-foreground mb-1">
-                Leads
-              </h3>
-              <p className="text-2xl font-bold text-foreground">
-                {data?.leads.toLocaleString()}
-              </p>
-            </div>
-          </div>
-        </div>
+        <StatCard
+          title="Clicks"
+          value={data?.clicks.toLocaleString() || "0"}
+          Icon={MousePointer}
+        />
 
-        <div className="bg-card/60 backdrop-blur-sm border border-border/50 rounded-2xl p-6">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <UserPlus className="h-6 w-6 text-green-600" />
-            </div>
-            <div>
-              <h3 className="text-sm font-medium text-muted-foreground mb-1">
-                New Customers
-              </h3>
-              <p className="text-2xl font-bold text-foreground">
-                {data?.newCustomers.toLocaleString()}
-              </p>
-            </div>
-          </div>
-        </div>
+        <StatCard
+          title="Leads"
+          value={data?.leads.toLocaleString() || "0"}
+          Icon={Users}
+        />
+
+        <StatCard
+          title="New Customers"
+          value={data?.newCustomers.toLocaleString() || "0"}
+          Icon={UserPlus}
+        />
       </div>
 
       {/* Tables */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         {/* Top Referrers Table */}
-        <div className="bg-card/60 backdrop-blur-sm border border-border/50 rounded-2xl p-6">
-          <h2 className="text-xl font-semibold text-foreground mb-4">
-            Top Referrers
-          </h2>
+        <div className="shadow-xs bg-card/50 rounded-2xl p-6">
+          <h3 className="text-sm font-medium text-foreground mb-4">
+            Top referrers
+          </h3>
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Partner</TableHead>
+                <TableHead>Project</TableHead>
                 <TableHead>Customers</TableHead>
                 <TableHead>Revenue</TableHead>
               </TableRow>
@@ -317,6 +286,11 @@ function Dashboard() {
                       </div>
                     </div>
                   </TableCell>
+                  <TableCell>
+                    <span className="text-sm text-muted-foreground">
+                      {referrer.project}
+                    </span>
+                  </TableCell>
                   <TableCell className="font-medium">
                     {referrer.referredCustomers}
                   </TableCell>
@@ -330,14 +304,15 @@ function Dashboard() {
         </div>
 
         {/* New Referred Customers Table */}
-        <div className="bg-card/60 backdrop-blur-sm border border-border/50 rounded-2xl p-6">
-          <h2 className="text-xl font-semibold text-foreground mb-4">
-            New Referred Customers
-          </h2>
+        <div className="shadow-xs bg-card/50 rounded-2xl p-6">
+          <h3 className="text-sm font-medium text-foreground mb-4">
+            New referred customers
+          </h3>
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Customer</TableHead>
+                <TableHead>Project</TableHead>
                 <TableHead>Partner</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
@@ -352,6 +327,11 @@ function Dashboard() {
                         {new Date(customer.createdDate).toLocaleDateString()}
                       </div>
                     </div>
+                  </TableCell>
+                  <TableCell>
+                    <span className="text-sm text-muted-foreground">
+                      {customer.project}
+                    </span>
                   </TableCell>
                   <TableCell>{customer.referredPartner}</TableCell>
                   <TableCell>{getStatusBadge(customer.status)}</TableCell>

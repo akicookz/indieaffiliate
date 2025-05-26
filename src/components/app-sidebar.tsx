@@ -1,13 +1,5 @@
 import * as React from "react";
-import {
-  Home,
-  TrendingUp,
-  Users,
-  Zap,
-  HandHeart,
-  CreditCard,
-  Palette,
-} from "lucide-react";
+import { Home, Users, Zap, HandHeart, CreditCard } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
 import { NavProjects } from "@/components/nav-projects";
@@ -24,8 +16,8 @@ import {
 // IndieAffiliate data
 const data = {
   user: {
-    name: "Affiliate Marketer",
-    email: "marketer@indieaffiliate.com",
+    name: "Aki Cookz",
+    email: "akicookz@linkycal.com",
     avatar: "/avatars/user.jpg",
   },
   teams: [
@@ -57,28 +49,6 @@ const data = {
       url: "/payouts",
       icon: CreditCard,
     },
-    {
-      title: "Brand Assets",
-      url: "/brand-assets",
-      icon: Palette,
-    },
-  ],
-  projects: [
-    {
-      name: "Amazon Associates",
-      url: "/projects/amazon",
-      icon: TrendingUp,
-    },
-    {
-      name: "Digital Products",
-      url: "/projects/digital",
-      icon: Users,
-    },
-    {
-      name: "SaaS Referrals",
-      url: "/projects/saas",
-      icon: Zap,
-    },
   ],
 };
 
@@ -88,7 +58,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarHeader>{/* <TeamSwitcher teams={data.teams} /> */}</SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />
-        <NavProjects projects={data.projects} />
+        <NavProjects />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={data.user} />
