@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, MousePointer, Users, UserPlus } from "lucide-react";
 import {
@@ -18,7 +19,6 @@ import {
 import StatCard from "@/components/StatCard";
 
 interface DashboardData {
-  name: string;
   revenue: {
     total: number;
     change: number;
@@ -45,114 +45,46 @@ interface DashboardData {
   }>;
 }
 
+interface Project {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 function Dashboard() {
   const [period, setPeriod] = useState("7d");
   const [selectedProject, setSelectedProject] = useState("all");
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["dashboard", period, selectedProject],
-    queryFn: async (): Promise<DashboardData> => {
-      // This would typically call your API with the period and project parameters
-      const response = await fetch(
-        `/api/?period=${period}&project=${selectedProject}`
-      );
-      if (!response.ok) {
-        throw new Error("Failed to fetch dashboard data");
-      }
-      const result = (await response.json()) as { name: string };
-
-      // Mock data for now
-      return {
-        name: result.name || "Affiliate Marketer",
-        revenue: {
-          total: 15487.32,
-          change: 12.5,
-          isPositive: true,
-        },
-        clicks: 8534,
-        leads: 342,
-        newCustomers: 87,
-        topReferrers: [
-          {
-            id: "1",
-            partnerName: "Sarah Johnson",
-            email: "sarah@example.com",
-            referredCustomers: 23,
-            totalRevenue: 4587.5,
-            project: "LinkyCal.com",
-          },
-          {
-            id: "2",
-            partnerName: "Mike Chen",
-            email: "mike@example.com",
-            referredCustomers: 18,
-            totalRevenue: 3421.75,
-            project: "ImageAnimateAI.com",
-          },
-          {
-            id: "3",
-            partnerName: "Emma Davis",
-            email: "emma@example.com",
-            referredCustomers: 15,
-            totalRevenue: 2934.8,
-            project: "LinkyCal.com",
-          },
-          {
-            id: "4",
-            partnerName: "Alex Rodriguez",
-            email: "alex@example.com",
-            referredCustomers: 12,
-            totalRevenue: 2156.9,
-            project: "LinkyCal.com",
-          },
-        ],
-        newReferredCustomers: [
-          {
-            id: "1",
-            createdDate: "2024-01-15",
-            email: "customer1@example.com",
-            referredPartner: "Sarah Johnson",
-            status: "paid",
-            project: "LinkyCal.com",
-          },
-          {
-            id: "2",
-            createdDate: "2024-01-14",
-            email: "customer2@example.com",
-            referredPartner: "Mike Chen",
-            status: "trialing",
-            project: "ImageAnimateAI.com",
-          },
-          {
-            id: "3",
-            createdDate: "2024-01-14",
-            email: "customer3@example.com",
-            referredPartner: "Emma Davis",
-            status: "paid",
-            project: "LinkyCal.com",
-          },
-          {
-            id: "4",
-            createdDate: "2024-01-13",
-            email: "customer4@example.com",
-            referredPartner: "Alex Rodriguez",
-            status: "cancelled",
-            project: "ImageAnimateAI.com",
-          },
-          {
-            id: "5",
-            createdDate: "2024-01-13",
-            email: "customer5@example.com",
-            referredPartner: "Sarah Johnson",
-            status: "trialing",
-            project: "LinkyCal.com",
-          },
-        ],
-      };
+  const { data: projectsData, isLoading: projectsLoading } = useQuery({
+    queryKey: ["projects"],
+    queryFn: async (): Promise<{ projects: Project[] }> => {
+      const response = await fetch("/api/projects");
+      if (!response.ok) throw new Error("Failed to fetch projects");
+      return response.json();
     },
   });
 
-  if (isLoading) {
+  const projects = projectsData?.projects ?? [];
+
+  if (!projectsLoading && projects.length === 0) {
+    return <Navigate to="/onboarding" replace />;
+  }
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["dashboard", period, selectedProject],
+    queryFn: async (): Promise<DashboardData> => {
+      const params = new URLSearchParams();
+      if (selectedProject !== "all") params.set("project", selectedProject);
+      const response = await fetch(`/api/dashboard?${params}`);
+      if (!response.ok) {
+        throw new Error("Failed to fetch dashboard data");
+      }
+      return response.json();
+    },
+    enabled: !projectsLoading && projects.length > 0,
+  });
+
+  if (projectsLoading || isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-lg text-foreground/70">Loading dashboard...</div>
@@ -179,9 +111,8 @@ function Dashboard() {
 
     return (
       <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border ${
-          styles[status as keyof typeof styles]
-        }`}
+        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border ${styles[status as keyof typeof styles]
+          }`}
       >
         {status}
       </span>
@@ -196,17 +127,19 @@ function Dashboard() {
           <Select value={selectedProject} onValueChange={setSelectedProject}>
             <SelectTrigger className="bg-card">
               <span>
-                {selectedProject === "all" && "All Projects"}
-                {selectedProject === "linkycal" && "LinkyCal.com"}
-                {selectedProject === "imageanimateai" && "ImageAnimateAI.com"}
-                {selectedProject === "launchfast" && "LaunchFast.shop"}
+                {selectedProject === "all"
+                  ? "All Projects"
+                  : projects.find((p) => p.id === selectedProject)?.name ??
+                  "Select"}
               </span>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Projects</SelectItem>
-              <SelectItem value="linkycal">LinkyCal.com</SelectItem>
-              <SelectItem value="imageanimateai">ImageAnimateAI.com</SelectItem>
-              <SelectItem value="launchfast">LaunchFast.shop</SelectItem>
+              {projects.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.name}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -234,7 +167,7 @@ function Dashboard() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
         <StatCard
           title="Revenue"
-          value={`$${data?.revenue.total.toLocaleString()}`}
+          value={`$${(data?.revenue.total ?? 0).toLocaleString()}`}
           Icon={TrendingUp}
           isPositive={data?.revenue.isPositive}
           change={data?.revenue.change}
@@ -242,19 +175,19 @@ function Dashboard() {
 
         <StatCard
           title="Clicks"
-          value={data?.clicks.toLocaleString() || "0"}
+          value={(data?.clicks ?? 0).toLocaleString()}
           Icon={MousePointer}
         />
 
         <StatCard
           title="Leads"
-          value={data?.leads.toLocaleString() || "0"}
+          value={(data?.leads ?? 0).toLocaleString()}
           Icon={Users}
         />
 
         <StatCard
           title="New Customers"
-          value={data?.newCustomers.toLocaleString() || "0"}
+          value={(data?.newCustomers ?? 0).toLocaleString()}
           Icon={UserPlus}
         />
       </div>
@@ -263,9 +196,17 @@ function Dashboard() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         {/* Top Referrers Table */}
         <div className="shadow-xs bg-card/50 rounded-2xl p-6">
-          <h3 className="text-sm font-medium text-foreground mb-4">
-            Top referrers
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-foreground">
+              Top referrers
+            </h3>
+            <Link
+              to="/app/partners"
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              View all →
+            </Link>
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -299,15 +240,33 @@ function Dashboard() {
                   </TableCell>
                 </TableRow>
               ))}
+              {(!data?.topReferrers || data.topReferrers.length === 0) && (
+                <TableRow>
+                  <TableCell
+                    colSpan={4}
+                    className="text-center text-muted-foreground py-8"
+                  >
+                    No partners yet. Invite your first partner to get started.
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </div>
 
         {/* New Referred Customers Table */}
         <div className="shadow-xs bg-card/50 rounded-2xl p-6">
-          <h3 className="text-sm font-medium text-foreground mb-4">
-            New referred customers
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-foreground">
+              New referred customers
+            </h3>
+            <Link
+              to="/app/customers"
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              View all →
+            </Link>
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -337,6 +296,17 @@ function Dashboard() {
                   <TableCell>{getStatusBadge(customer.status)}</TableCell>
                 </TableRow>
               ))}
+              {(!data?.newReferredCustomers ||
+                data.newReferredCustomers.length === 0) && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={4}
+                      className="text-center text-muted-foreground py-8"
+                    >
+                      No customers yet.
+                    </TableCell>
+                  </TableRow>
+                )}
             </TableBody>
           </Table>
         </div>

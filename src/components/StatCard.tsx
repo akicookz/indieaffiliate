@@ -14,7 +14,7 @@ export default function StatCard({
   change?: number;
 }) {
   return (
-    <div className="bg-card shadow-xs rounded-2xl p-4">
+    <div className="bg-card shadow-xs shadow-card border border-card/20 rounded-2xl p-4">
       <div className="flex items-start justify-between">
         <div className="flex-1">
           <div className="flex items-center space-x-3 mb-4">

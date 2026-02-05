@@ -6,6 +6,10 @@ import path from "path";
 
 // https://vite.dev/config/
 export default defineConfig({
+  server: {
+    host: "::",
+    port: 8080,
+  },
   plugins: [react(), cloudflare(), tailwindcss()],
   resolve: {
     alias: {

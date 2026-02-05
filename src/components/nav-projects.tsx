@@ -1,4 +1,7 @@
-import { Palette, Layout, Settings, Plus } from "lucide-react";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { Settings, Plus, ChevronRight } from "lucide-react";
 
 import {
   SidebarMenu,
@@ -10,55 +13,76 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar";
-import { Collapsible, CollapsibleContent } from "./ui/collapsible";
-import { CollapsibleTrigger } from "./ui/collapsible";
-import { ChevronRight } from "lucide-react";
-import { Button } from "./ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
-const projects = [
-  {
-    name: "LinkyCal.com",
-    url: "/projects/linkycal",
-    projectId: "linkycal",
-  },
-  {
-    name: "ImageAnimateAI.com",
-    url: "/projects/imageanimateai",
-    projectId: "imageanimateai",
-  },
-  {
-    name: "LaunchFast.shop",
-    url: "/projects/launchfast",
-    projectId: "launchfast",
-  },
-];
+interface Project {
+  id: string;
+  name: string;
+  slug: string;
+  domain: string | null;
+}
 
 const subMenuItems = [
   {
-    name: "Brand assets",
-    url: "/brand-assets",
-    icon: <Palette />,
-  },
-  {
-    name: "Branded affiliate page",
-    url: "/affiliate-page",
-    icon: <Layout />,
-  },
-  {
     name: "Settings",
-    url: "/settings",
-    icon: <Settings />,
+    url: "settings",
+    icon: <Settings className="w-4 h-4" />,
   },
 ];
 
 export function NavProjects() {
+  const queryClient = useQueryClient();
+  const [showNewForm, setShowNewForm] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+
+  const { data } = useQuery({
+    queryKey: ["projects"],
+    queryFn: async (): Promise<{ projects: Project[] }> => {
+      const response = await fetch("/api/projects");
+      if (!response.ok) throw new Error("Failed to fetch projects");
+      return response.json();
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!response.ok) throw new Error("Failed to create project");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      setNewProjectName("");
+      setShowNewForm(false);
+    },
+  });
+
+  function handleCreateProject(e: React.FormEvent) {
+    e.preventDefault();
+    if (newProjectName.trim()) {
+      createMutation.mutate(newProjectName.trim());
+    }
+  }
+
+  const projectsList = data?.projects ?? [];
+
   return (
     <SidebarGroup className="group-data-[collapsible=icon]:hidden">
       <SidebarGroupLabel>Projects</SidebarGroupLabel>
 
       <SidebarMenu className="gap-3">
-        {projects.map((item) => (
-          <Collapsible key={item.name} asChild className="group/collapsible">
+        {projectsList.map((item) => (
+          <Collapsible key={item.id} asChild className="group/collapsible">
             <SidebarMenuItem>
               <CollapsibleTrigger asChild>
                 <SidebarMenuButton tooltip={item.name}>
@@ -76,10 +100,10 @@ export function NavProjects() {
                   {subMenuItems.map((subItem) => (
                     <SidebarMenuSubItem key={subItem.name}>
                       <SidebarMenuSubButton asChild>
-                        <a href={`/projects/${item.projectId}/${subItem.url}`}>
+                        <Link to={`/app/projects/${item.slug}/${subItem.url}`}>
                           {subItem.icon}
                           <span>{subItem.name}</span>
-                        </a>
+                        </Link>
                       </SidebarMenuSubButton>
                     </SidebarMenuSubItem>
                   ))}
@@ -88,10 +112,35 @@ export function NavProjects() {
             </SidebarMenuItem>
           </Collapsible>
         ))}
-        <Button variant="default" size="sm" className="mt-4">
-          <Plus className="w-4 h-4" />
-          New Project
-        </Button>
+
+        {showNewForm ? (
+          <form onSubmit={handleCreateProject} className="flex gap-2 px-2">
+            <Input
+              value={newProjectName}
+              onChange={(e) => setNewProjectName(e.target.value)}
+              placeholder="Project name"
+              className="h-8 text-sm"
+              autoFocus
+            />
+            <Button
+              type="submit"
+              size="sm"
+              disabled={createMutation.isPending}
+            >
+              {createMutation.isPending ? "..." : "Add"}
+            </Button>
+          </form>
+        ) : (
+          <Button
+            variant="default"
+            size="sm"
+            className="mt-2"
+            onClick={() => setShowNewForm(true)}
+          >
+            <Plus className="w-4 h-4" />
+            New Project
+          </Button>
+        )}
       </SidebarMenu>
     </SidebarGroup>
   );

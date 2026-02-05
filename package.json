@@ -9,7 +9,10 @@
 		"lint": "eslint .",
 		"preview": "bun run build && vite preview",
 		"deploy": "bun run build && wrangler deploy",
-		"cf-typegen": "wrangler types"
+		"cf-typegen": "wrangler types",
+		"db:generate": "drizzle-kit generate",
+		"db:migrate:dev": "bun run wrangler d1 migrations apply --local DB",
+		"db:migrate:prod": "bun run wrangler d1 migrations apply --remote DB"
 	},
 	"dependencies": {
 		"@radix-ui/react-avatar": "^1.1.10",
@@ -22,14 +25,21 @@
 		"@radix-ui/react-tooltip": "^1.2.7",
 		"@tailwindcss/vite": "^4.1.7",
 		"@tanstack/react-query": "^5.77.0",
+		"better-auth": "^1.4.18",
+		"better-auth-cloudflare": "^0.2.9",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
-		"lucide-react": "^0.511.0",
+		"drizzle-orm": "^0.45.1",
+		"hono": "^4.11.7",
+		"lucide-react": "^0.563.0",
+		"radix-ui": "^1.4.3",
 		"react": "^19.1.0",
 		"react-dom": "^19.1.0",
 		"react-router-dom": "^7.6.0",
+		"recharts": "2.15.4",
 		"tailwind-merge": "^3.3.0",
-		"tailwindcss": "^4.1.7"
+		"tailwindcss": "^4.1.7",
+		"zod": "^4.3.6"
 	},
 	"devDependencies": {
 		"@cloudflare/vite-plugin": "^1.2.4",
@@ -40,6 +50,7 @@
 		"@types/react-dom": "^19.1.2",
 		"@types/react-router-dom": "^5.3.3",
 		"@vitejs/plugin-react-swc": "^3.9.0",
+		"drizzle-kit": "^0.31.8",
 		"eslint": "^9.25.0",
 		"eslint-plugin-react-hooks": "^5.2.0",
 		"eslint-plugin-react-refresh": "^0.4.19",

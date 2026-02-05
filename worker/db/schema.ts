@@ -1,0 +1,268 @@
+import {
+  sqliteTable,
+  text,
+  integer,
+  real,
+  uniqueIndex,
+  index,
+} from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import * as authSchema from "./auth.schema";
+
+// Projects - each user can have multiple projects (SaaS products)
+export const projects = sqliteTable(
+  "projects",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authSchema.users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    domain: text("domain"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_projects_slug").on(table.userId, table.slug),
+    index("idx_projects_user").on(table.userId),
+  ],
+);
+
+export type ProjectRow = typeof projects.$inferSelect;
+export type NewProjectRow = typeof projects.$inferInsert;
+
+// Partners (affiliates) - people who promote your products
+export const partners = sqliteTable(
+  "partners",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    status: text("status", { enum: ["active", "pending", "inactive"] })
+      .notNull()
+      .default("pending"),
+    commissionRate: real("commission_rate").notNull().default(0.2),
+    referralCode: text("referral_code").notNull().unique(),
+    totalRevenue: real("total_revenue").notNull().default(0),
+    referredCustomers: integer("referred_customers").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("idx_partners_project").on(table.projectId),
+    uniqueIndex("idx_partners_email_project").on(
+      table.projectId,
+      table.email,
+    ),
+  ],
+);
+
+export type PartnerRow = typeof partners.$inferSelect;
+export type NewPartnerRow = typeof partners.$inferInsert;
+
+// Customers - people referred by partners
+export const customers = sqliteTable(
+  "customers",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    status: text("status", { enum: ["trialing", "paid", "cancelled"] })
+      .notNull()
+      .default("trialing"),
+    revenue: real("revenue").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("idx_customers_project").on(table.projectId),
+    index("idx_customers_partner").on(table.partnerId),
+  ],
+);
+
+export type CustomerRow = typeof customers.$inferSelect;
+export type NewCustomerRow = typeof customers.$inferInsert;
+
+// Clicks - tracked referral link clicks
+export const clicks = sqliteTable(
+  "clicks",
+  {
+    id: text("id").primaryKey(),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    referralCode: text("referral_code").notNull(),
+    ip: text("ip"), // hashed for privacy
+    userAgent: text("user_agent"),
+    referrer: text("referrer"),
+    landingPage: text("landing_page"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+  },
+  (table) => [
+    index("idx_clicks_project").on(table.projectId),
+    index("idx_clicks_partner").on(table.partnerId),
+    index("idx_clicks_referral_created").on(table.referralCode, table.createdAt),
+  ],
+);
+
+export type ClickRow = typeof clicks.$inferSelect;
+export type NewClickRow = typeof clicks.$inferInsert;
+
+// Commissions - earned commissions from conversions
+export const commissions = sqliteTable(
+  "commissions",
+  {
+    id: text("id").primaryKey(),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    amount: real("amount").notNull(),
+    rate: real("rate").notNull(), // snapshot of commission rate at calculation time
+    status: text("status", { enum: ["pending", "approved", "paid", "rejected"] })
+      .notNull()
+      .default("pending"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("idx_commissions_partner_status").on(table.partnerId, table.status),
+    index("idx_commissions_project").on(table.projectId),
+  ],
+);
+
+export type CommissionRow = typeof commissions.$inferSelect;
+export type NewCommissionRow = typeof commissions.$inferInsert;
+
+// API Keys - project-level keys for authenticating the conversion endpoint
+export const apiKeys = sqliteTable(
+  "api_keys",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    keyHash: text("key_hash").notNull().unique(), // SHA-256 hash of the full key
+    prefix: text("prefix").notNull(), // first 8 chars for display (e.g. "ia_ab12cd34")
+    name: text("name").notNull(), // user-given label
+    lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+  },
+  (table) => [
+    index("idx_api_keys_project").on(table.projectId),
+    uniqueIndex("idx_api_keys_hash").on(table.keyHash),
+  ],
+);
+
+export type ApiKeyRow = typeof apiKeys.$inferSelect;
+export type NewApiKeyRow = typeof apiKeys.$inferInsert;
+
+// Stripe Connections - stores encrypted Stripe API key + sync state per project
+export const stripeConnections = sqliteTable(
+  "stripe_connections",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" })
+      .unique(),
+    encryptedApiKey: text("encrypted_api_key").notNull(), // AES-GCM encrypted
+    lastSyncAt: integer("last_sync_at", { mode: "timestamp" }),
+    lastSyncCursor: text("last_sync_cursor"), // for incremental sync
+    syncStatus: text("sync_status", { enum: ["idle", "syncing", "error"] })
+      .notNull()
+      .default("idle"),
+    syncError: text("sync_error"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_stripe_connections_project").on(table.projectId),
+  ],
+);
+
+export type StripeConnectionRow = typeof stripeConnections.$inferSelect;
+export type NewStripeConnectionRow = typeof stripeConnections.$inferInsert;
+
+// Sync Logs - audit trail for sync runs
+export const syncLogs = sqliteTable(
+  "sync_logs",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    source: text("source", { enum: ["stripe"] }).notNull(),
+    status: text("status", { enum: ["success", "error"] }).notNull(),
+    processedCount: integer("processed_count").notNull().default(0),
+    errorMessage: text("error_message"),
+    startedAt: integer("started_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    completedAt: integer("completed_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    index("idx_sync_logs_project").on(table.projectId),
+  ],
+);
+
+export type SyncLogRow = typeof syncLogs.$inferSelect;
+export type NewSyncLogRow = typeof syncLogs.$inferInsert;
+
+export const schema = {
+  ...authSchema,
+  projects,
+  partners,
+  customers,
+  clicks,
+  commissions,
+  apiKeys,
+  stripeConnections,
+  syncLogs,
+} as const;

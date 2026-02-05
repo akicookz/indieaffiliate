@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "shadcn-ui-server": {
-      "command": "bun",
-      "args": ["run", "shadcn-ui-mcp-server"]
+      "command": "bunx",
+      "args": ["-y", "shadcn-ui-mcp-server"]
     }
   }
 }

@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1770231783775,
+      "tag": "0000_fast_iron_lad",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1770234692540,
+      "tag": "0001_naive_lifeguard",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1770238092618,
+      "tag": "0002_open_felicia_hardy",
+      "breakpoints": true
+    }
+  ]
+}

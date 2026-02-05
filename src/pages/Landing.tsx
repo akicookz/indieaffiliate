@@ -1,13 +1,14 @@
 import {
   ArrowRight,
   BarChart3,
-  Users,
   Zap,
   TrendingUp,
   Check,
   Shield,
   Palette,
+  Star,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -22,14 +23,14 @@ function Landing() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-card/50 to-blue-50/30">
       {/* Navigation */}
-      <nav className="mx-auto max-w-4xl rounded-full shadow-sm backdrop-blur-xl bg-card/50 sticky top-4 z-50">
+      <nav className="mx-auto max-w-4xl rounded-full shadow-sm shadow-primary/10 backdrop-blur-md bg-white/50 sticky top-4 z-50">
         <div className="mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-2">
               <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center">
                 <BarChart3 className="w-5 h-5 text-white" />
               </div>
-              <span className="text-xl font-semibold text-primary">
+              <span className="hidden md:inline-block text-xl font-semibold text-primary">
                 IndieAffiliate
               </span>
             </div>
@@ -40,8 +41,12 @@ function Landing() {
               <Button variant="ghost" className="hidden md:inline-flex">
                 Pricing
               </Button>
-              <Button variant="ghost">Sign In</Button>
-              <Button>Launch your program</Button>
+              <Link to="/login">
+                <Button variant="ghost">Sign In</Button>
+              </Link>
+              <Link to="/signup">
+                <Button>Launch your program</Button>
+              </Link>
             </div>
           </div>
         </div>
@@ -76,67 +81,71 @@ function Landing() {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
-            <Button size="default">
-              Launch your affiliate program for free
-              <ArrowRight className="ml-2 w-5 h-5" />
-            </Button>
-            <Button
-              variant="ghost"
-              className="border-border/60 bg-card text-primary"
-            >
-              View Demo
-            </Button>
+            <Link to="/signup">
+              <Button size="default">
+                Launch your affiliate program for free
+                <ArrowRight className="ml-2 w-5 h-5" />
+              </Button>
+            </Link>
+            <Link to="/app">
+              <Button
+                variant="ghost"
+                className="border-border/60 bg-card text-primary"
+              >
+                View Demo
+              </Button>
+            </Link>
           </div>
 
           {/* Social Proof */}
           <div className="flex items-center justify-center space-x-2 text-sm text-muted-foreground">
-            <div className="flex -space-x-2">
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div
+            <div className="flex">
+              {[1, 2, 3, 4, 5].map((_, i) => (
+                <Star
+                  strokeWidth={1.5}
+                  fill="currentColor"
+                  className="w-4 h-4 text-yellow-600"
                   key={i}
-                  className="w-8 h-8 rounded-full bg-gradient-to-r from-primary/20 to-secondary/20 border-2 border-background flex items-center justify-center"
-                >
-                  <Users className="w-4 h-4 text-primary" />
-                </div>
+                />
               ))}
             </div>
-            <span>Trusted by 500+ indie hackers</span>
+            <span>Trusted by 320+ indie hackers</span>
           </div>
         </div>
       </section>
 
       {/* Screenshot Placeholder Section */}
-      <section className="py-16 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
+      <section className="py-16 px-4 sm:px-6 lg:px-8 relative">
+        <div className="max-w-5xl mx-auto">
           <div className="relative">
             {/* Screenshot Container */}
-            <div className="bg-background max-h-[600px] backdrop-blur-xl rounded-3xl shadow-2xl shadow-primary/5 border border-border/20 overflow-hidden">
-              <div className="aspect-[16/10]">
+            <div className="bg-background max-h-[500px] backdrop-blur-xl rounded-3xl overflow-hidden relative">
+              <div>
                 {/* Browser Chrome Mockup */}
                 <div className="mx-auto">
-                  <div className="flex items-center space-x-2 bg-background/80 backdrop-blur-sm rounded-lg px-4 py-2">
+                  <div className="flex items-center space-x-2 bg-background/80 backdrop-blur-sm rounded-full px-4 py-2">
                     <div className="flex space-x-1.5">
                       <div className="w-3 h-3 bg-red-500 rounded-full"></div>
                       <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
                       <div className="w-3 h-3 bg-green-500 rounded-full"></div>
                     </div>
-                    <div className="flex-1 bg-muted/50 rounded px-3 py-1 text-xs text-muted-foreground ml-4">
+                    <div className="flex-1 bg-muted/50 rounded-full px-3 py-1 text-xs text-muted-foreground ml-4">
                       app.indieaffiliate.com/dashboard
                     </div>
                   </div>
                 </div>
 
-                {/* Placeholder Content */}
                 <img
                   src="/screenshots/dashboard.webp"
                   alt="Dashboard"
-                  className="w-full h-full object-contain"
+                  className="max-w-5xl mx-auto object-contain"
                 />
               </div>
-            </div>
 
-            {/* Decorative Glow Effect */}
-            <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-transparent to-secondary/5 rounded-3xl -z-10 blur-3xl transform scale-110"></div>
+              {/* Transparent fade effect */}
+              <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-transparent via-transparent/20 to-transparent pointer-events-none mask-gradient"></div>
+              <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-background via-background/60 to-transparent pointer-events-none"></div>
+            </div>
           </div>
         </div>
       </section>
@@ -156,7 +165,7 @@ function Landing() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {/* Unified Dashboard */}
-            <Card className="bg-card/40 shadow-xs shadow-primary/10 backdrop-blur-xl rounded-3xl transition-all duration-300 col-span-1 md:col-span-2">
+            <Card className="bg-card/40 shadow-xs shadow-primary/5 backdrop-blur-xl rounded-3xl transition-all duration-300 col-span-1 md:col-span-2">
               <CardHeader>
                 <div className="w-12 h-12 bg-card rounded-2xl flex items-center justify-center mb-4">
                   <BarChart3 className="w-6 h-6 text-primary" />
@@ -517,11 +526,14 @@ function Landing() {
                         </span>
                       </div>
                     </div>
-                    <div className="text-center md:text-right">
-                      <Button size="lg" variant="default">
-                        Contact Sales
-                      </Button>
-                    </div>
+
+                    <Button
+                      size="lg"
+                      variant="default"
+                      className="w-full md:w-auto"
+                    >
+                      Contact Sales
+                    </Button>
                   </div>
                 </div>
               </CardContent>
@@ -542,10 +554,12 @@ function Landing() {
                 It takes 10 minutes to launch your affiliate program.
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                <Button size="lg">
-                  Launch your program
-                  <ArrowRight className="ml-2 w-5 h-5" />
-                </Button>
+                <Link to="/signup">
+                  <Button size="lg">
+                    Launch your program
+                    <ArrowRight className="ml-2 w-5 h-5" />
+                  </Button>
+                </Link>
                 <p className="text-sm text-muted-foreground">
                   No credit card required • Free until $2,000 referral MRR
                 </p>
