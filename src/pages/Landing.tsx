@@ -31,7 +31,7 @@ function Landing() {
                 <BarChart3 className="w-5 h-5 text-white" />
               </div>
               <span className="hidden md:inline-block text-xl font-semibold text-primary">
-                IndieAffiliate
+                UnlockAffiliate
               </span>
             </div>
             <div className="flex items-center space-x-4">
@@ -68,7 +68,7 @@ function Landing() {
               Affiliate Marketing
             </span>
             <br />
-            software for Indie Hackers
+            Unlock it as a channel for free.
           </h1>
 
           <p className="text-lg text-muted-foreground mb-8 max-w-3xl mx-auto">
@@ -109,7 +109,7 @@ function Landing() {
                 />
               ))}
             </div>
-            <span>Trusted by 320+ indie hackers</span>
+            <span>Trusted by 320+ founders</span>
           </div>
         </div>
       </section>
@@ -130,7 +130,7 @@ function Landing() {
                       <div className="w-3 h-3 bg-green-500 rounded-full"></div>
                     </div>
                     <div className="flex-1 bg-muted/50 rounded-full px-3 py-1 text-xs text-muted-foreground ml-4">
-                      app.indieaffiliate.com/dashboard
+                      app.unlockaffiliate.com/dashboard
                     </div>
                   </div>
                 </div>
@@ -158,8 +158,8 @@ function Landing() {
               Free and comes with features built-in.
             </h2>
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-              Designed from ground up for indie hackers juggling multiple
-              projects.
+              Designed to help you unlock affiliate revenue without the
+              complexity.
             </p>
           </div>
 
@@ -291,7 +291,7 @@ function Landing() {
               pricing
             </h2>
             <p className="text-xl text-muted-foreground">
-              Fair pricing for every stage of your indie hacker journey.
+              Fair pricing for every stage of your growth journey.
             </p>
           </div>
 
@@ -353,7 +353,7 @@ function Landing() {
               </Badge>
               <CardHeader className="text-center pb-6">
                 <CardTitle className="text-2xl">Growth</CardTitle>
-                <CardDescription>For growing indie businesses</CardDescription>
+                <CardDescription>For growing businesses</CardDescription>
                 <div className="mt-4">
                   <span className="text-4xl font-bold">$39</span>
                   <span className="text-muted-foreground">/month</span>
@@ -578,11 +578,11 @@ function Landing() {
                 <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center">
                   <BarChart3 className="w-5 h-5 text-white" />
                 </div>
-                <span className="text-xl font-bold">IndieAffiliate</span>
+                <span className="text-xl font-bold">UnlockAffiliate</span>
               </div>
               <p className="text-muted-foreground max-w-md">
-                The affiliate management platform built specifically for indie
-                hackers and bootstrapped founders.
+                Unlock affiliate marketing as a revenue channel. Reach your
+                first $1k in affiliate revenue for free.
               </p>
             </div>
             <div>
@@ -605,7 +605,7 @@ function Landing() {
             </div>
           </div>
           <div className="border-t border-border/40 mt-8 pt-8 text-center text-muted-foreground">
-            <p>&copy; 2024 IndieAffiliate. Built with ❤️ for indie hackers.</p>
+            <p>&copy; 2026 UnlockAffiliate. Unlock your affiliate revenue.</p>
           </div>
         </div>
       </footer>

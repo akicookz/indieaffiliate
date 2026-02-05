@@ -14,7 +14,7 @@ export class EmailService {
   private apiKey: string;
   private defaultFrom: string;
 
-  constructor(apiKey: string, defaultFrom = "IndieAffiliate <noreply@indieaffiliate.com>") {
+  constructor(apiKey: string, defaultFrom = "UnlockAffiliate <noreply@unlockaffiliate.com>") {
     this.apiKey = apiKey;
     this.defaultFrom = defaultFrom;
   }
@@ -84,7 +84,7 @@ export class EmailService {
             to any link to track referrals.
           </p>
           <p style="color: #888; font-size: 13px; margin-top: 32px;">
-            — The ${params.projectName} team via IndieAffiliate
+            — The ${params.projectName} team via UnlockAffiliate
           </p>
         </div>
       `,
@@ -126,7 +126,7 @@ export class EmailService {
             to any link to track referrals.
           </p>
           <p style="color: #888; font-size: 13px; margin-top: 32px;">
-            — The ${params.projectName} team via IndieAffiliate
+            — The ${params.projectName} team via UnlockAffiliate
           </p>
         </div>
       `,
@@ -157,7 +157,7 @@ export class EmailService {
             Once approved, you'll receive your unique referral link to start earning commissions.
           </p>
           <p style="color: #888; font-size: 13px; margin-top: 32px;">
-            — The ${params.projectName} team via IndieAffiliate
+            — The ${params.projectName} team via UnlockAffiliate
           </p>
         </div>
       `,

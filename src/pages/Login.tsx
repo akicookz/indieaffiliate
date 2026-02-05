@@ -32,7 +32,7 @@ function Login() {
               <BarChart3 className="w-5 h-5 text-white" />
             </div>
             <span className="text-xl font-semibold text-primary">
-              IndieAffiliate
+              UnlockAffiliate
             </span>
           </Link>
           <h1 className="text-2xl font-semibold">Welcome back</h1>

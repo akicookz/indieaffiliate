@@ -287,7 +287,7 @@ function JoinPartnerProgram() {
               href="/"
               className="underline hover:text-gray-600 transition-colors"
             >
-              IndieAffiliate
+              UnlockAffiliate
             </a>
           </p>
         </div>

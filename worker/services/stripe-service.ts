@@ -131,7 +131,7 @@ async function getKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt: encoder.encode("indieaffiliate-stripe"),
+      salt: encoder.encode("unlockaffiliate-stripe"),
       iterations: 100000,
       hash: "SHA-256",
     },

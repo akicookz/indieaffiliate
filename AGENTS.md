@@ -1,8 +1,8 @@
-# AGENTS.md - IndieAffiliate
+# AGENTS.md - UnlockAffiliate
 
 ## Project Overview
 
-IndieAffiliate is an affiliate management SPA built with React + TypeScript, bundled by Vite, styled with Tailwind CSS v4 + shadcn/ui, and deployed to Cloudflare Workers. The backend is a Hono-based Cloudflare Worker with D1 (SQLite) database and Better Auth for authentication.
+UnlockAffiliate is an affiliate management SPA built with React + TypeScript, bundled by Vite, styled with Tailwind CSS v4 + shadcn/ui, and deployed to Cloudflare Workers. The backend is a Hono-based Cloudflare Worker with D1 (SQLite) database and Better Auth for authentication.
 
 ## Tech Stack
 
@@ -187,7 +187,7 @@ import StatCard from "@/components/StatCard";
 - Hono context (`HonoAppContext` in `worker/types.ts`) carries `user`, `session`, `db`
 - Auth middleware validates session on all `/api/*` routes (sets `user` to null if unauthenticated)
 - Worker types regenerated via `bun run cf-typegen` after changing `wrangler.jsonc`
-- Migrations: `bunx drizzle-kit generate` then `bunx wrangler d1 migrations apply indieaffiliate-db`
+- Migrations: `bunx drizzle-kit generate` then `bunx wrangler d1 migrations apply unlockaffiliate-db`
 - Secrets (like `BETTER_AUTH_SECRET`) set via `bunx wrangler secret put <NAME>`
 
 ### Routing
