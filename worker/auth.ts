@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { magicLink } from "better-auth/plugins";
 import {
   withCloudflare,
   type CloudflareGeolocation,
@@ -47,6 +48,50 @@ function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
             clientSecret: env?.GITHUB_CLIENT_SECRET ?? "",
           },
         },
+        plugins: [
+          magicLink({
+            sendMagicLink: async ({ email, url }) => {
+              // Send magic link email via Resend
+              if (!env?.RESEND_API_KEY) {
+                console.warn("RESEND_API_KEY not set, magic link URL:", url);
+                return;
+              }
+              await fetch("https://api.resend.com/emails", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${env.RESEND_API_KEY}`,
+                },
+                body: JSON.stringify({
+                  from: "UnlockAffiliate <noreply@unlockaffiliate.com>",
+                  to: [email],
+                  subject: "Your partner dashboard login link",
+                  html: `
+                    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto;">
+                      <h2 style="color: #1a1a1a;">Sign in to your partner dashboard</h2>
+                      <p style="color: #555; line-height: 1.6;">
+                        Click the button below to securely sign in to your affiliate partner dashboard.
+                        This link expires in 5 minutes.
+                      </p>
+                      <div style="margin: 24px 0;">
+                        <a href="${url}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 500;">
+                          Sign in to Dashboard
+                        </a>
+                      </div>
+                      <p style="color: #888; font-size: 13px;">
+                        If you didn't request this link, you can safely ignore this email.
+                      </p>
+                      <p style="color: #888; font-size: 13px; margin-top: 32px;">
+                        — UnlockAffiliate
+                      </p>
+                    </div>
+                  `,
+                }),
+              });
+            },
+            expiresIn: 300, // 5 minutes
+          }),
+        ],
         rateLimit: {
           enabled: true,
           window: 60,

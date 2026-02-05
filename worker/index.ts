@@ -20,6 +20,8 @@ import { BrandingService } from "./services/branding-service";
 import { StripeService } from "./services/stripe-service";
 import { StripeSyncService } from "./services/stripe-sync-service";
 import { FraudService } from "./services/fraud-service";
+import { PartnerDashboardService } from "./services/partner-dashboard-service";
+import { PayoutService } from "./services/payout-service";
 import {
   createProjectSchema,
   updateProjectSchema,
@@ -33,6 +35,8 @@ import {
   updateBrandingSchema,
   joinPartnerSchema,
   updateFraudFlagSchema,
+  createPayoutSchema,
+  updatePayoutSchema,
 } from "./validation";
 
 // ─── Simple IP-based rate limiter (in-memory, per-isolate) ───────────────────
@@ -1063,6 +1067,184 @@ const app = new Hono<HonoAppContext>()
 
     await db.delete(partners).where(eq(partners.id, id));
     return c.json({ success: true });
+  })
+  // ─── Admin Payouts ──────────────────────────────────────────────────────────
+  .get("/api/payouts", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.query("project");
+    const status = c.req.query("status");
+
+    const db = c.get("db");
+    const payoutService = new PayoutService(db);
+    const payoutsList = await payoutService.getPayoutsByUser(user.id, {
+      projectId,
+      status,
+    });
+    const stats = await payoutService.getPayoutStats(user.id, projectId);
+
+    return c.json({ payouts: payoutsList, stats });
+  })
+  .post("/api/payouts", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(createPayoutSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    // Verify user owns the project
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(parsed.data.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    // Verify partner belongs to the project
+    const partnerService = new PartnerService(db);
+    const partner = await partnerService.getPartnerById(parsed.data.partnerId);
+    if (!partner || partner.projectId !== parsed.data.projectId) {
+      return c.json({ error: "Partner not found" }, 404);
+    }
+
+    const payoutService = new PayoutService(db);
+    const payout = await payoutService.createPayout({
+      projectId: parsed.data.projectId,
+      partnerId: parsed.data.partnerId,
+      amount: parsed.data.amount,
+      currency: parsed.data.currency ?? "USD",
+      note: parsed.data.note ?? null,
+      periodStart: parsed.data.periodStart ? new Date(parsed.data.periodStart) : null,
+      periodEnd: parsed.data.periodEnd ? new Date(parsed.data.periodEnd) : null,
+      status: "scheduled",
+    });
+
+    return c.json({ payout }, 201);
+  })
+  .patch("/api/payouts/:id", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const id = c.req.param("id");
+    const body = await c.req.json();
+    const parsed = validate(updatePayoutSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const payoutService = new PayoutService(db);
+    const existing = await payoutService.getPayoutById(id);
+    if (!existing) return c.json({ error: "Payout not found" }, 404);
+
+    // Verify ownership
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(existing.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Payout not found" }, 404);
+    }
+
+    const paidAt = parsed.data.status === "paid" ? new Date() : undefined;
+    const payout = await payoutService.updatePayoutStatus(id, parsed.data.status, paidAt);
+    return c.json({ payout });
+  })
+  // ─── Partner Portal API (partner-facing, auth via session) ──────────────────
+  .get("/api/partner/dashboard", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const db = c.get("db");
+    const dashboardService = new PartnerDashboardService(db);
+
+    // Link user to partner records if not already linked
+    await dashboardService.linkUserToPartners(user.id, user.email);
+
+    const partnerRecords = await dashboardService.getPartnersByUserId(user.id);
+    if (partnerRecords.length === 0) {
+      return c.json({ error: "No partner account found for this email" }, 404);
+    }
+
+    const partnerIds = partnerRecords.map((p) => p.id);
+    const stats = await dashboardService.getDashboardData(partnerIds);
+
+    // Return first partner's info as primary (partner may span multiple projects)
+    const primary = partnerRecords[0];
+    return c.json({
+      partner: {
+        name: primary.name,
+        email: primary.email,
+        referralCode: primary.referralCode,
+        commissionRate: primary.commissionRate,
+        status: primary.status,
+      },
+      programs: partnerRecords.map((p) => ({
+        id: p.id,
+        projectId: p.projectId,
+        referralCode: p.referralCode,
+        commissionRate: p.commissionRate,
+        status: p.status,
+      })),
+      stats,
+    });
+  })
+  .get("/api/partner/referrals", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const db = c.get("db");
+    const dashboardService = new PartnerDashboardService(db);
+    const partnerRecords = await dashboardService.getPartnersByUserId(user.id);
+    if (partnerRecords.length === 0) {
+      return c.json({ error: "No partner account found" }, 404);
+    }
+
+    const partnerIds = partnerRecords.map((p) => p.id);
+    let referrals = await dashboardService.getReferredCustomers(partnerIds);
+
+    // Enrich with Stripe status if encryption key is available
+    const encryptionKey = c.env.ENCRYPTION_KEY;
+    if (encryptionKey) {
+      referrals = await dashboardService.enrichCustomersWithStripeStatus(
+        referrals,
+        partnerIds,
+        encryptionKey,
+        c.env.SALT ?? "",
+      );
+    }
+
+    return c.json({ referrals });
+  })
+  .get("/api/partner/commissions", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const db = c.get("db");
+    const dashboardService = new PartnerDashboardService(db);
+    const partnerRecords = await dashboardService.getPartnersByUserId(user.id);
+    if (partnerRecords.length === 0) {
+      return c.json({ error: "No partner account found" }, 404);
+    }
+
+    const partnerIds = partnerRecords.map((p) => p.id);
+    const commissionsList = await dashboardService.getCommissions(partnerIds);
+
+    return c.json({ commissions: commissionsList });
+  })
+  .get("/api/partner/payouts", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const db = c.get("db");
+    const dashboardService = new PartnerDashboardService(db);
+    const partnerRecords = await dashboardService.getPartnersByUserId(user.id);
+    if (partnerRecords.length === 0) {
+      return c.json({ error: "No partner account found" }, 404);
+    }
+
+    const partnerIds = partnerRecords.map((p) => p.id);
+    const payoutsList = await dashboardService.getPayouts(partnerIds);
+
+    return c.json({ payouts: payoutsList });
   });
 
 // ─── Cron handler for daily Stripe sync ────────────────────────────────────────

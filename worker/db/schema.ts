@@ -45,6 +45,9 @@ export const partners = sqliteTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    userId: text("user_id").references(() => authSchema.users.id, {
+      onDelete: "set null",
+    }), // linked when partner logs in via magic link
     name: text("name").notNull(),
     email: text("email").notNull(),
     status: text("status", { enum: ["active", "pending", "inactive"] })
@@ -65,6 +68,7 @@ export const partners = sqliteTable(
   },
   (table) => [
     index("idx_partners_project").on(table.projectId),
+    index("idx_partners_user").on(table.userId),
     uniqueIndex("idx_partners_email_project").on(
       table.projectId,
       table.email,
@@ -87,7 +91,18 @@ export const customers = sqliteTable(
       .notNull()
       .references(() => partners.id, { onDelete: "cascade" }),
     email: text("email").notNull(),
-    status: text("status", { enum: ["trialing", "paid", "cancelled"] })
+    name: text("name"), // customer display name (optional)
+    stripeCustomerId: text("stripe_customer_id"), // Stripe customer ID for on-demand status lookups
+    status: text("status", {
+      enum: [
+        "trialing",
+        "paid",
+        "cancelled",
+        "past_due",
+        "refunded",
+        "cancels_on",
+      ],
+    })
       .notNull()
       .default("trialing"),
     revenue: real("revenue").notNull().default(0),
@@ -347,6 +362,44 @@ export const fraudFlags = sqliteTable(
 export type FraudFlagRow = typeof fraudFlags.$inferSelect;
 export type NewFraudFlagRow = typeof fraudFlags.$inferInsert;
 
+// Payouts - manual payout records from project owners to partners
+export const payouts = sqliteTable(
+  "payouts",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    amount: real("amount").notNull(),
+    currency: text("currency").notNull().default("USD"),
+    status: text("status", { enum: ["scheduled", "paid", "failed"] })
+      .notNull()
+      .default("scheduled"),
+    note: text("note"), // optional note from the admin
+    periodStart: integer("period_start", { mode: "timestamp" }), // payout period covered
+    periodEnd: integer("period_end", { mode: "timestamp" }),
+    paidAt: integer("paid_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("idx_payouts_project").on(table.projectId),
+    index("idx_payouts_partner").on(table.partnerId),
+    index("idx_payouts_partner_status").on(table.partnerId, table.status),
+  ],
+);
+
+export type PayoutRow = typeof payouts.$inferSelect;
+export type NewPayoutRow = typeof payouts.$inferInsert;
+
 export const schema = {
   ...authSchema,
   projects,
@@ -359,4 +412,5 @@ export const schema = {
   syncLogs,
   projectBranding,
   fraudFlags,
+  payouts,
 } as const;

@@ -81,6 +81,26 @@ export const updateFraudFlagSchema = z.object({
   status: z.enum(["dismissed", "confirmed"]),
 });
 
+// ─── Payouts ──────────────────────────────────────────────────────────────────
+export const createPayoutSchema = z.object({
+  projectId: z.string().min(1, "projectId is required"),
+  partnerId: z.string().min(1, "partnerId is required"),
+  amount: z.number().min(0.01, "Amount must be positive"),
+  currency: z.string().length(3).default("USD").optional(),
+  note: z.string().max(500).nullable().optional(),
+  periodStart: z.string().optional(), // ISO date string
+  periodEnd: z.string().optional(),
+});
+
+export const updatePayoutSchema = z.object({
+  status: z.enum(["scheduled", "paid", "failed"]),
+});
+
+// ─── Partner Magic Link Login ─────────────────────────────────────────────────
+export const partnerMagicLinkSchema = z.object({
+  email: z.string().email("Invalid email address"),
+});
+
 // ─── Stripe ───────────────────────────────────────────────────────────────────
 export const connectStripeSchema = z.object({
   apiKey: z.string().min(1, "Stripe API key is required").startsWith("rk_", "Use a Stripe restricted API key (starts with rk_)"),
