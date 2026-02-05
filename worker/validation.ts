@@ -50,6 +50,24 @@ export const createApiKeySchema = z.object({
   name: z.string().min(1, "Name is required").max(100),
 });
 
+// ─── Branding ─────────────────────────────────────────────────────────────────
+export const updateBrandingSchema = z.object({
+  logo: z.string().nullable().optional(),
+  brandColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Must be a valid hex color").optional(),
+  headline: z.string().min(1).max(200).optional(),
+  description: z.string().max(1000).nullable().optional(),
+  backgroundImage: z.string().nullable().optional(),
+  ctaText: z.string().min(1).max(50).optional(),
+  autoApprove: z.boolean().optional(),
+  defaultCommissionRate: z.number().min(0.01).max(1).optional(),
+});
+
+// ─── Partner Self-Registration ────────────────────────────────────────────────
+export const joinPartnerSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100),
+  email: z.string().email("Invalid email address"),
+});
+
 // ─── Stripe ───────────────────────────────────────────────────────────────────
 export const connectStripeSchema = z.object({
   apiKey: z.string().min(1, "Stripe API key is required").startsWith("rk_", "Use a Stripe restricted API key (starts with rk_)"),

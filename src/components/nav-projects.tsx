@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Settings, Plus, ChevronRight } from "lucide-react";
+import { Settings, Plus, ChevronRight, Palette } from "lucide-react";
 
 import {
   SidebarMenu,
@@ -29,6 +29,11 @@ interface Project {
 }
 
 const subMenuItems = [
+  {
+    name: "Partner Page",
+    url: "partner-page",
+    icon: <Palette className="w-4 h-4" />,
+  },
   {
     name: "Settings",
     url: "settings",

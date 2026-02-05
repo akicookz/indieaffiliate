@@ -81,6 +81,18 @@ export class PartnerService {
     return this.getPartnerById(id);
   }
 
+  async getPartnerByEmail(
+    projectId: string,
+    email: string,
+  ): Promise<PartnerRow | null> {
+    const rows = await this.db
+      .select()
+      .from(partners)
+      .where(and(eq(partners.projectId, projectId), eq(partners.email, email)))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
   async getPartnerStats(userId: string, projectId?: string) {
     const userProjects = await this.db
       .select({ id: projects.id })

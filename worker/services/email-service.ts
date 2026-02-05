@@ -93,4 +93,76 @@ export class EmailService {
     return result !== null;
   }
 
+  /**
+   * Send a welcome email when a partner self-registers and is auto-approved.
+   */
+  async sendPartnerWelcome(params: {
+    partnerName: string;
+    partnerEmail: string;
+    projectName: string;
+    referralCode: string;
+    baseUrl: string;
+  }): Promise<boolean> {
+    const referralLink = `${params.baseUrl}/api/t/${params.referralCode}`;
+
+    const result = await this.sendEmail({
+      to: params.partnerEmail,
+      subject: `Welcome to the ${params.projectName} affiliate program!`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto;">
+          <h2 style="color: #1a1a1a;">Welcome aboard, ${params.partnerName}!</h2>
+          <p style="color: #555; line-height: 1.6;">
+            You've been approved as an affiliate partner for <strong>${params.projectName}</strong>.
+            Start sharing your unique referral link to earn commissions on every customer you refer.
+          </p>
+          <div style="background: #f5f5f5; border-radius: 8px; padding: 16px; margin: 24px 0;">
+            <p style="margin: 0 0 8px; font-size: 13px; color: #888;">Your referral link:</p>
+            <p style="margin: 0; font-family: monospace; font-size: 14px; color: #1a1a1a; word-break: break-all;">
+              ${referralLink}
+            </p>
+          </div>
+          <p style="color: #555; line-height: 1.6;">
+            Your referral code is <strong>${params.referralCode}</strong>. Append <code>?ref=${params.referralCode}</code>
+            to any link to track referrals.
+          </p>
+          <p style="color: #888; font-size: 13px; margin-top: 32px;">
+            — The ${params.projectName} team via IndieAffiliate
+          </p>
+        </div>
+      `,
+    });
+
+    return result !== null;
+  }
+
+  /**
+   * Send a notification when a partner applies and needs approval.
+   */
+  async sendPartnerApplicationReceived(params: {
+    partnerName: string;
+    partnerEmail: string;
+    projectName: string;
+  }): Promise<boolean> {
+    const result = await this.sendEmail({
+      to: params.partnerEmail,
+      subject: `Application received — ${params.projectName} affiliate program`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto;">
+          <h2 style="color: #1a1a1a;">Thanks for applying, ${params.partnerName}!</h2>
+          <p style="color: #555; line-height: 1.6;">
+            Your application to join the <strong>${params.projectName}</strong> affiliate program has been received.
+            We'll review it and get back to you shortly.
+          </p>
+          <p style="color: #555; line-height: 1.6;">
+            Once approved, you'll receive your unique referral link to start earning commissions.
+          </p>
+          <p style="color: #888; font-size: 13px; margin-top: 32px;">
+            — The ${params.projectName} team via IndieAffiliate
+          </p>
+        </div>
+      `,
+    });
+
+    return result !== null;
+  }
 }

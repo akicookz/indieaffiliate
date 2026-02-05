@@ -10,6 +10,7 @@ export interface AppEnv extends Env {
   GITHUB_CLIENT_SECRET: string;
   RESEND_API_KEY?: string;
   ENCRYPTION_KEY?: string;
+  UPLOADS: R2Bucket;
 }
 
 export interface HonoAppContext {

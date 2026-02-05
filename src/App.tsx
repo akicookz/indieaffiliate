@@ -12,6 +12,8 @@ import Customers from "./pages/Customers";
 import Partners from "./pages/Partners";
 import Payouts from "./pages/Payouts";
 import ProjectSettings from "./pages/ProjectSettings";
+import PartnerPageDesigner from "./pages/PartnerPageDesigner";
+import JoinPartnerProgram from "./pages/JoinPartnerProgram";
 
 function App() {
   return (
@@ -19,6 +21,7 @@ function App() {
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
+      <Route path="/join/:slug" element={<JoinPartnerProgram />} />
       <Route path="/api/auth/callback/:provider" element={<AuthCallback />} />
       <Route
         path="/onboarding"
@@ -42,6 +45,7 @@ function App() {
         <Route path="partners" element={<Partners />} />
         <Route path="payouts" element={<Payouts />} />
         <Route path="projects/:slug/settings" element={<ProjectSettings />} />
+        <Route path="projects/:slug/partner-page" element={<PartnerPageDesigner />} />
       </Route>
     </Routes>
   );

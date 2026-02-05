@@ -15,6 +15,7 @@ import { CommissionService } from "./services/commission-service";
 import { AnalyticsService } from "./services/analytics-service";
 import { ApiKeyService } from "./services/api-key-service";
 import { EmailService } from "./services/email-service";
+import { BrandingService } from "./services/branding-service";
 import { StripeService } from "./services/stripe-service";
 import { StripeSyncService } from "./services/stripe-sync-service";
 import {
@@ -27,6 +28,8 @@ import {
   trackConversionSchema,
   createApiKeySchema,
   connectStripeSchema,
+  updateBrandingSchema,
+  joinPartnerSchema,
 } from "./validation";
 
 // ─── Simple IP-based rate limiter (in-memory, per-isolate) ───────────────────
@@ -203,6 +206,112 @@ const app = new Hono<HonoAppContext>()
     });
 
     return c.json(result, 201);
+  })
+  // ─── Public: Serve uploaded images from R2 ─────────────────────────────────
+  .get("/api/uploads/:key", async (c) => {
+    const key = c.req.param("key");
+    const object = await c.env.UPLOADS.get(key);
+    if (!object) return c.text("Not found", 404);
+
+    const headers = new Headers();
+    headers.set("Content-Type", object.httpMetadata?.contentType ?? "application/octet-stream");
+    headers.set("Cache-Control", "public, max-age=31536000, immutable");
+    return new Response(object.body, { headers });
+  })
+  // ─── Public: Get branding for partner join page ───────────────────────────
+  .get("/api/join/:slug", async (c) => {
+    const slug = c.req.param("slug");
+    const db = drizzle(c.env.DB);
+    const brandingService = new BrandingService(db);
+    const result = await brandingService.getBySlug(slug);
+
+    if (!result) {
+      return c.json({ error: "Program not found" }, 404);
+    }
+
+    // Build public-facing response (don't expose internal IDs)
+    const baseUrl = c.req.url.split("/api")[0];
+    return c.json({
+      projectName: result.projectName,
+      brandColor: result.branding.brandColor,
+      headline: result.branding.headline,
+      description: result.branding.description,
+      ctaText: result.branding.ctaText,
+      logo: result.branding.logo ? `${baseUrl}/api/uploads/${result.branding.logo}` : null,
+      backgroundImage: result.branding.backgroundImage
+        ? `${baseUrl}/api/uploads/${result.branding.backgroundImage}`
+        : null,
+    });
+  })
+  // ─── Public: Partner self-registration ────────────────────────────────────
+  .post("/api/join/:slug", async (c) => {
+    const ip = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for") ?? "unknown";
+    if (!checkRateLimit(`join:${ip}`, 5, 60_000)) {
+      return c.json({ error: "Too many requests. Please try again later." }, 429);
+    }
+
+    const slug = c.req.param("slug");
+    const body = await c.req.json();
+    const parsed = validate(joinPartnerSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = drizzle(c.env.DB);
+    const brandingService = new BrandingService(db);
+
+    const brandingResult = await brandingService.getBySlug(slug);
+    if (!brandingResult) {
+      return c.json({ error: "Program not found" }, 404);
+    }
+
+    const branding = brandingResult.branding;
+
+    // Check for duplicate partner
+    const partnerService = new PartnerService(db);
+    const existing = await partnerService.getPartnerByEmail(
+      branding.projectId,
+      parsed.data.email.trim().toLowerCase(),
+    );
+    if (existing) {
+      return c.json({ error: "You've already applied to this program." }, 409);
+    }
+
+    const status = branding.autoApprove ? "active" : "pending";
+    const partner = await partnerService.createPartner({
+      projectId: branding.projectId,
+      name: parsed.data.name.trim(),
+      email: parsed.data.email.trim().toLowerCase(),
+      commissionRate: branding.defaultCommissionRate,
+      status,
+    });
+
+    // Send appropriate email
+    if (c.env.RESEND_API_KEY) {
+      const emailService = new EmailService(c.env.RESEND_API_KEY);
+      const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
+
+      if (branding.autoApprove) {
+        emailService.sendPartnerWelcome({
+          partnerName: partner.name,
+          partnerEmail: partner.email,
+          projectName: brandingResult.projectName,
+          referralCode: partner.referralCode,
+          baseUrl,
+        }).catch((err) => console.error("Failed to send partner welcome:", err));
+      } else {
+        emailService.sendPartnerApplicationReceived({
+          partnerName: partner.name,
+          partnerEmail: partner.email,
+          projectName: brandingResult.projectName,
+        }).catch((err) => console.error("Failed to send application received:", err));
+      }
+    }
+
+    return c.json({
+      status,
+      message: branding.autoApprove
+        ? "Welcome! Check your email for your referral link."
+        : "Application submitted! We'll review it and get back to you.",
+    }, 201);
   })
   // ─── Auth middleware ────────────────────────────────────────────────────────
   .use("/api/*", async (c, next) => {
@@ -645,6 +754,100 @@ const app = new Hono<HonoAppContext>()
     const result = await syncService.syncProject(projectId);
 
     return c.json(result);
+  })
+  // ─── Branding ──────────────────────────────────────────────────────────────
+  .get("/api/projects/:id/branding", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const brandingService = new BrandingService(db);
+    const branding = await brandingService.getByProjectId(projectId);
+
+    // Return defaults if no branding exists yet
+    const baseUrl = c.req.url.split("/api")[0];
+    return c.json({
+      branding: branding
+        ? {
+            ...branding,
+            logo: branding.logo ? `${baseUrl}/api/uploads/${branding.logo}` : null,
+            backgroundImage: branding.backgroundImage
+              ? `${baseUrl}/api/uploads/${branding.backgroundImage}`
+              : null,
+          }
+        : null,
+      joinUrl: `${baseUrl}/join/${project.slug}`,
+    });
+  })
+  .put("/api/projects/:id/branding", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const body = await c.req.json();
+    const parsed = validate(updateBrandingSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const brandingService = new BrandingService(db);
+    const branding = await brandingService.upsert(projectId, parsed.data);
+
+    const baseUrl = c.req.url.split("/api")[0];
+    return c.json({
+      branding: {
+        ...branding,
+        logo: branding.logo ? `${baseUrl}/api/uploads/${branding.logo}` : null,
+        backgroundImage: branding.backgroundImage
+          ? `${baseUrl}/api/uploads/${branding.backgroundImage}`
+          : null,
+      },
+      joinUrl: `${baseUrl}/join/${project.slug}`,
+    });
+  })
+  // ─── Image Upload ──────────────────────────────────────────────────────────
+  .post("/api/upload", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const formData = await c.req.formData();
+    const file = formData.get("file");
+    if (!(file instanceof File)) {
+      return c.json({ error: "No file provided" }, 400);
+    }
+
+    // Validate file type
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/svg+xml"];
+    if (!allowedTypes.includes(file.type)) {
+      return c.json({ error: "Only JPEG, PNG, WebP, and SVG images are allowed" }, 400);
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      return c.json({ error: "File must be under 5MB" }, 400);
+    }
+
+    const ext = file.name.split(".").pop() ?? "bin";
+    const key = `${user.id}/${crypto.randomUUID()}.${ext}`;
+
+    await c.env.UPLOADS.put(key, file.stream(), {
+      httpMetadata: { contentType: file.type },
+    });
+
+    const baseUrl = c.req.url.split("/api")[0];
+    return c.json({ key, url: `${baseUrl}/api/uploads/${key}` }, 201);
   })
   // ─── Delete endpoints ───────────────────────────────────────────────────────
   .delete("/api/projects/:id", async (c) => {

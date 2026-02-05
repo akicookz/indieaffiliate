@@ -255,6 +255,41 @@ export const syncLogs = sqliteTable(
 export type SyncLogRow = typeof syncLogs.$inferSelect;
 export type NewSyncLogRow = typeof syncLogs.$inferInsert;
 
+// Project Branding - customization settings for the partner sign-up page
+export const projectBranding = sqliteTable(
+  "project_branding",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" })
+      .unique(),
+    logo: text("logo"), // R2 object key
+    brandColor: text("brand_color").notNull().default("#7c3aed"),
+    headline: text("headline").notNull().default("Join our affiliate program"),
+    description: text("description"),
+    backgroundImage: text("background_image"), // R2 object key
+    ctaText: text("cta_text").notNull().default("Become a Partner"),
+    autoApprove: integer("auto_approve", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    defaultCommissionRate: real("default_commission_rate").notNull().default(0.2),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_project_branding_project").on(table.projectId),
+  ],
+);
+
+export type ProjectBrandingRow = typeof projectBranding.$inferSelect;
+export type NewProjectBrandingRow = typeof projectBranding.$inferInsert;
+
 export const schema = {
   ...authSchema,
   projects,
@@ -265,4 +300,5 @@ export const schema = {
   apiKeys,
   stripeConnections,
   syncLogs,
+  projectBranding,
 } as const;

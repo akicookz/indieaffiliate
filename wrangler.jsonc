@@ -20,6 +20,12 @@
 			"migrations_dir": "worker/db/drizzle"
 		}
 	],
+	"r2_buckets": [
+		{
+			"binding": "UPLOADS",
+			"bucket_name": "indieaffiliate-uploads"
+		}
+	],
 	"vars": {
 		"BETTER_AUTH_URL": "http://localhost:8080"
 	},
