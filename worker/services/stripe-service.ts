@@ -9,6 +9,7 @@ export class StripeService {
   constructor(
     private db: DrizzleD1Database<Record<string, unknown>>,
     private encryptionKey: string,
+    private salt: string,
   ) {}
 
   /**
@@ -29,7 +30,7 @@ export class StripeService {
    * Save or update a Stripe connection for a project.
    */
   async saveConnection(projectId: string, apiKey: string): Promise<StripeConnectionRow> {
-    const encrypted = await encrypt(apiKey, this.encryptionKey);
+    const encrypted = await encrypt(apiKey, this.encryptionKey, this.salt);
 
     // Check if connection already exists
     const existing = await this.getConnection(projectId);
@@ -72,7 +73,7 @@ export class StripeService {
   async getDecryptedKey(projectId: string): Promise<string | null> {
     const conn = await this.getConnection(projectId);
     if (!conn) return null;
-    return decrypt(conn.encryptedApiKey, this.encryptionKey);
+    return decrypt(conn.encryptedApiKey, this.encryptionKey, this.salt);
   }
 
   /**
@@ -119,7 +120,7 @@ export class StripeService {
 
 // ─── AES-GCM Encryption Helpers ──────────────────────────────────────────────
 
-async function getKey(secret: string): Promise<CryptoKey> {
+async function getKey(secret: string, salt: string): Promise<CryptoKey> {
   const encoder = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
@@ -131,7 +132,7 @@ async function getKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt: encoder.encode("unlockaffiliate-stripe"),
+      salt: encoder.encode(salt),
       iterations: 100000,
       hash: "SHA-256",
     },
@@ -142,8 +143,8 @@ async function getKey(secret: string): Promise<CryptoKey> {
   );
 }
 
-async function encrypt(plaintext: string, secret: string): Promise<string> {
-  const key = await getKey(secret);
+async function encrypt(plaintext: string, secret: string, salt: string): Promise<string> {
+  const key = await getKey(secret, salt);
   const encoder = new TextEncoder();
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encrypted = await crypto.subtle.encrypt(
@@ -158,8 +159,8 @@ async function encrypt(plaintext: string, secret: string): Promise<string> {
   return btoa(String.fromCharCode(...combined));
 }
 
-async function decrypt(ciphertext: string, secret: string): Promise<string> {
-  const key = await getKey(secret);
+async function decrypt(ciphertext: string, secret: string, salt: string): Promise<string> {
+  const key = await getKey(secret, salt);
   const combined = Uint8Array.from(atob(ciphertext), (c) => c.charCodeAt(0));
   const iv = combined.slice(0, 12);
   const data = combined.slice(12);

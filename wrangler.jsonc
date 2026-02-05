@@ -27,7 +27,7 @@
 		}
 	],
 	"vars": {
-		"BETTER_AUTH_URL": "http://localhost:8080"
+		"BETTER_AUTH_URL": "http://localhost:5173"
 	},
 	"triggers": {
 		"crons": ["0 6 * * *"]

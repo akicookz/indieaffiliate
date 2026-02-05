@@ -664,7 +664,7 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Project not found" }, 404);
     }
 
-    const stripeService = new StripeService(db, c.env.ENCRYPTION_KEY ?? "");
+    const stripeService = new StripeService(db, c.env.ENCRYPTION_KEY ?? "", c.env.SALT ?? "");
     const conn = await stripeService.getConnection(projectId);
 
     if (!conn) {
@@ -700,7 +700,7 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Encryption not configured" }, 500);
     }
 
-    const stripeService = new StripeService(db, encryptionKey);
+    const stripeService = new StripeService(db, encryptionKey, c.env.SALT ?? "");
 
     // Validate the key with Stripe
     const isValid = await stripeService.validateStripeKey(parsed.data.apiKey);
@@ -723,7 +723,7 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Project not found" }, 404);
     }
 
-    const stripeService = new StripeService(db, c.env.ENCRYPTION_KEY ?? "");
+    const stripeService = new StripeService(db, c.env.ENCRYPTION_KEY ?? "", c.env.SALT ?? "");
     await stripeService.removeConnection(projectId);
     return c.json({ success: true });
   })
@@ -744,7 +744,7 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Encryption not configured" }, 500);
     }
 
-    const stripeService = new StripeService(db, encryptionKey);
+    const stripeService = new StripeService(db, encryptionKey, c.env.SALT ?? "");
     const conn = await stripeService.getConnection(projectId);
     if (!conn) {
       return c.json({ error: "Stripe not connected" }, 400);
@@ -898,7 +898,7 @@ async function handleScheduled(env: AppEnv): Promise<void> {
   }
 
   const db = drizzle(env.DB);
-  const stripeService = new StripeService(db, encryptionKey);
+  const stripeService = new StripeService(db, encryptionKey, env.SALT ?? "");
   const syncService = new StripeSyncService(db, stripeService);
 
   const connections = await stripeService.getAllConnections();
