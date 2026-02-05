@@ -35,11 +35,11 @@ export class AnalyticsService {
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const sinceUnix = Math.floor(since.getTime() / 1000);
 
-    // Clicks by day
+    // Clicks by day (unique only)
     const clicksByDay = await this.db
       .select({
         date: sql<string>`date(${clicks.createdAt}, 'unixepoch')`.as("date"),
-        count: sql<number>`count(*)`.as("count"),
+        count: sql<number>`coalesce(sum(case when ${clicks.isUnique} = 1 then 1 else 0 end), 0)`.as("count"),
       })
       .from(clicks)
       .where(
@@ -84,11 +84,11 @@ export class AnalyticsService {
       .groupBy(sql`date(${commissions.createdAt}, 'unixepoch')`)
       .orderBy(sql`date(${commissions.createdAt}, 'unixepoch')`);
 
-    // Top partners by clicks in period
+    // Top partners by unique clicks in period
     const topPartners = await this.db
       .select({
         partnerId: clicks.partnerId,
-        clickCount: sql<number>`count(*)`.as("click_count"),
+        clickCount: sql<number>`coalesce(sum(case when ${clicks.isUnique} = 1 then 1 else 0 end), 0)`.as("click_count"),
       })
       .from(clicks)
       .where(
@@ -98,7 +98,7 @@ export class AnalyticsService {
         ),
       )
       .groupBy(clicks.partnerId)
-      .orderBy(sql`count(*) desc`)
+      .orderBy(sql`coalesce(sum(case when ${clicks.isUnique} = 1 then 1 else 0 end), 0) desc`)
       .limit(10);
 
     // Get partner details for top partners
@@ -117,9 +117,9 @@ export class AnalyticsService {
       : [];
     const partnerMap = new Map(partnerRows.map((p) => [p.id, p]));
 
-    // Totals
+    // Totals (unique clicks only)
     const totalClicks = await this.db
-      .select({ count: sql<number>`count(*)` })
+      .select({ count: sql<number>`coalesce(sum(case when ${clicks.isUnique} = 1 then 1 else 0 end), 0)` })
       .from(clicks)
       .where(
         and(

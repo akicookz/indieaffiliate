@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { generateTrackingSnippet } from "@/lib/utils";
 
 interface Project {
   id: string;
@@ -271,22 +272,7 @@ function ProjectSettings() {
     );
   }
 
-  const trackingSnippet = `<script>
-(function() {
-  var ref = new URLSearchParams(window.location.search).get('ref');
-  if (ref) {
-    document.cookie = '__ia_ref=' + ref + ';path=/;max-age=' + (30*24*60*60) + ';SameSite=Lax;Secure';
-    fetch('${window.location.origin}/api/track/click', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        referralCode: ref,
-        landingPage: window.location.href
-      })
-    });
-  }
-})();
-</script>`;
+  const trackingSnippet = generateTrackingSnippet(window.location.origin);
 
   function handleCopySnippet() {
     navigator.clipboard.writeText(trackingSnippet).then(() => {

@@ -29,6 +29,13 @@ export const updatePartnerSchema = z.object({
 // ─── Commissions ──────────────────────────────────────────────────────────────
 export const updateCommissionSchema = z.object({
   status: z.enum(["pending", "approved", "paid", "rejected"]),
+  fraudFlag: z.enum([
+    "self_referral",
+    "bot_click",
+    "revenue_cap",
+    "suspicious_activity",
+    "policy_violation",
+  ]).optional(),
 });
 
 // ─── Tracking ─────────────────────────────────────────────────────────────────
@@ -42,6 +49,7 @@ export const trackConversionSchema = z.object({
   customerEmail: z.string().email("Invalid customer email"),
   revenue: z.number().min(0, "Revenue must be non-negative"),
   customerStatus: z.enum(["trialing", "paid", "cancelled"]).optional(),
+  eventId: z.string().max(255).optional(),
 });
 
 // ─── API Keys ─────────────────────────────────────────────────────────────────
@@ -66,6 +74,11 @@ export const updateBrandingSchema = z.object({
 export const joinPartnerSchema = z.object({
   name: z.string().min(1, "Name is required").max(100),
   email: z.string().email("Invalid email address"),
+});
+
+// ─── Fraud Flags ──────────────────────────────────────────────────────────────
+export const updateFraudFlagSchema = z.object({
+  status: z.enum(["dismissed", "confirmed"]),
 });
 
 // ─── Stripe ───────────────────────────────────────────────────────────────────

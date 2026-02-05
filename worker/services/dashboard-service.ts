@@ -73,9 +73,9 @@ export class DashboardService {
       : [];
     const partnerMap = new Map(partnerRows.map((p) => [p.id, p.name]));
 
-    // Get click count
+    // Get click count (unique clicks only — deduplicated by IP+referralCode)
     const clickStats = await this.db
-      .select({ count: sql<number>`count(*)` })
+      .select({ count: sql<number>`coalesce(sum(case when ${clicks.isUnique} = 1 then 1 else 0 end), 0)` })
       .from(clicks)
       .where(inArray(clicks.projectId, projectIds));
     const totalClicks = clickStats[0]?.count ?? 0;

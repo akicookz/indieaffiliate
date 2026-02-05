@@ -52,6 +52,7 @@ export const partners = sqliteTable(
       .default("pending"),
     commissionRate: real("commission_rate").notNull().default(0.2),
     referralCode: text("referral_code").notNull().unique(),
+    registrationIp: text("registration_ip"), // hashed IP at join time
     totalRevenue: real("total_revenue").notNull().default(0),
     referredCustomers: integer("referred_customers").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp" })
@@ -101,6 +102,7 @@ export const customers = sqliteTable(
   (table) => [
     index("idx_customers_project").on(table.projectId),
     index("idx_customers_partner").on(table.partnerId),
+    uniqueIndex("idx_customers_project_email").on(table.projectId, table.email),
   ],
 );
 
@@ -123,6 +125,11 @@ export const clicks = sqliteTable(
     userAgent: text("user_agent"),
     referrer: text("referrer"),
     landingPage: text("landing_page"),
+    isUnique: integer("is_unique", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    country: text("country"),
+    botScore: integer("bot_score"),
     createdAt: integer("created_at", { mode: "timestamp" })
       .default(sql`(unixepoch())`)
       .notNull(),
@@ -131,6 +138,7 @@ export const clicks = sqliteTable(
     index("idx_clicks_project").on(table.projectId),
     index("idx_clicks_partner").on(table.partnerId),
     index("idx_clicks_referral_created").on(table.referralCode, table.createdAt),
+    index("idx_clicks_ip_referral_created").on(table.ip, table.referralCode, table.createdAt),
   ],
 );
 
@@ -156,6 +164,8 @@ export const commissions = sqliteTable(
     status: text("status", { enum: ["pending", "approved", "paid", "rejected"] })
       .notNull()
       .default("pending"),
+    externalEventId: text("external_event_id"),
+    fraudFlag: text("fraud_flag"),
     createdAt: integer("created_at", { mode: "timestamp" })
       .default(sql`(unixepoch())`)
       .notNull(),
@@ -167,6 +177,7 @@ export const commissions = sqliteTable(
   (table) => [
     index("idx_commissions_partner_status").on(table.partnerId, table.status),
     index("idx_commissions_project").on(table.projectId),
+    index("idx_commissions_event").on(table.projectId, table.externalEventId),
   ],
 );
 
@@ -290,6 +301,52 @@ export const projectBranding = sqliteTable(
 export type ProjectBrandingRow = typeof projectBranding.$inferSelect;
 export type NewProjectBrandingRow = typeof projectBranding.$inferInsert;
 
+// Fraud Flags - system-detected and user-confirmed fraud signals
+export const fraudFlags = sqliteTable(
+  "fraud_flags",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id").references(() => partners.id, {
+      onDelete: "set null",
+    }),
+    type: text("type", {
+      enum: [
+        "self_referral",
+        "owner_as_partner",
+        "duplicate_commission",
+        "click_flood",
+        "bot_click",
+        "geo_mismatch",
+        "velocity_spike",
+        "multi_account",
+        "customer_reuse",
+        "revenue_cap",
+        "manual",
+      ],
+    }).notNull(),
+    severity: text("severity", { enum: ["low", "medium", "high"] }).notNull(),
+    status: text("status", { enum: ["open", "dismissed", "confirmed"] })
+      .notNull()
+      .default("open"),
+    details: text("details").notNull(), // JSON blob with context
+    relatedCommissionId: text("related_commission_id"),
+    relatedClickId: text("related_click_id"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+  },
+  (table) => [
+    index("idx_fraud_flags_project_status").on(table.projectId, table.status),
+    index("idx_fraud_flags_partner").on(table.partnerId),
+  ],
+);
+
+export type FraudFlagRow = typeof fraudFlags.$inferSelect;
+export type NewFraudFlagRow = typeof fraudFlags.$inferInsert;
+
 export const schema = {
   ...authSchema,
   projects,
@@ -301,4 +358,5 @@ export const schema = {
   stripeConnections,
   syncLogs,
   projectBranding,
+  fraudFlags,
 } as const;

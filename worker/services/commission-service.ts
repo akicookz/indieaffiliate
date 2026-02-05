@@ -8,12 +8,14 @@ import {
   type CommissionRow,
   type NewCommissionRow,
 } from "../db";
+import { FraudService } from "./fraud-service";
 
 export class CommissionService {
   constructor(private db: DrizzleD1Database<Record<string, unknown>>) {}
 
   /**
    * Record a conversion: create/update customer, calculate commission, update partner counters.
+   * Includes fraud detection: idempotency, self-referral, revenue cap, velocity, customer reuse, geo mismatch.
    */
   async recordConversion(data: {
     partnerId: string;
@@ -21,8 +23,28 @@ export class CommissionService {
     customerEmail: string;
     revenue: number;
     customerStatus?: "trialing" | "paid" | "cancelled";
-  }): Promise<{ customerId: string; commissionId: string; commissionAmount: number }> {
-    // Get partner to snapshot commission rate
+    eventId?: string;
+    conversionCountry?: string;
+  }): Promise<{ customerId: string; commissionId: string; commissionAmount: number; isDuplicate?: boolean }> {
+    const fraudService = new FraudService(this.db);
+
+    // ─── Idempotency check ────────────────────────────────────────────────
+    if (data.eventId) {
+      const existing = await fraudService.checkDuplicateCommission(
+        data.projectId,
+        data.eventId,
+      );
+      if (existing) {
+        return {
+          customerId: existing.customerId,
+          commissionId: existing.commissionId,
+          commissionAmount: existing.commissionAmount,
+          isDuplicate: true,
+        };
+      }
+    }
+
+    // Get partner to snapshot commission rate + email for fraud checks
     const partnerRows = await this.db
       .select()
       .from(partners)
@@ -30,6 +52,26 @@ export class CommissionService {
       .limit(1);
     const partner = partnerRows[0];
     if (!partner) throw new Error("Partner not found");
+
+    // ─── Pre-insert fraud checks ──────────────────────────────────────────
+    let fraudFlag: string | null = null;
+
+    // Self-referral check
+    const selfReferralResult = fraudService.checkSelfReferral(
+      partner.email,
+      data.customerEmail,
+    );
+    if (selfReferralResult) {
+      fraudFlag = "self_referral";
+    }
+
+    // Revenue cap check
+    if (!fraudFlag) {
+      const revenueCapResult = fraudService.checkRevenueCap(data.revenue);
+      if (revenueCapResult) {
+        fraudFlag = "revenue_cap";
+      }
+    }
 
     // Upsert customer (find by email + project, or create)
     const existingCustomer = await this.db
@@ -81,6 +123,8 @@ export class CommissionService {
       amount: commissionAmount,
       rate: partner.commissionRate,
       status: "pending",
+      externalEventId: data.eventId ?? null,
+      fraudFlag,
     };
     await this.db.insert(commissions).values(commissionRow);
 
@@ -101,6 +145,81 @@ export class CommissionService {
           totalRevenue: sql`${partners.totalRevenue} + ${data.revenue}`,
         })
         .where(eq(partners.id, data.partnerId));
+    }
+
+    // ─── Post-insert fraud checks (create flags) ──────────────────────────
+    if (selfReferralResult) {
+      await fraudService.createFlag({
+        projectId: data.projectId,
+        partnerId: data.partnerId,
+        type: selfReferralResult.type,
+        severity: selfReferralResult.severity,
+        details: selfReferralResult.details,
+        relatedCommissionId: commissionId,
+      });
+    }
+
+    const revenueCapResult = fraudService.checkRevenueCap(data.revenue);
+    if (revenueCapResult) {
+      await fraudService.createFlag({
+        projectId: data.projectId,
+        partnerId: data.partnerId,
+        type: revenueCapResult.type,
+        severity: revenueCapResult.severity,
+        details: revenueCapResult.details,
+        relatedCommissionId: commissionId,
+      });
+    }
+
+    // Velocity spike check
+    const velocityResult = await fraudService.checkVelocitySpike(
+      data.partnerId,
+      data.projectId,
+    );
+    if (velocityResult) {
+      await fraudService.createFlag({
+        projectId: data.projectId,
+        partnerId: data.partnerId,
+        type: velocityResult.type,
+        severity: velocityResult.severity,
+        details: velocityResult.details,
+        relatedCommissionId: commissionId,
+      });
+    }
+
+    // Customer reuse check
+    const reuseResult = await fraudService.checkCustomerReuse(
+      data.customerEmail,
+      data.partnerId,
+    );
+    if (reuseResult) {
+      await fraudService.createFlag({
+        projectId: data.projectId,
+        partnerId: data.partnerId,
+        type: reuseResult.type,
+        severity: reuseResult.severity,
+        details: reuseResult.details,
+        relatedCommissionId: commissionId,
+      });
+    }
+
+    // Geo mismatch check
+    if (data.conversionCountry) {
+      const geoResult = await fraudService.checkGeoMismatch(
+        data.partnerId,
+        data.projectId,
+        data.conversionCountry,
+      );
+      if (geoResult) {
+        await fraudService.createFlag({
+          projectId: data.projectId,
+          partnerId: data.partnerId,
+          type: geoResult.type,
+          severity: geoResult.severity,
+          details: geoResult.details,
+          relatedCommissionId: commissionId,
+        });
+      }
     }
 
     return { customerId, commissionId, commissionAmount };
@@ -206,14 +325,21 @@ export class CommissionService {
 
   /**
    * Update a commission's status (approve, reject, mark paid).
+   * Optionally set a fraud flag when rejecting.
    */
   async updateCommissionStatus(
     id: string,
     status: "pending" | "approved" | "paid" | "rejected",
+    fraudFlag?: string,
   ): Promise<CommissionRow | null> {
+    const updates: { status: typeof status; fraudFlag?: string } = { status };
+    if (fraudFlag) {
+      updates.fraudFlag = fraudFlag;
+    }
+
     await this.db
       .update(commissions)
-      .set({ status })
+      .set(updates)
       .where(eq(commissions.id, id));
 
     const rows = await this.db

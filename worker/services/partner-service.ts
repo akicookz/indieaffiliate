@@ -65,6 +65,7 @@ export class PartnerService {
       id,
       referralCode,
       ...data,
+      registrationIp: data.registrationIp ?? null,
     };
     await this.db.insert(partners).values(row);
     return (await this.getPartnerById(id))!;

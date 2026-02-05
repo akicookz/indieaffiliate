@@ -5,6 +5,7 @@ import {
   Clock,
   CheckCircle,
   XCircle,
+  ChevronDown,
 } from "lucide-react";
 import {
   Select,
@@ -12,6 +13,12 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -86,20 +93,25 @@ function Payouts() {
     mutationFn: async ({
       id,
       status,
+      fraudFlag,
     }: {
       id: string;
       status: "approved" | "rejected" | "paid";
+      fraudFlag?: string;
     }) => {
+      const body: { status: string; fraudFlag?: string } = { status };
+      if (fraudFlag) body.fraudFlag = fraudFlag;
       const response = await fetch(`/api/commissions/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(body),
       });
       if (!response.ok) throw new Error("Failed to update commission");
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["commissions"] });
+      queryClient.invalidateQueries({ queryKey: ["fraud-flags"] });
     },
   });
 
@@ -285,21 +297,87 @@ function Payouts() {
                       >
                         <CheckCircle className="w-3.5 h-3.5" />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
-                        onClick={() =>
-                          updateStatusMutation.mutate({
-                            id: commission.id,
-                            status: "rejected",
-                          })
-                        }
-                        disabled={updateStatusMutation.isPending}
-                        aria-label="Reject commission"
-                      >
-                        <XCircle className="w-3.5 h-3.5" />
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            disabled={updateStatusMutation.isPending}
+                            aria-label="Reject commission"
+                          >
+                            <XCircle className="w-3.5 h-3.5 mr-1" />
+                            <ChevronDown className="w-3 h-3" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() =>
+                              updateStatusMutation.mutate({
+                                id: commission.id,
+                                status: "rejected",
+                                fraudFlag: "self_referral",
+                              })
+                            }
+                          >
+                            Self Referral
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() =>
+                              updateStatusMutation.mutate({
+                                id: commission.id,
+                                status: "rejected",
+                                fraudFlag: "bot_click",
+                              })
+                            }
+                          >
+                            Bot / Fake Traffic
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() =>
+                              updateStatusMutation.mutate({
+                                id: commission.id,
+                                status: "rejected",
+                                fraudFlag: "revenue_cap",
+                              })
+                            }
+                          >
+                            Revenue Manipulation
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() =>
+                              updateStatusMutation.mutate({
+                                id: commission.id,
+                                status: "rejected",
+                                fraudFlag: "suspicious_activity",
+                              })
+                            }
+                          >
+                            Suspicious Activity
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() =>
+                              updateStatusMutation.mutate({
+                                id: commission.id,
+                                status: "rejected",
+                                fraudFlag: "policy_violation",
+                              })
+                            }
+                          >
+                            Policy Violation
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() =>
+                              updateStatusMutation.mutate({
+                                id: commission.id,
+                                status: "rejected",
+                              })
+                            }
+                          >
+                            No Reason
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   )}
                   {commission.status === "approved" && (

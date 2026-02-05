@@ -122,6 +122,7 @@ export class StripeSyncService {
           customerEmail: email.toLowerCase(),
           revenue: revenueInDollars,
           customerStatus: "paid",
+          eventId: charge.id,
         });
 
         processedCount++;

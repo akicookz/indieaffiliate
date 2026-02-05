@@ -65,10 +65,7 @@ function Dashboard() {
   });
 
   const projects = projectsData?.projects ?? [];
-
-  if (!projectsLoading && projects.length === 0) {
-    return <Navigate to="/onboarding" replace />;
-  }
+  const shouldRedirectToOnboarding = !projectsLoading && projects.length === 0;
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["dashboard", period, selectedProject],
@@ -83,6 +80,10 @@ function Dashboard() {
     },
     enabled: !projectsLoading && projects.length > 0,
   });
+
+  if (shouldRedirectToOnboarding) {
+    return <Navigate to="/onboarding" replace />;
+  }
 
   if (projectsLoading || isLoading) {
     return (

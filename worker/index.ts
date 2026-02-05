@@ -11,6 +11,7 @@ import { PartnerService } from "./services/partner-service";
 import { CustomerService } from "./services/customer-service";
 import { DashboardService } from "./services/dashboard-service";
 import { TrackingService } from "./services/tracking-service";
+import { hashIP } from "./services/tracking-service";
 import { CommissionService } from "./services/commission-service";
 import { AnalyticsService } from "./services/analytics-service";
 import { ApiKeyService } from "./services/api-key-service";
@@ -18,6 +19,7 @@ import { EmailService } from "./services/email-service";
 import { BrandingService } from "./services/branding-service";
 import { StripeService } from "./services/stripe-service";
 import { StripeSyncService } from "./services/stripe-sync-service";
+import { FraudService } from "./services/fraud-service";
 import {
   createProjectSchema,
   updateProjectSchema,
@@ -30,6 +32,7 @@ import {
   connectStripeSchema,
   updateBrandingSchema,
   joinPartnerSchema,
+  updateFraudFlagSchema,
 } from "./validation";
 
 // ─── Simple IP-based rate limiter (in-memory, per-isolate) ───────────────────
@@ -95,7 +98,14 @@ const app = new Hono<HonoAppContext>()
       return c.text("Invalid referral link", 404);
     }
 
-    // Record click
+    // Extract Cloudflare metadata for fraud detection
+    const cf = c.req.raw.cf as IncomingRequestCfProperties | undefined;
+    const country = cf?.country as string | undefined;
+    const botScore = (cf as Record<string, unknown>)?.botManagement
+      ? ((cf as Record<string, unknown>).botManagement as { score?: number })?.score
+      : undefined;
+
+    // Record click (with fraud detection)
     await trackingService.recordClick({
       partnerId: partner.id,
       projectId: partner.projectId,
@@ -104,6 +114,8 @@ const app = new Hono<HonoAppContext>()
       userAgent: c.req.header("user-agent"),
       referrer: c.req.header("referer"),
       landingPage: c.req.query("url"),
+      country,
+      botScore,
     });
 
     // Set referral cookie (30 days)
@@ -116,6 +128,26 @@ const app = new Hono<HonoAppContext>()
     // Redirect to landing page or return 1x1 pixel
     const redirectUrl = c.req.query("url");
     if (redirectUrl) {
+      // Validate redirect URL against the project's configured domain to
+      // prevent open-redirect attacks (e.g. /api/t/CODE?url=https://evil.com)
+      try {
+        const parsed = new URL(redirectUrl);
+        if (!["http:", "https:"].includes(parsed.protocol)) {
+          return c.text("Invalid redirect URL", 400);
+        }
+        // If the project has a domain configured, enforce it
+        const projectService = new ProjectService(db);
+        const project = await projectService.getProjectById(partner.projectId);
+        if (project?.domain) {
+          const allowedHost = project.domain.toLowerCase().replace(/^www\./, "");
+          const redirectHost = parsed.hostname.toLowerCase().replace(/^www\./, "");
+          if (redirectHost !== allowedHost) {
+            return c.text("Redirect URL does not match project domain", 403);
+          }
+        }
+      } catch {
+        return c.text("Invalid redirect URL", 400);
+      }
       return c.redirect(redirectUrl, 302);
     }
     const pixel = new Uint8Array([
@@ -147,7 +179,14 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Invalid referral code" }, 404);
     }
 
-    const clickId = await trackingService.recordClick({
+    // Extract Cloudflare metadata for fraud detection
+    const cf2 = c.req.raw.cf as IncomingRequestCfProperties | undefined;
+    const clickCountry = cf2?.country as string | undefined;
+    const clickBotScore = (cf2 as Record<string, unknown>)?.botManagement
+      ? ((cf2 as Record<string, unknown>).botManagement as { score?: number })?.score
+      : undefined;
+
+    const { clickId } = await trackingService.recordClick({
       partnerId: partner.id,
       projectId: partner.projectId,
       referralCode: partner.referralCode,
@@ -155,6 +194,8 @@ const app = new Hono<HonoAppContext>()
       userAgent: c.req.header("user-agent"),
       referrer: c.req.header("referer"),
       landingPage: parsed.data.landingPage,
+      country: clickCountry,
+      botScore: clickBotScore,
     });
 
     const maxAge = 30 * 24 * 60 * 60;
@@ -197,15 +238,18 @@ const app = new Hono<HonoAppContext>()
     }
 
     const commissionService = new CommissionService(db);
+    const convCf = c.req.raw.cf as IncomingRequestCfProperties | undefined;
     const result = await commissionService.recordConversion({
       partnerId: partner.id,
       projectId: keyResult.projectId,
       customerEmail: parsed.data.customerEmail.trim().toLowerCase(),
       revenue: parsed.data.revenue,
       customerStatus: parsed.data.customerStatus,
+      eventId: parsed.data.eventId,
+      conversionCountry: convCf?.country as string | undefined,
     });
 
-    return c.json(result, 201);
+    return c.json(result, result.isDuplicate ? 200 : 201);
   })
   // ─── Public: Serve uploaded images from R2 ─────────────────────────────────
   .get("/api/uploads/:key", async (c) => {
@@ -275,6 +319,9 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "You've already applied to this program." }, 409);
     }
 
+    // Hash IP for fraud detection
+    const joinHashedIp = await hashIP(ip);
+
     const status = branding.autoApprove ? "active" : "pending";
     const partner = await partnerService.createPartner({
       projectId: branding.projectId,
@@ -282,7 +329,39 @@ const app = new Hono<HonoAppContext>()
       email: parsed.data.email.trim().toLowerCase(),
       commissionRate: branding.defaultCommissionRate,
       status,
+      registrationIp: joinHashedIp,
     });
+
+    // Fraud checks: owner-as-partner + multi-account
+    const joinFraudService = new FraudService(db);
+    const joinOwnerCheck = await joinFraudService.checkOwnerAsPartner(
+      parsed.data.email.trim().toLowerCase(),
+      branding.projectId,
+    );
+    if (joinOwnerCheck) {
+      await joinFraudService.createFlag({
+        projectId: branding.projectId,
+        partnerId: partner.id,
+        type: joinOwnerCheck.type,
+        severity: joinOwnerCheck.severity,
+        details: joinOwnerCheck.details,
+      });
+    }
+
+    const multiAccountCheck = await joinFraudService.checkMultiAccount(
+      joinHashedIp,
+      branding.projectId,
+      partner.id,
+    );
+    if (multiAccountCheck) {
+      await joinFraudService.createFlag({
+        projectId: branding.projectId,
+        partnerId: partner.id,
+        type: multiAccountCheck.type,
+        severity: multiAccountCheck.severity,
+        details: multiAccountCheck.details,
+      });
+    }
 
     // Send appropriate email
     if (c.env.RESEND_API_KEY) {
@@ -440,6 +519,10 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Project not found" }, 404);
     }
 
+    // Hash IP for fraud detection
+    const partnerIp = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for") ?? "unknown";
+    const hashedPartnerIp = await hashIP(partnerIp);
+
     const partnerService = new PartnerService(db);
     const partner = await partnerService.createPartner({
       projectId: parsed.data.projectId,
@@ -447,7 +530,24 @@ const app = new Hono<HonoAppContext>()
       email: parsed.data.email.trim().toLowerCase(),
       commissionRate: parsed.data.commissionRate ?? 0.2,
       status: "pending",
+      registrationIp: hashedPartnerIp,
     });
+
+    // Fraud checks: owner-as-partner
+    const fraudService = new FraudService(db);
+    const ownerCheck = await fraudService.checkOwnerAsPartner(
+      parsed.data.email.trim().toLowerCase(),
+      parsed.data.projectId,
+    );
+    if (ownerCheck) {
+      await fraudService.createFlag({
+        projectId: parsed.data.projectId,
+        partnerId: partner.id,
+        type: ownerCheck.type,
+        severity: ownerCheck.severity,
+        details: ownerCheck.details,
+      });
+    }
 
     // Send invitation email (async, don't block response)
     if (c.env.RESEND_API_KEY) {
@@ -561,8 +661,84 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Commission not found" }, 404);
     }
 
-    const updated = await commissionService.updateCommissionStatus(id, parsed.data.status);
+    const updated = await commissionService.updateCommissionStatus(
+      id,
+      parsed.data.status,
+      parsed.data.fraudFlag,
+    );
+
+    // When rejecting with a fraud reason, create a confirmed fraud flag
+    if (parsed.data.status === "rejected" && parsed.data.fraudFlag) {
+      const fraudService = new FraudService(db);
+      await fraudService.createFlag({
+        projectId: commission.projectId,
+        partnerId: commission.partnerId,
+        type: parsed.data.fraudFlag as "self_referral",
+        severity: "high",
+        status: "confirmed",
+        details: {
+          commissionId: id,
+          partnerEmail: commission.partnerEmail,
+          customerEmail: commission.customerEmail,
+          amount: commission.amount,
+          reason: parsed.data.fraudFlag,
+        },
+        relatedCommissionId: id,
+      });
+    }
+
     return c.json({ commission: updated });
+  })
+  // ─── Fraud Flags ────────────────────────────────────────────────────────────
+  .get("/api/fraud-flags", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.query("project");
+    if (!projectId) return c.json({ error: "project query param required" }, 400);
+
+    // Verify user owns the project
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const fraudService = new FraudService(db);
+    const flags = await fraudService.getFlagsByProject(projectId, {
+      status: c.req.query("status"),
+      type: c.req.query("type"),
+      severity: c.req.query("severity"),
+    });
+    const stats = await fraudService.getFlagStats(projectId);
+
+    return c.json({ flags, stats });
+  })
+  .patch("/api/fraud-flags/:id", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const flagId = c.req.param("id");
+    const body = await c.req.json();
+    const parsed = validate(updateFraudFlagSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const fraudService = new FraudService(db);
+
+    // Verify ownership: flag must belong to a project the user owns
+    const flag = await fraudService.getFlagById(flagId);
+    if (!flag) return c.json({ error: "Flag not found" }, 404);
+
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(flag.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Flag not found" }, 404);
+    }
+
+    const updated = await fraudService.updateFlagStatus(flagId, parsed.data.status);
+    return c.json({ flag: updated });
   })
   // ─── API Keys ───────────────────────────────────────────────────────────────
   .get("/api/api-keys", async (c) => {
