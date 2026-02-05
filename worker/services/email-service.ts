@@ -1,7 +1,11 @@
 /**
- * Email service using Resend API.
- * Sends transactional emails via raw fetch (no SDK needed on Workers).
+ * Email service using Resend SDK.
+ * Sends transactional emails for partner management.
  */
+
+import { Resend } from "resend";
+
+const DEFAULT_FROM = "UnlockAffiliate <hello@updates.unlockaffiliate.com>";
 
 interface SendEmailParams {
   to: string;
@@ -11,41 +15,28 @@ interface SendEmailParams {
 }
 
 export class EmailService {
-  private apiKey: string;
+  private resend: Resend;
   private defaultFrom: string;
 
-  constructor(apiKey: string, defaultFrom = "UnlockAffiliate <noreply@unlockaffiliate.com>") {
-    this.apiKey = apiKey;
+  constructor(apiKey: string, defaultFrom = DEFAULT_FROM) {
+    this.resend = new Resend(apiKey);
     this.defaultFrom = defaultFrom;
   }
 
   async sendEmail(params: SendEmailParams): Promise<{ id: string } | null> {
-    if (!this.apiKey) {
-      console.warn("RESEND_API_KEY not set, skipping email");
-      return null;
-    }
-
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({
-        from: params.from ?? this.defaultFrom,
-        to: [params.to],
-        subject: params.subject,
-        html: params.html,
-      }),
+    const { data, error } = await this.resend.emails.send({
+      from: params.from ?? this.defaultFrom,
+      to: [params.to],
+      subject: params.subject,
+      html: params.html,
     });
 
-    if (!response.ok) {
-      const error = await response.text();
-      console.error("Resend email error:", error);
+    if (error) {
+      console.error("Resend email error:", error.message);
       return null;
     }
 
-    return response.json();
+    return data;
   }
 
   /**

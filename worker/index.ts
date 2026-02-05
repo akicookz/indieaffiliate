@@ -368,25 +368,23 @@ const app = new Hono<HonoAppContext>()
     }
 
     // Send appropriate email
-    if (c.env.RESEND_API_KEY) {
-      const emailService = new EmailService(c.env.RESEND_API_KEY);
-      const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
+    const emailService = new EmailService(c.env.RESEND_API_KEY);
+    const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
 
-      if (branding.autoApprove) {
-        emailService.sendPartnerWelcome({
-          partnerName: partner.name,
-          partnerEmail: partner.email,
-          projectName: brandingResult.projectName,
-          referralCode: partner.referralCode,
-          baseUrl,
-        }).catch((err) => console.error("Failed to send partner welcome:", err));
-      } else {
-        emailService.sendPartnerApplicationReceived({
-          partnerName: partner.name,
-          partnerEmail: partner.email,
-          projectName: brandingResult.projectName,
-        }).catch((err) => console.error("Failed to send application received:", err));
-      }
+    if (branding.autoApprove) {
+      emailService.sendPartnerWelcome({
+        partnerName: partner.name,
+        partnerEmail: partner.email,
+        projectName: brandingResult.projectName,
+        referralCode: partner.referralCode,
+        baseUrl,
+      }).catch((err) => console.error("Failed to send partner welcome:", err));
+    } else {
+      emailService.sendPartnerApplicationReceived({
+        partnerName: partner.name,
+        partnerEmail: partner.email,
+        projectName: brandingResult.projectName,
+      }).catch((err) => console.error("Failed to send application received:", err));
     }
 
     return c.json({
@@ -554,17 +552,15 @@ const app = new Hono<HonoAppContext>()
     }
 
     // Send invitation email (async, don't block response)
-    if (c.env.RESEND_API_KEY) {
-      const emailService = new EmailService(c.env.RESEND_API_KEY);
-      const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
-      emailService.sendPartnerInvitation({
-        partnerName: partner.name,
-        partnerEmail: partner.email,
-        projectName: project.name,
-        referralCode: partner.referralCode,
-        baseUrl,
-      }).catch((err) => console.error("Failed to send partner invitation:", err));
-    }
+    const emailService = new EmailService(c.env.RESEND_API_KEY);
+    const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
+    emailService.sendPartnerInvitation({
+      partnerName: partner.name,
+      partnerEmail: partner.email,
+      projectName: project.name,
+      referralCode: partner.referralCode,
+      baseUrl,
+    }).catch((err) => console.error("Failed to send partner invitation:", err));
 
     return c.json({ partner }, 201);
   })
