@@ -1,9 +1,6 @@
 import { type DrizzleD1Database } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
-import {
-  stripeConnections,
-  type StripeConnectionRow,
-} from "../db";
+import { stripeConnections, type StripeConnectionRow } from "../db";
 
 export class StripeService {
   constructor(
@@ -13,14 +10,21 @@ export class StripeService {
   ) {}
 
   /**
-   * Validate a Stripe API key by calling the balance endpoint.
+   * Validate a restricted Stripe API key by confirming access to
+   * customers, subscriptions, and charges.
    */
   async validateStripeKey(apiKey: string): Promise<boolean> {
     try {
-      const response = await fetch("https://api.stripe.com/v1/balance", {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-      return response.ok;
+      const headers = { Authorization: `Bearer ${apiKey}` };
+      const endpoints = [
+        "https://api.stripe.com/v1/customers?limit=1",
+        "https://api.stripe.com/v1/subscriptions?limit=1",
+        "https://api.stripe.com/v1/charges?limit=1",
+      ];
+      const results = await Promise.all(
+        endpoints.map((url) => fetch(url, { headers })),
+      );
+      return results.every((r) => r.ok);
     } catch {
       return false;
     }
@@ -29,7 +33,10 @@ export class StripeService {
   /**
    * Save or update a Stripe connection for a project.
    */
-  async saveConnection(projectId: string, apiKey: string): Promise<StripeConnectionRow> {
+  async saveConnection(
+    projectId: string,
+    apiKey: string,
+  ): Promise<StripeConnectionRow> {
     const encrypted = await encrypt(apiKey, this.encryptionKey, this.salt);
 
     // Check if connection already exists
@@ -116,7 +123,50 @@ export class StripeService {
   async getAllConnections(): Promise<StripeConnectionRow[]> {
     return this.db.select().from(stripeConnections);
   }
+
+  /**
+   * Get metadata mappings for a project's Stripe connection.
+   */
+  async getMetadataMappings(projectId: string): Promise<MetadataMappings> {
+    const conn = await this.getConnection(projectId);
+    if (!conn?.metadataMappings) {
+      return DEFAULT_METADATA_MAPPINGS;
+    }
+    try {
+      return {
+        ...DEFAULT_METADATA_MAPPINGS,
+        ...JSON.parse(conn.metadataMappings),
+      };
+    } catch {
+      return DEFAULT_METADATA_MAPPINGS;
+    }
+  }
+
+  /**
+   * Update metadata mappings for a project's Stripe connection.
+   */
+  async updateMetadataMappings(
+    projectId: string,
+    mappings: MetadataMappings,
+  ): Promise<void> {
+    await this.db
+      .update(stripeConnections)
+      .set({ metadataMappings: JSON.stringify(mappings) })
+      .where(eq(stripeConnections.projectId, projectId));
+  }
 }
+
+// ─── Metadata Mappings Types ─────────────────────────────────────────────────
+
+export interface MetadataMappings {
+  referralCodeKeys: string[];
+  source: "charge_metadata" | "subscription_metadata" | "both";
+}
+
+export const DEFAULT_METADATA_MAPPINGS: MetadataMappings = {
+  referralCodeKeys: ["ref", "referral_code"],
+  source: "both",
+};
 
 // ─── AES-GCM Encryption Helpers ──────────────────────────────────────────────
 
@@ -143,7 +193,11 @@ async function getKey(secret: string, salt: string): Promise<CryptoKey> {
   );
 }
 
-async function encrypt(plaintext: string, secret: string, salt: string): Promise<string> {
+async function encrypt(
+  plaintext: string,
+  secret: string,
+  salt: string,
+): Promise<string> {
   const key = await getKey(secret, salt);
   const encoder = new TextEncoder();
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -159,7 +213,11 @@ async function encrypt(plaintext: string, secret: string, salt: string): Promise
   return btoa(String.fromCharCode(...combined));
 }
 
-async function decrypt(ciphertext: string, secret: string, salt: string): Promise<string> {
+async function decrypt(
+  ciphertext: string,
+  secret: string,
+  salt: string,
+): Promise<string> {
   const key = await getKey(secret, salt);
   const combined = Uint8Array.from(atob(ciphertext), (c) => c.charCodeAt(0));
   const iv = combined.slice(0, 12);

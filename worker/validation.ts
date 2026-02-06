@@ -17,6 +17,7 @@ export const createPartnerSchema = z.object({
   name: z.string().min(1, "Name is required").max(100),
   email: z.string().email("Invalid email address"),
   commissionRate: z.number().min(0.01).max(1).optional(),
+  referralCode: z.string().min(1).max(50).optional(),
 });
 
 export const updatePartnerSchema = z.object({
@@ -104,4 +105,65 @@ export const partnerMagicLinkSchema = z.object({
 // ─── Stripe ───────────────────────────────────────────────────────────────────
 export const connectStripeSchema = z.object({
   apiKey: z.string().min(1, "Stripe API key is required").startsWith("rk_", "Use a Stripe restricted API key (starts with rk_)"),
+});
+
+export const updateMetadataMappingsSchema = z.object({
+  referralCodeKeys: z.array(z.string().min(1).max(100)).min(1, "At least one metadata key is required").max(20),
+  source: z.enum(["charge_metadata", "subscription_metadata", "both"]),
+});
+
+// ─── Import ───────────────────────────────────────────────────────────────────
+
+export const csvImportPartnerSchema = z.object({
+  name: z.string().min(1).max(100),
+  email: z.string().email(),
+  referralCode: z.string().max(50).optional(),
+  commissionRate: z.number().min(0.01).max(1).optional(),
+  status: z.enum(["active", "pending", "inactive"]).optional(),
+});
+
+export const csvImportCustomerSchema = z.object({
+  email: z.string().email(),
+  name: z.string().max(200).optional(),
+  partnerEmail: z.string().email(), // used to link customer to partner
+  revenue: z.number().min(0).optional(),
+  status: z.enum(["trialing", "paid", "cancelled", "past_due", "refunded", "cancels_on"]).optional(),
+});
+
+export const csvImportCommissionSchema = z.object({
+  partnerEmail: z.string().email(),
+  customerEmail: z.string().email(),
+  amount: z.number().min(0),
+  status: z.enum(["pending", "approved", "paid", "rejected"]).optional(),
+});
+
+export const csvImportSchema = z.object({
+  projectId: z.string().min(1, "projectId is required"),
+  partners: z.array(csvImportPartnerSchema).default([]),
+  customers: z.array(csvImportCustomerSchema).default([]),
+  commissions: z.array(csvImportCommissionSchema).default([]),
+  options: z.object({
+    commissionMode: z.enum(["csv", "recalculate"]).default("csv"),
+  }).optional(),
+});
+
+const importFiltersSchema = z.object({
+  status: z.enum(["active", "canceled", "all"]).default("all"),
+  createdAfter: z.string().optional(),
+  createdBefore: z.string().optional(),
+});
+
+export const stripeImportPreviewSchema = z.object({
+  projectId: z.string().min(1),
+  filters: importFiltersSchema.optional(),
+});
+
+export const stripeImportExecuteSchema = z.object({
+  projectId: z.string().min(1),
+  assignments: z.array(z.object({
+    referralCode: z.string().min(1),
+    partnerId: z.string().min(1),
+    action: z.enum(["link", "skip"]),
+  })),
+  filters: importFiltersSchema.optional(),
 });

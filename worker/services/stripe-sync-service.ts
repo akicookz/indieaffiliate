@@ -1,7 +1,7 @@
 import { type DrizzleD1Database } from "drizzle-orm/d1";
 import { eq, and } from "drizzle-orm";
 import { partners, customers, syncLogs } from "../db";
-import { StripeService } from "./stripe-service";
+import { StripeService, type MetadataMappings } from "./stripe-service";
 import { CommissionService } from "./commission-service";
 
 interface StripeCharge {
@@ -12,6 +12,18 @@ interface StripeCharge {
   status: string;
   created: number; // unix timestamp
   metadata?: Record<string, string>;
+}
+
+interface StripeSubscription {
+  id: string;
+  customer: string;
+  status: string;
+  metadata?: Record<string, string>;
+  items?: {
+    data: Array<{
+      price?: { unit_amount: number | null };
+    }>;
+  };
 }
 
 interface StripeCustomer {
@@ -53,6 +65,7 @@ export class StripeSyncService {
         throw new Error("Stripe API key not found");
       }
 
+      const mappings = await this.stripeService.getMetadataMappings(projectId);
       const conn = await this.stripeService.getConnection(projectId);
       const sinceTimestamp = conn?.lastSyncAt
         ? Math.floor(conn.lastSyncAt.getTime() / 1000)
@@ -102,9 +115,8 @@ export class StripeSyncService {
           continue;
         }
 
-        // Try to match via referral: check if charge metadata has a ref code,
-        // or fall back to checking the cookie-based attribution
-        const refCode = charge.metadata?.ref || charge.metadata?.referral_code;
+        // Try to match via referral: check charge metadata using configured keys
+        const refCode = this.extractReferralCode(charge.metadata, mappings);
         const matchedPartner = refCode
           ? projectPartners.find(
               (p) => p.referralCode.toUpperCase() === refCode.toUpperCase(),
@@ -155,7 +167,6 @@ export class StripeSyncService {
       const params = new URLSearchParams({
         "created[gte]": sinceTimestamp.toString(),
         limit: "100",
-        expand: "data.customer",
       });
       if (startingAfter) {
         params.set("starting_after", startingAfter);
@@ -220,5 +231,91 @@ export class StripeSyncService {
         completedAt: new Date(),
       })
       .where(eq(syncLogs.id, logId));
+  }
+
+  /**
+   * Extract a referral code from metadata using configured keys.
+   */
+  private extractReferralCode(
+    metadata: Record<string, string> | undefined,
+    mappings: MetadataMappings,
+  ): string | undefined {
+    if (!metadata) return undefined;
+    for (const key of mappings.referralCodeKeys) {
+      const value = metadata[key];
+      if (value) return value;
+    }
+    return undefined;
+  }
+
+  /**
+   * Fetch subscriptions from Stripe API with pagination and optional filters.
+   */
+  async fetchSubscriptions(
+    apiKey: string,
+    filters?: {
+      status?: "active" | "canceled" | "all";
+      createdAfter?: number;
+      createdBefore?: number;
+    },
+  ): Promise<StripeSubscription[]> {
+    const allSubs: StripeSubscription[] = [];
+    let startingAfter: string | undefined;
+    let hasMore = true;
+
+    while (hasMore) {
+      const params = new URLSearchParams({ limit: "100" });
+      if (filters?.status && filters.status !== "all") {
+        params.set("status", filters.status);
+      }
+      if (filters?.createdAfter) {
+        params.set("created[gte]", filters.createdAfter.toString());
+      }
+      if (filters?.createdBefore) {
+        params.set("created[lte]", filters.createdBefore.toString());
+      }
+      if (startingAfter) {
+        params.set("starting_after", startingAfter);
+      }
+
+      const response = await fetch(
+        `https://api.stripe.com/v1/subscriptions?${params}`,
+        { headers: { Authorization: `Bearer ${apiKey}` } },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Stripe API error: ${response.status}`);
+      }
+
+      const data = (await response.json()) as {
+        data: StripeSubscription[];
+        has_more: boolean;
+      };
+      allSubs.push(...data.data);
+      hasMore = data.has_more;
+      if (data.data.length > 0) {
+        startingAfter = data.data[data.data.length - 1].id;
+      }
+    }
+
+    return allSubs;
+  }
+
+  /**
+   * Get a Stripe customer's full info (email + name).
+   */
+  async getCustomerInfo(
+    apiKey: string,
+    customerId: string,
+  ): Promise<{ email: string | null; name: string | null; id: string }> {
+    const response = await fetch(
+      `https://api.stripe.com/v1/customers/${customerId}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    );
+
+    if (!response.ok) return { email: null, name: null, id: customerId };
+
+    const customer = (await response.json()) as StripeCustomer & { name?: string | null };
+    return { email: customer.email, name: customer.name ?? null, id: customerId };
   }
 }

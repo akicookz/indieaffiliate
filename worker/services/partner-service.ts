@@ -57,15 +57,31 @@ export class PartnerService {
   }
 
   async createPartner(
-    data: Omit<NewPartnerRow, "id" | "createdAt" | "updatedAt" | "referralCode" | "totalRevenue" | "referredCustomers">,
+    data: Omit<NewPartnerRow, "id" | "createdAt" | "updatedAt" | "referralCode" | "totalRevenue" | "referredCustomers"> & { referralCode?: string },
   ): Promise<PartnerRow> {
     const id = crypto.randomUUID();
-    const referralCode = generateReferralCode();
+    let referralCode = data.referralCode ?? generateReferralCode();
+
+    // If a custom code was provided, check for uniqueness
+    if (data.referralCode) {
+      const existing = await this.db
+        .select()
+        .from(partners)
+        .where(eq(partners.referralCode, referralCode))
+        .limit(1);
+      if (existing.length > 0) {
+        // Code already taken, generate a new one
+        referralCode = generateReferralCode();
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { referralCode: _rc, ...rest } = data;
     const row: NewPartnerRow = {
       id,
       referralCode,
-      ...data,
-      registrationIp: data.registrationIp ?? null,
+      ...rest,
+      registrationIp: rest.registrationIp ?? null,
     };
     await this.db.insert(partners).values(row);
     return (await this.getPartnerById(id))!;

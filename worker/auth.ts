@@ -10,7 +10,7 @@ import { Resend } from "resend";
 import { schema } from "./db";
 import { type AppEnv } from "./types";
 
-const ENABLE_DEBUG_LOGS = true;
+const ENABLE_DEBUG_LOGS = false;
 
 function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
   const db = env
@@ -28,15 +28,15 @@ function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
         // better-auth-cloudflare requires a truthy `cf` when geolocation or IP detection is enabled.
         cf: (cf as CloudflareGeolocation) || ({} as CloudflareGeolocation),
         d1: env
-        ? {
-            // better-auth-cloudflare bundles its own drizzle-orm dependency; type-only mismatch can occur.
-            db: db as any,
-            options: {
-              usePlural: true,
-              debugLogs: ENABLE_DEBUG_LOGS,
-            },
-          }
-        : undefined,
+          ? {
+              // better-auth-cloudflare bundles its own drizzle-orm dependency; type-only mismatch can occur.
+              db: db as any,
+              options: {
+                usePlural: true,
+                debugLogs: ENABLE_DEBUG_LOGS,
+              },
+            }
+          : undefined,
       },
       {
         socialProviders: {
@@ -80,7 +80,10 @@ function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
                 `,
               });
               if (error) {
-                console.error("Failed to send magic link email:", error.message);
+                console.error(
+                  "Failed to send magic link email:",
+                  error.message,
+                );
               }
             },
             expiresIn: 300, // 5 minutes

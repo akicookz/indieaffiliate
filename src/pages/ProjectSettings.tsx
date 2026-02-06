@@ -13,6 +13,8 @@ import {
   EyeOff,
   RefreshCw,
   Unplug,
+  ArrowUpRight,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,12 +37,18 @@ interface ApiKey {
   createdAt: string;
 }
 
+interface MetadataMappings {
+  referralCodeKeys: string[];
+  source: "charge_metadata" | "subscription_metadata" | "both";
+}
+
 interface StripeConnection {
   connected: boolean;
   lastSyncAt?: string | null;
   syncStatus?: string;
   syncError?: string | null;
   createdAt?: string;
+  metadataMappings?: MetadataMappings;
 }
 
 function ProjectSettings() {
@@ -62,6 +70,12 @@ function ProjectSettings() {
   // Stripe states
   const [stripeApiKey, setStripeApiKey] = useState("");
   const [showStripeKey, setShowStripeKey] = useState(false);
+
+  // Metadata mapping states
+  const [metadataKeys, setMetadataKeys] = useState<string[]>([]);
+  const [metadataSource, setMetadataSource] = useState<"charge_metadata" | "subscription_metadata" | "both">("both");
+  const [newMetadataKey, setNewMetadataKey] = useState("");
+  const [mappingsDirty, setMappingsDirty] = useState(false);
 
   const { data: projectsData, isLoading } = useQuery({
     queryKey: ["projects"],
@@ -156,6 +170,34 @@ function ProjectSettings() {
       return response.json();
     },
     enabled: !!project?.id,
+  });
+
+  // Initialize metadata mappings from stripe data
+  useEffect(() => {
+    if (stripeData?.metadataMappings) {
+      setMetadataKeys(stripeData.metadataMappings.referralCodeKeys);
+      setMetadataSource(stripeData.metadataMappings.source);
+      setMappingsDirty(false);
+    }
+  }, [stripeData?.metadataMappings]);
+
+  const saveMappingsMutation = useMutation({
+    mutationFn: async ({ projectId, mappings }: { projectId: string; mappings: MetadataMappings }) => {
+      const response = await fetch(`/api/projects/${projectId}/stripe/mappings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(mappings),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error((data as { error?: string }).error ?? "Failed to save mappings");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      setMappingsDirty(false);
+      queryClient.invalidateQueries({ queryKey: ["stripe-connection", project?.id] });
+    },
   });
 
   const deleteMutation = useMutation({
@@ -328,6 +370,32 @@ function ProjectSettings() {
   function handleSyncStripe() {
     if (!project) return;
     syncStripeMutation.mutate(project.id);
+  }
+
+  function handleAddMetadataKey() {
+    const key = newMetadataKey.trim();
+    if (!key || metadataKeys.includes(key)) return;
+    setMetadataKeys([...metadataKeys, key]);
+    setNewMetadataKey("");
+    setMappingsDirty(true);
+  }
+
+  function handleRemoveMetadataKey(key: string) {
+    setMetadataKeys(metadataKeys.filter((k) => k !== key));
+    setMappingsDirty(true);
+  }
+
+  function handleMetadataSourceChange(source: "charge_metadata" | "subscription_metadata" | "both") {
+    setMetadataSource(source);
+    setMappingsDirty(true);
+  }
+
+  function handleSaveMappings() {
+    if (!project) return;
+    saveMappingsMutation.mutate({
+      projectId: project.id,
+      mappings: { referralCodeKeys: metadataKeys, source: metadataSource },
+    });
   }
 
   return (
@@ -635,22 +703,154 @@ function ProjectSettings() {
                     {syncStripeMutation.error.message}
                   </p>
                 )}
+
+                {/* Metadata Mappings */}
+                <div className="border-t border-border pt-4 space-y-3">
+                  <h4 className="text-xs font-medium text-foreground">
+                    Referral Metadata Keys
+                  </h4>
+                  <p className="text-xs text-muted-foreground">
+                    Specify which metadata keys on your Stripe charges/subscriptions
+                    contain the referral code. These are checked in order.
+                  </p>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {metadataKeys.map((key) => (
+                      <span
+                        key={key}
+                        className="inline-flex items-center gap-1 text-xs bg-muted px-2 py-1 rounded-lg font-mono"
+                      >
+                        {key}
+                        <button
+                          onClick={() => handleRemoveMetadataKey(key)}
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label={`Remove ${key}`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={newMetadataKey}
+                      onChange={(e) => setNewMetadataKey(e.target.value)}
+                      placeholder="e.g. referrer_code"
+                      className="h-8 text-xs font-mono flex-1"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleAddMetadataKey();
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8"
+                      onClick={handleAddMetadataKey}
+                      disabled={!newMetadataKey.trim()}
+                    >
+                      Add
+                    </Button>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Look in</Label>
+                    <div className="flex gap-2">
+                      {(["both", "charge_metadata", "subscription_metadata"] as const).map((src) => (
+                        <button
+                          key={src}
+                          className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+                            metadataSource === src
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-border text-muted-foreground hover:border-muted-foreground/30"
+                          }`}
+                          onClick={() => handleMetadataSourceChange(src)}
+                        >
+                          {src === "both" ? "Both" : src === "charge_metadata" ? "Charges" : "Subscriptions"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {mappingsDirty && (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        onClick={handleSaveMappings}
+                        disabled={metadataKeys.length === 0 || saveMappingsMutation.isPending}
+                      >
+                        {saveMappingsMutation.isPending ? "Saving..." : "Save Mappings"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (stripeData?.metadataMappings) {
+                            setMetadataKeys(stripeData.metadataMappings.referralCodeKeys);
+                            setMetadataSource(stripeData.metadataMappings.source);
+                          }
+                          setMappingsDirty(false);
+                        }}
+                      >
+                        Reset
+                      </Button>
+                    </div>
+                  )}
+
+                  {saveMappingsMutation.error && (
+                    <p className="text-xs text-destructive">
+                      {saveMappingsMutation.error.message}
+                    </p>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="space-y-4">
                 <p className="text-sm text-muted-foreground">
                   Connect your Stripe account to automatically track payments and
                   create commissions for referred customers. Use a restricted API key
-                  with read access to charges.
+                  with read access to charges, customers, and subscriptions.
                 </p>
+
+                <div className="bg-muted/30 rounded-xl px-4 py-3 space-y-2">
+                  <p className="text-xs font-medium text-foreground">
+                    Required restricted key permissions:
+                  </p>
+                  <ul className="text-xs text-muted-foreground space-y-1">
+                    <li className="flex items-center gap-2">
+                      <Check className="w-3 h-3 text-green-600 shrink-0" />
+                      Charges — Read
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <Check className="w-3 h-3 text-green-600 shrink-0" />
+                      Customers — Read
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <Check className="w-3 h-3 text-green-600 shrink-0" />
+                      Subscriptions — Read
+                    </li>
+                  </ul>
+                  <a
+                    href="https://dashboard.stripe.com/apikeys/create"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline mt-1"
+                  >
+                    Create restricted key in Stripe Dashboard
+                    <ArrowUpRight className="w-3 h-3" />
+                  </a>
+                </div>
 
                 <form onSubmit={handleConnectStripe} className="space-y-3">
                   <div className="space-y-2">
-                    <Label>Stripe Secret Key</Label>
+                    <Label>Stripe Restricted Key</Label>
                     <div className="relative">
                       <Input
                         type={showStripeKey ? "text" : "password"}
-                        placeholder="sk_live_..."
+                        placeholder="rk_live_..."
                         value={stripeApiKey}
                         onChange={(e) => setStripeApiKey(e.target.value)}
                         required

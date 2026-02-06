@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     ArrowRight,
+    ArrowUpRight,
     BarChart3,
     Check,
     Code,
@@ -258,6 +259,35 @@ function Onboarding() {
                             <p className="text-sm text-muted-foreground">
                                 Used to auto-sync charges with referral metadata into commissions.
                             </p>
+
+                            <div className="bg-muted/30 rounded-xl px-4 py-3 space-y-2">
+                                <p className="text-xs font-medium text-foreground">
+                                    Required restricted key permissions:
+                                </p>
+                                <ul className="text-xs text-muted-foreground space-y-1">
+                                    <li className="flex items-center gap-2">
+                                        <Check className="w-3 h-3 text-green-600 shrink-0" />
+                                        Charges — Read
+                                    </li>
+                                    <li className="flex items-center gap-2">
+                                        <Check className="w-3 h-3 text-green-600 shrink-0" />
+                                        Customers — Read
+                                    </li>
+                                    <li className="flex items-center gap-2">
+                                        <Check className="w-3 h-3 text-green-600 shrink-0" />
+                                        Subscriptions — Read
+                                    </li>
+                                </ul>
+                                <a
+                                    href="https://dashboard.stripe.com/apikeys/create"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline mt-1"
+                                >
+                                    Create restricted key in Stripe Dashboard
+                                    <ArrowUpRight className="w-3 h-3" />
+                                </a>
+                            </div>
 
                             <form onSubmit={handleConnectStripe} className="space-y-3">
                                 <div className="space-y-2">

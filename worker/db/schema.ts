@@ -234,6 +234,7 @@ export const stripeConnections = sqliteTable(
       .references(() => projects.id, { onDelete: "cascade" })
       .unique(),
     encryptedApiKey: text("encrypted_api_key").notNull(), // AES-GCM encrypted
+    metadataMappings: text("metadata_mappings"), // JSON: { referralCodeKeys: string[], source: "charge_metadata" | "subscription_metadata" | "both" }
     lastSyncAt: integer("last_sync_at", { mode: "timestamp" }),
     lastSyncCursor: text("last_sync_cursor"), // for incremental sync
     syncStatus: text("sync_status", { enum: ["idle", "syncing", "error"] })

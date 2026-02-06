@@ -22,6 +22,7 @@ import { StripeSyncService } from "./services/stripe-sync-service";
 import { FraudService } from "./services/fraud-service";
 import { PartnerDashboardService } from "./services/partner-dashboard-service";
 import { PayoutService } from "./services/payout-service";
+import { ImportService } from "./services/import-service";
 import {
   createProjectSchema,
   updateProjectSchema,
@@ -37,12 +38,20 @@ import {
   updateFraudFlagSchema,
   createPayoutSchema,
   updatePayoutSchema,
+  updateMetadataMappingsSchema,
+  csvImportSchema,
+  stripeImportPreviewSchema,
+  stripeImportExecuteSchema,
 } from "./validation";
 
 // ─── Simple IP-based rate limiter (in-memory, per-isolate) ───────────────────
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
-function checkRateLimit(key: string, maxRequests: number, windowMs: number): boolean {
+function checkRateLimit(
+  key: string,
+  maxRequests: number,
+  windowMs: number,
+): boolean {
   const now = Date.now();
   const entry = rateLimitMap.get(key);
   if (!entry || now > entry.resetAt) {
@@ -55,7 +64,16 @@ function checkRateLimit(key: string, maxRequests: number, windowMs: number): boo
 }
 
 // ─── Zod validation helper ───────────────────────────────────────────────────
-function validate<T>(schema: { safeParse: (data: unknown) => { success: boolean; data?: T; error?: { issues: Array<{ message: string }> } } }, data: unknown): { success: true; data: T } | { success: false; error: string } {
+function validate<T>(
+  schema: {
+    safeParse: (data: unknown) => {
+      success: boolean;
+      data?: T;
+      error?: { issues: Array<{ message: string }> };
+    };
+  },
+  data: unknown,
+): { success: true; data: T } | { success: false; error: string } {
   const result = schema.safeParse(data);
   if (result.success) return { success: true, data: result.data as T };
   const message = result.error?.issues?.[0]?.message ?? "Validation failed";
@@ -88,7 +106,10 @@ const app = new Hono<HonoAppContext>()
   // ─── Public Tracking Endpoints (no auth required) ───────────────────────────
   .get("/api/t/:referralCode", async (c) => {
     // Rate limit: 60 req/min per IP
-    const ip = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for") ?? "unknown";
+    const ip =
+      c.req.header("cf-connecting-ip") ??
+      c.req.header("x-forwarded-for") ??
+      "unknown";
     if (!checkRateLimit(`track:${ip}`, 60, 60_000)) {
       return c.text("Rate limit exceeded", 429);
     }
@@ -97,7 +118,8 @@ const app = new Hono<HonoAppContext>()
     const db = drizzle(c.env.DB);
     const trackingService = new TrackingService(db);
 
-    const partner = await trackingService.getPartnerByReferralCode(referralCode);
+    const partner =
+      await trackingService.getPartnerByReferralCode(referralCode);
     if (!partner || partner.status !== "active") {
       return c.text("Invalid referral link", 404);
     }
@@ -106,7 +128,8 @@ const app = new Hono<HonoAppContext>()
     const cf = c.req.raw.cf as IncomingRequestCfProperties | undefined;
     const country = cf?.country as string | undefined;
     const botScore = (cf as Record<string, unknown>)?.botManagement
-      ? ((cf as Record<string, unknown>).botManagement as { score?: number })?.score
+      ? ((cf as Record<string, unknown>).botManagement as { score?: number })
+          ?.score
       : undefined;
 
     // Record click (with fraud detection)
@@ -143,8 +166,12 @@ const app = new Hono<HonoAppContext>()
         const projectService = new ProjectService(db);
         const project = await projectService.getProjectById(partner.projectId);
         if (project?.domain) {
-          const allowedHost = project.domain.toLowerCase().replace(/^www\./, "");
-          const redirectHost = parsed.hostname.toLowerCase().replace(/^www\./, "");
+          const allowedHost = project.domain
+            .toLowerCase()
+            .replace(/^www\./, "");
+          const redirectHost = parsed.hostname
+            .toLowerCase()
+            .replace(/^www\./, "");
           if (redirectHost !== allowedHost) {
             return c.text("Redirect URL does not match project domain", 403);
           }
@@ -155,18 +182,20 @@ const app = new Hono<HonoAppContext>()
       return c.redirect(redirectUrl, 302);
     }
     const pixel = new Uint8Array([
-      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00,
-      0x80, 0x00, 0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x21,
-      0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00,
-      0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44,
-      0x01, 0x00, 0x3b,
+      0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00,
+      0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x00,
+      0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+      0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b,
     ]);
     return new Response(pixel, {
       headers: { "Content-Type": "image/gif", "Cache-Control": "no-store" },
     });
   })
   .post("/api/track/click", async (c) => {
-    const ip = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for") ?? "unknown";
+    const ip =
+      c.req.header("cf-connecting-ip") ??
+      c.req.header("x-forwarded-for") ??
+      "unknown";
     if (!checkRateLimit(`track:${ip}`, 60, 60_000)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
@@ -178,7 +207,9 @@ const app = new Hono<HonoAppContext>()
     const db = drizzle(c.env.DB);
     const trackingService = new TrackingService(db);
 
-    const partner = await trackingService.getPartnerByReferralCode(parsed.data.referralCode);
+    const partner = await trackingService.getPartnerByReferralCode(
+      parsed.data.referralCode,
+    );
     if (!partner || partner.status !== "active") {
       return c.json({ error: "Invalid referral code" }, 404);
     }
@@ -187,7 +218,8 @@ const app = new Hono<HonoAppContext>()
     const cf2 = c.req.raw.cf as IncomingRequestCfProperties | undefined;
     const clickCountry = cf2?.country as string | undefined;
     const clickBotScore = (cf2 as Record<string, unknown>)?.botManagement
-      ? ((cf2 as Record<string, unknown>).botManagement as { score?: number })?.score
+      ? ((cf2 as Record<string, unknown>).botManagement as { score?: number })
+          ?.score
       : undefined;
 
     const { clickId } = await trackingService.recordClick({
@@ -214,7 +246,10 @@ const app = new Hono<HonoAppContext>()
     // ─── API Key Auth ─────────────────────────────────────────────────────────
     const authHeader = c.req.header("authorization");
     if (!authHeader?.startsWith("Bearer ia_")) {
-      return c.json({ error: "API key required. Use Authorization: Bearer ia_xxx" }, 401);
+      return c.json(
+        { error: "API key required. Use Authorization: Bearer ia_xxx" },
+        401,
+      );
     }
     const apiKeyValue = authHeader.slice(7); // remove "Bearer "
 
@@ -235,7 +270,9 @@ const app = new Hono<HonoAppContext>()
     if (!parsed.success) return c.json({ error: parsed.error }, 400);
 
     const trackingService = new TrackingService(db);
-    const partner = await trackingService.getPartnerByReferralCode(parsed.data.referralCode);
+    const partner = await trackingService.getPartnerByReferralCode(
+      parsed.data.referralCode,
+    );
 
     if (!partner || partner.projectId !== keyResult.projectId) {
       return c.json({ error: "Invalid referral code for this project" }, 404);
@@ -262,7 +299,10 @@ const app = new Hono<HonoAppContext>()
     if (!object) return c.text("Not found", 404);
 
     const headers = new Headers();
-    headers.set("Content-Type", object.httpMetadata?.contentType ?? "application/octet-stream");
+    headers.set(
+      "Content-Type",
+      object.httpMetadata?.contentType ?? "application/octet-stream",
+    );
     headers.set("Cache-Control", "public, max-age=31536000, immutable");
     return new Response(object.body, { headers });
   })
@@ -285,7 +325,9 @@ const app = new Hono<HonoAppContext>()
       headline: result.branding.headline,
       description: result.branding.description,
       ctaText: result.branding.ctaText,
-      logo: result.branding.logo ? `${baseUrl}/api/uploads/${result.branding.logo}` : null,
+      logo: result.branding.logo
+        ? `${baseUrl}/api/uploads/${result.branding.logo}`
+        : null,
       backgroundImage: result.branding.backgroundImage
         ? `${baseUrl}/api/uploads/${result.branding.backgroundImage}`
         : null,
@@ -293,9 +335,15 @@ const app = new Hono<HonoAppContext>()
   })
   // ─── Public: Partner self-registration ────────────────────────────────────
   .post("/api/join/:slug", async (c) => {
-    const ip = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for") ?? "unknown";
+    const ip =
+      c.req.header("cf-connecting-ip") ??
+      c.req.header("x-forwarded-for") ??
+      "unknown";
     if (!checkRateLimit(`join:${ip}`, 5, 60_000)) {
-      return c.json({ error: "Too many requests. Please try again later." }, 429);
+      return c.json(
+        { error: "Too many requests. Please try again later." },
+        429,
+      );
     }
 
     const slug = c.req.param("slug");
@@ -372,27 +420,36 @@ const app = new Hono<HonoAppContext>()
     const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
 
     if (branding.autoApprove) {
-      emailService.sendPartnerWelcome({
-        partnerName: partner.name,
-        partnerEmail: partner.email,
-        projectName: brandingResult.projectName,
-        referralCode: partner.referralCode,
-        baseUrl,
-      }).catch((err) => console.error("Failed to send partner welcome:", err));
+      emailService
+        .sendPartnerWelcome({
+          partnerName: partner.name,
+          partnerEmail: partner.email,
+          projectName: brandingResult.projectName,
+          referralCode: partner.referralCode,
+          baseUrl,
+        })
+        .catch((err) => console.error("Failed to send partner welcome:", err));
     } else {
-      emailService.sendPartnerApplicationReceived({
-        partnerName: partner.name,
-        partnerEmail: partner.email,
-        projectName: brandingResult.projectName,
-      }).catch((err) => console.error("Failed to send application received:", err));
+      emailService
+        .sendPartnerApplicationReceived({
+          partnerName: partner.name,
+          partnerEmail: partner.email,
+          projectName: brandingResult.projectName,
+        })
+        .catch((err) =>
+          console.error("Failed to send application received:", err),
+        );
     }
 
-    return c.json({
-      status,
-      message: branding.autoApprove
-        ? "Welcome! Check your email for your referral link."
-        : "Application submitted! We'll review it and get back to you.",
-    }, 201);
+    return c.json(
+      {
+        status,
+        message: branding.autoApprove
+          ? "Welcome! Check your email for your referral link."
+          : "Application submitted! We'll review it and get back to you.",
+      },
+      201,
+    );
   })
   // ─── Auth middleware ────────────────────────────────────────────────────────
   .use("/api/*", async (c, next) => {
@@ -472,7 +529,8 @@ const app = new Hono<HonoAppContext>()
       updates.name = parsed.data.name.trim();
     }
     if (parsed.data.domain !== undefined) {
-      const trimmed = parsed.data.domain === null ? null : parsed.data.domain.trim();
+      const trimmed =
+        parsed.data.domain === null ? null : parsed.data.domain.trim();
       updates.domain = trimmed ? trimmed : null;
     }
 
@@ -522,7 +580,10 @@ const app = new Hono<HonoAppContext>()
     }
 
     // Hash IP for fraud detection
-    const partnerIp = c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for") ?? "unknown";
+    const partnerIp =
+      c.req.header("cf-connecting-ip") ??
+      c.req.header("x-forwarded-for") ??
+      "unknown";
     const hashedPartnerIp = await hashIP(partnerIp);
 
     const partnerService = new PartnerService(db);
@@ -531,6 +592,7 @@ const app = new Hono<HonoAppContext>()
       name: parsed.data.name.trim(),
       email: parsed.data.email.trim().toLowerCase(),
       commissionRate: parsed.data.commissionRate ?? 0.2,
+      referralCode: parsed.data.referralCode,
       status: "pending",
       registrationIp: hashedPartnerIp,
     });
@@ -554,13 +616,15 @@ const app = new Hono<HonoAppContext>()
     // Send invitation email (async, don't block response)
     const emailService = new EmailService(c.env.RESEND_API_KEY);
     const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
-    emailService.sendPartnerInvitation({
-      partnerName: partner.name,
-      partnerEmail: partner.email,
-      projectName: project.name,
-      referralCode: partner.referralCode,
-      baseUrl,
-    }).catch((err) => console.error("Failed to send partner invitation:", err));
+    emailService
+      .sendPartnerInvitation({
+        partnerName: partner.name,
+        partnerEmail: partner.email,
+        projectName: project.name,
+        referralCode: partner.referralCode,
+        baseUrl,
+      })
+      .catch((err) => console.error("Failed to send partner invitation:", err));
 
     return c.json({ partner }, 201);
   })
@@ -634,11 +698,17 @@ const app = new Hono<HonoAppContext>()
 
     const db = c.get("db");
     const commissionService = new CommissionService(db);
-    const commissionsList = await commissionService.getCommissionsByUser(user.id, {
+    const commissionsList = await commissionService.getCommissionsByUser(
+      user.id,
+      {
+        projectId,
+        status,
+      },
+    );
+    const stats = await commissionService.getCommissionStats(
+      user.id,
       projectId,
-      status,
-    });
-    const stats = await commissionService.getCommissionStats(user.id, projectId);
+    );
 
     return c.json({ commissions: commissionsList, stats });
   })
@@ -695,7 +765,8 @@ const app = new Hono<HonoAppContext>()
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const projectId = c.req.query("project");
-    if (!projectId) return c.json({ error: "project query param required" }, 400);
+    if (!projectId)
+      return c.json({ error: "project query param required" }, 400);
 
     // Verify user owns the project
     const db = c.get("db");
@@ -737,7 +808,10 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Flag not found" }, 404);
     }
 
-    const updated = await fraudService.updateFlagStatus(flagId, parsed.data.status);
+    const updated = await fraudService.updateFlagStatus(
+      flagId,
+      parsed.data.status,
+    );
     return c.json({ flag: updated });
   })
   // ─── API Keys ───────────────────────────────────────────────────────────────
@@ -746,7 +820,8 @@ const app = new Hono<HonoAppContext>()
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const projectId = c.req.query("project");
-    if (!projectId) return c.json({ error: "project query param required" }, 400);
+    if (!projectId)
+      return c.json({ error: "project query param required" }, 400);
 
     // Verify ownership
     const db = c.get("db");
@@ -793,13 +868,16 @@ const app = new Hono<HonoAppContext>()
     );
 
     // Return the full key only once
-    return c.json({
-      key, // plaintext, shown once
-      id: row.id,
-      prefix: row.prefix,
-      name: row.name,
-      createdAt: row.createdAt,
-    }, 201);
+    return c.json(
+      {
+        key, // plaintext, shown once
+        id: row.id,
+        prefix: row.prefix,
+        name: row.name,
+        createdAt: row.createdAt,
+      },
+      201,
+    );
   })
   .delete("/api/api-keys/:id", async (c) => {
     const user = c.get("user");
@@ -810,7 +888,9 @@ const app = new Hono<HonoAppContext>()
 
     // We need to verify the key belongs to a project the user owns
     const apiKeyService = new ApiKeyService(db);
-    const allUserProjects = await new ProjectService(db).getProjectsByUserId(user.id);
+    const allUserProjects = await new ProjectService(db).getProjectsByUserId(
+      user.id,
+    );
 
     // Search all user's projects to find this key
     let found = false;
@@ -840,12 +920,18 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Project not found" }, 404);
     }
 
-    const stripeService = new StripeService(db, c.env.ENCRYPTION_KEY ?? "", c.env.SALT ?? "");
+    const stripeService = new StripeService(
+      db,
+      c.env.ENCRYPTION_KEY ?? "",
+      c.env.SALT ?? "",
+    );
     const conn = await stripeService.getConnection(projectId);
 
     if (!conn) {
       return c.json({ connected: false });
     }
+
+    const mappings = await stripeService.getMetadataMappings(projectId);
 
     return c.json({
       connected: true,
@@ -853,6 +939,7 @@ const app = new Hono<HonoAppContext>()
       syncStatus: conn.syncStatus,
       syncError: conn.syncError,
       createdAt: conn.createdAt,
+      metadataMappings: mappings,
     });
   })
   .post("/api/projects/:id/stripe", async (c) => {
@@ -876,7 +963,11 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Encryption not configured" }, 500);
     }
 
-    const stripeService = new StripeService(db, encryptionKey, c.env.SALT ?? "");
+    const stripeService = new StripeService(
+      db,
+      encryptionKey,
+      c.env.SALT ?? "",
+    );
 
     // Validate the key with Stripe
     const isValid = await stripeService.validateStripeKey(parsed.data.apiKey);
@@ -899,7 +990,11 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Project not found" }, 404);
     }
 
-    const stripeService = new StripeService(db, c.env.ENCRYPTION_KEY ?? "", c.env.SALT ?? "");
+    const stripeService = new StripeService(
+      db,
+      c.env.ENCRYPTION_KEY ?? "",
+      c.env.SALT ?? "",
+    );
     await stripeService.removeConnection(projectId);
     return c.json({ success: true });
   })
@@ -920,7 +1015,11 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Encryption not configured" }, 500);
     }
 
-    const stripeService = new StripeService(db, encryptionKey, c.env.SALT ?? "");
+    const stripeService = new StripeService(
+      db,
+      encryptionKey,
+      c.env.SALT ?? "",
+    );
     const conn = await stripeService.getConnection(projectId);
     if (!conn) {
       return c.json({ error: "Stripe not connected" }, 400);
@@ -928,6 +1027,164 @@ const app = new Hono<HonoAppContext>()
 
     const syncService = new StripeSyncService(db, stripeService);
     const result = await syncService.syncProject(projectId);
+
+    return c.json(result);
+  })
+  // ─── Stripe Metadata Mappings ───────────────────────────────────────────────
+  .get("/api/projects/:id/stripe/mappings", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const stripeService = new StripeService(
+      db,
+      c.env.ENCRYPTION_KEY ?? "",
+      c.env.SALT ?? "",
+    );
+    const mappings = await stripeService.getMetadataMappings(projectId);
+    return c.json({ mappings });
+  })
+  .put("/api/projects/:id/stripe/mappings", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const stripeService = new StripeService(
+      db,
+      c.env.ENCRYPTION_KEY ?? "",
+      c.env.SALT ?? "",
+    );
+    const conn = await stripeService.getConnection(projectId);
+    if (!conn) {
+      return c.json({ error: "Stripe not connected" }, 400);
+    }
+
+    const body = await c.req.json();
+    const parsed = validate(updateMetadataMappingsSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    await stripeService.updateMetadataMappings(projectId, parsed.data);
+    return c.json({ mappings: parsed.data });
+  })
+  // ─── Import ─────────────────────────────────────────────────────────────────
+  .post("/api/import/csv", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(csvImportSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(parsed.data.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const importService = new ImportService(db);
+    const result = await importService.importFromCsv(
+      parsed.data.projectId,
+      {
+        partners: parsed.data.partners,
+        customers: parsed.data.customers,
+        commissions: parsed.data.commissions,
+      },
+      parsed.data.options ?? {},
+    );
+
+    return c.json(result);
+  })
+  .post("/api/import/stripe-preview", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(stripeImportPreviewSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(parsed.data.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const encryptionKey = c.env.ENCRYPTION_KEY;
+    if (!encryptionKey) {
+      return c.json({ error: "Encryption not configured" }, 500);
+    }
+
+    const stripeService = new StripeService(
+      db,
+      encryptionKey,
+      c.env.SALT ?? "",
+    );
+    const conn = await stripeService.getConnection(parsed.data.projectId);
+    if (!conn) {
+      return c.json({ error: "Stripe not connected for this project" }, 400);
+    }
+
+    const importService = new ImportService(db);
+    const preview = await importService.previewStripeImport(
+      parsed.data.projectId,
+      stripeService,
+      parsed.data.filters ?? {},
+    );
+
+    return c.json(preview);
+  })
+  .post("/api/import/stripe-execute", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(stripeImportExecuteSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(parsed.data.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const encryptionKey = c.env.ENCRYPTION_KEY;
+    if (!encryptionKey) {
+      return c.json({ error: "Encryption not configured" }, 500);
+    }
+
+    const stripeService = new StripeService(
+      db,
+      encryptionKey,
+      c.env.SALT ?? "",
+    );
+    const conn = await stripeService.getConnection(parsed.data.projectId);
+    if (!conn) {
+      return c.json({ error: "Stripe not connected for this project" }, 400);
+    }
+
+    const importService = new ImportService(db);
+    const result = await importService.executeStripeImport(
+      parsed.data.projectId,
+      stripeService,
+      parsed.data.assignments,
+      parsed.data.filters ?? {},
+    );
 
     return c.json(result);
   })
@@ -953,7 +1210,9 @@ const app = new Hono<HonoAppContext>()
       branding: branding
         ? {
             ...branding,
-            logo: branding.logo ? `${baseUrl}/api/uploads/${branding.logo}` : null,
+            logo: branding.logo
+              ? `${baseUrl}/api/uploads/${branding.logo}`
+              : null,
             backgroundImage: branding.backgroundImage
               ? `${baseUrl}/api/uploads/${branding.backgroundImage}`
               : null,
@@ -1005,9 +1264,17 @@ const app = new Hono<HonoAppContext>()
     }
 
     // Validate file type
-    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/svg+xml"];
+    const allowedTypes = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/svg+xml",
+    ];
     if (!allowedTypes.includes(file.type)) {
-      return c.json({ error: "Only JPEG, PNG, WebP, and SVG images are allowed" }, 400);
+      return c.json(
+        { error: "Only JPEG, PNG, WebP, and SVG images are allowed" },
+        400,
+      );
     }
 
     // Validate file size (max 5MB)
@@ -1112,7 +1379,9 @@ const app = new Hono<HonoAppContext>()
       amount: parsed.data.amount,
       currency: parsed.data.currency ?? "USD",
       note: parsed.data.note ?? null,
-      periodStart: parsed.data.periodStart ? new Date(parsed.data.periodStart) : null,
+      periodStart: parsed.data.periodStart
+        ? new Date(parsed.data.periodStart)
+        : null,
       periodEnd: parsed.data.periodEnd ? new Date(parsed.data.periodEnd) : null,
       status: "scheduled",
     });
@@ -1141,7 +1410,11 @@ const app = new Hono<HonoAppContext>()
     }
 
     const paidAt = parsed.data.status === "paid" ? new Date() : undefined;
-    const payout = await payoutService.updatePayoutStatus(id, parsed.data.status, paidAt);
+    const payout = await payoutService.updatePayoutStatus(
+      id,
+      parsed.data.status,
+      paidAt,
+    );
     return c.json({ payout });
   })
   // ─── Partner Portal API (partner-facing, auth via session) ──────────────────
@@ -1262,7 +1535,9 @@ async function handleScheduled(env: AppEnv): Promise<void> {
     if (conn.syncStatus === "syncing") continue; // skip in-progress syncs
     try {
       const result = await syncService.syncProject(conn.projectId);
-      console.log(`Synced project ${conn.projectId}: ${result.processedCount} processed`);
+      console.log(
+        `Synced project ${conn.projectId}: ${result.processedCount} processed`,
+      );
     } catch (err) {
       console.error(`Failed to sync project ${conn.projectId}:`, err);
     }

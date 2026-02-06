@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import StatCard from "@/components/StatCard";
 import InvitePartnerDialog from "@/components/InvitePartnerDialog";
+import ImportDialog from "@/components/ImportDialog";
 
 interface Partner {
   id: string;
@@ -158,7 +159,10 @@ function Partners() {
             Manage and view all your affiliate partners
           </p>
         </div>
-        <InvitePartnerDialog projects={projects} />
+        <div className="flex items-center gap-2">
+          <ImportDialog projects={projects} />
+          <InvitePartnerDialog projects={projects} />
+        </div>
       </div>
 
       {/* Filters */}
