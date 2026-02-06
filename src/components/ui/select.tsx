@@ -10,6 +10,12 @@ function Select({
   return <SelectPrimitive.Root {...props} />;
 }
 
+function SelectValue({
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Value>) {
+  return <SelectPrimitive.Value {...props} />;
+}
+
 function SelectTrigger({
   className,
   children,
@@ -156,4 +162,5 @@ export {
   SelectScrollUpButton,
   SelectSeparator,
   SelectTrigger,
+  SelectValue,
 };

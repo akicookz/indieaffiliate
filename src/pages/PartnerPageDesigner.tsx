@@ -16,6 +16,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Project {
   id: string;
@@ -33,8 +40,38 @@ interface BrandingData {
   description: string | null;
   backgroundImage: string | null;
   ctaText: string;
+  fontFamily: string;
+  borderRadius: string;
   autoApprove: boolean;
   defaultCommissionRate: number;
+}
+
+const FONT_OPTIONS = [
+  { value: "Inter", label: "Inter" },
+  { value: "Plus Jakarta Sans", label: "Plus Jakarta Sans" },
+  { value: "DM Sans", label: "DM Sans" },
+  { value: "Poppins", label: "Poppins" },
+  { value: "Nunito", label: "Nunito" },
+  { value: "Raleway", label: "Raleway" },
+  { value: "Lato", label: "Lato" },
+  { value: "Open Sans", label: "Open Sans" },
+  { value: "Montserrat", label: "Montserrat" },
+  { value: "Source Sans 3", label: "Source Sans 3" },
+] as const;
+
+const BORDER_RADIUS_OPTIONS = [
+  { value: "rectangle", label: "Rectangle", px: "0px" },
+  { value: "soft", label: "Soft", px: "8px" },
+  { value: "pill", label: "Pill", px: "9999px" },
+] as const;
+
+function getBorderRadiusPx(value: string): string {
+  return BORDER_RADIUS_OPTIONS.find((o) => o.value === value)?.px ?? "8px";
+}
+
+function getGoogleFontUrl(font: string): string {
+  const family = font.replace(/\s+/g, "+");
+  return `https://fonts.googleapis.com/css2?family=${family}:wght@400;500;600;700&display=swap`;
 }
 
 interface BrandingResponse {
@@ -49,6 +86,8 @@ const DEFAULTS = {
   description:
     "Earn commissions by referring customers. Share your unique link and get paid for every conversion.",
   ctaText: "Become a Partner",
+  fontFamily: "Inter",
+  borderRadius: "soft",
   autoApprove: false,
   defaultCommissionRate: 0.2,
 };
@@ -63,6 +102,8 @@ function PartnerPageDesigner() {
   const [headline, setHeadline] = useState(DEFAULTS.headline);
   const [description, setDescription] = useState(DEFAULTS.description);
   const [ctaText, setCtaText] = useState(DEFAULTS.ctaText);
+  const [fontFamily, setFontFamily] = useState(DEFAULTS.fontFamily);
+  const [borderRadius, setBorderRadius] = useState(DEFAULTS.borderRadius);
   const [autoApprove, setAutoApprove] = useState(DEFAULTS.autoApprove);
   const [commissionRate, setCommissionRate] = useState(
     DEFAULTS.defaultCommissionRate * 100,
@@ -74,6 +115,19 @@ function PartnerPageDesigner() {
 
   const logoInputRef = useRef<HTMLInputElement>(null);
   const bgInputRef = useRef<HTMLInputElement>(null);
+
+  // ─── Load Google Font dynamically ────────────────────────────────────────
+  useEffect(() => {
+    const linkId = "branding-google-font";
+    let link = document.getElementById(linkId) as HTMLLinkElement | null;
+    if (!link) {
+      link = document.createElement("link");
+      link.id = linkId;
+      link.rel = "stylesheet";
+      document.head.appendChild(link);
+    }
+    link.href = getGoogleFontUrl(fontFamily);
+  }, [fontFamily]);
 
   // ─── Fetch project ────────────────────────────────────────────────────────
   const { data: projectsData } = useQuery({
@@ -106,6 +160,8 @@ function PartnerPageDesigner() {
     setHeadline(b.headline);
     setDescription(b.description ?? "");
     setCtaText(b.ctaText);
+    setFontFamily(b.fontFamily ?? DEFAULTS.fontFamily);
+    setBorderRadius(b.borderRadius ?? DEFAULTS.borderRadius);
     setAutoApprove(b.autoApprove);
     setCommissionRate(b.defaultCommissionRate * 100);
     setLogoUrl(b.logo);
@@ -149,6 +205,8 @@ function PartnerPageDesigner() {
           headline,
           description: description || null,
           ctaText,
+          fontFamily,
+          borderRadius,
           autoApprove,
           defaultCommissionRate: commissionRate / 100,
           logo: logoKey,
@@ -324,6 +382,58 @@ function PartnerPageDesigner() {
             </div>
           </div>
 
+          {/* Font Family */}
+          <div className="space-y-2">
+            <Label>Font Family</Label>
+            <Select value={fontFamily} onValueChange={setFontFamily}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a font" />
+              </SelectTrigger>
+              <SelectContent>
+                {FONT_OPTIONS.map((font) => (
+                  <SelectItem key={font.value} value={font.value}>
+                    <span style={{ fontFamily: `"${font.value}", sans-serif` }}>
+                      {font.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Border Radius */}
+          <div className="space-y-2">
+            <Label>Border Radius</Label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {BORDER_RADIUS_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setBorderRadius(option.value)}
+                  className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 transition-colors ${
+                    borderRadius === option.value
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-primary/40"
+                  }`}
+                >
+                  <div
+                    className={`w-5 h-4 border-2 shrink-0 ${
+                      borderRadius === option.value
+                        ? "border-primary"
+                        : "border-muted-foreground/40"
+                    }`}
+                    style={{ borderRadius: option.px }}
+                  />
+                  <span className={`text-xs ${
+                    borderRadius === option.value
+                      ? "text-primary font-medium"
+                      : "text-muted-foreground"
+                  }`}>{option.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Headline */}
           <div className="space-y-2">
             <Label htmlFor="headline">Headline</Label>
@@ -458,7 +568,12 @@ function PartnerPageDesigner() {
         {/* ── Right: Live Preview ─────────────────────────────────────────── */}
         <div className="sticky top-6">
           <Label className="mb-3 block">Preview</Label>
-          <div className="rounded-2xl border border-border overflow-hidden shadow-xs bg-white h-[600px]">
+          <div
+            className="rounded-2xl border border-border overflow-hidden shadow-xs bg-white h-[600px]"
+            style={{
+              fontFamily: `"${fontFamily}", sans-serif`,
+            }}
+          >
             <div className="grid grid-cols-2 h-full">
               {/* Preview Left Side */}
               <div
@@ -513,16 +628,25 @@ function PartnerPageDesigner() {
                   <div className="space-y-3">
                     <div className="space-y-1">
                       <div className="text-xs text-gray-500">Name</div>
-                      <div className="h-8 rounded-md border border-gray-200 bg-white" />
+                      <div
+                        className="h-8 border border-gray-200 bg-white"
+                        style={{ borderRadius: getBorderRadiusPx(borderRadius) }}
+                      />
                     </div>
                     <div className="space-y-1">
                       <div className="text-xs text-gray-500">Email</div>
-                      <div className="h-8 rounded-md border border-gray-200 bg-white" />
+                      <div
+                        className="h-8 border border-gray-200 bg-white"
+                        style={{ borderRadius: getBorderRadiusPx(borderRadius) }}
+                      />
                     </div>
                   </div>
                   <div
-                    className="h-9 rounded-md flex items-center justify-center text-white text-sm font-medium"
-                    style={{ backgroundColor: brandColor }}
+                    className="h-9 flex items-center justify-center text-white text-sm font-medium"
+                    style={{
+                      backgroundColor: brandColor,
+                      borderRadius: getBorderRadiusPx(borderRadius),
+                    }}
                   >
                     {ctaText || "Become a Partner"}
                   </div>

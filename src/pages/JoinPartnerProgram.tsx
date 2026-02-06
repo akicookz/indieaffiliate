@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { CheckCircle2, Loader2 } from "lucide-react";
@@ -9,8 +9,25 @@ interface JoinPageData {
   headline: string;
   description: string | null;
   ctaText: string;
+  fontFamily: string;
+  borderRadius: string;
   logo: string | null;
   backgroundImage: string | null;
+}
+
+const BORDER_RADIUS_MAP: Record<string, string> = {
+  rectangle: "0px",
+  soft: "8px",
+  pill: "9999px",
+};
+
+function getBorderRadiusPx(value: string): string {
+  return BORDER_RADIUS_MAP[value] ?? "8px";
+}
+
+function getGoogleFontUrl(font: string): string {
+  const family = font.replace(/\s+/g, "+");
+  return `https://fonts.googleapis.com/css2?family=${family}:wght@400;500;600;700&display=swap`;
 }
 
 function JoinPartnerProgram() {
@@ -52,6 +69,23 @@ function JoinPartnerProgram() {
     },
   });
 
+  const brandColor = pageData?.brandColor || "#7c3aed";
+  const fontFamily = pageData?.fontFamily || "Inter";
+  const radiusPx = getBorderRadiusPx(pageData?.borderRadius || "soft");
+
+  // Load Google Font dynamically — must be before any early returns
+  useEffect(() => {
+    const linkId = "join-page-google-font";
+    let link = document.getElementById(linkId) as HTMLLinkElement | null;
+    if (!link) {
+      link = document.createElement("link");
+      link.id = linkId;
+      link.rel = "stylesheet";
+      document.head.appendChild(link);
+    }
+    link.href = getGoogleFontUrl(fontFamily);
+  }, [fontFamily]);
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !email.trim()) return;
@@ -84,12 +118,13 @@ function JoinPartnerProgram() {
     );
   }
 
-  const brandColor = pageData.brandColor || "#7c3aed";
-
   // ─── Success state ────────────────────────────────────────────────────────
   if (joinMutation.isSuccess) {
     return (
-      <div className="min-h-screen grid grid-cols-1 lg:grid-cols-2">
+      <div
+        className="min-h-screen grid grid-cols-1 lg:grid-cols-2"
+        style={{ fontFamily: `"${fontFamily}", sans-serif` }}
+      >
         {/* Left */}
         <div
           className="relative hidden lg:flex flex-col justify-end p-12"
@@ -149,7 +184,10 @@ function JoinPartnerProgram() {
 
   // ─── Main join page ───────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen grid grid-cols-1 lg:grid-cols-2">
+    <div
+      className="min-h-screen grid grid-cols-1 lg:grid-cols-2"
+      style={{ fontFamily: `"${fontFamily}", sans-serif` }}
+    >
       {/* Left side - Branding */}
       <div
         className="relative hidden lg:flex flex-col justify-end p-12"
@@ -232,9 +270,9 @@ function JoinPartnerProgram() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Jane Smith"
-                className="w-full h-11 rounded-lg border border-gray-200 bg-white px-4 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:border-transparent transition-shadow"
+                className="w-full h-11 border border-gray-200 bg-white px-4 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:border-transparent transition-shadow"
                 style={
-                  { "--tw-ring-color": brandColor } as React.CSSProperties
+                  { "--tw-ring-color": brandColor, borderRadius: radiusPx } as React.CSSProperties
                 }
               />
             </div>
@@ -253,9 +291,9 @@ function JoinPartnerProgram() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="jane@example.com"
-                className="w-full h-11 rounded-lg border border-gray-200 bg-white px-4 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:border-transparent transition-shadow"
+                className="w-full h-11 border border-gray-200 bg-white px-4 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:border-transparent transition-shadow"
                 style={
-                  { "--tw-ring-color": brandColor } as React.CSSProperties
+                  { "--tw-ring-color": brandColor, borderRadius: radiusPx } as React.CSSProperties
                 }
               />
             </div>
@@ -269,8 +307,8 @@ function JoinPartnerProgram() {
             <button
               type="submit"
               disabled={joinMutation.isPending || !name.trim() || !email.trim()}
-              className="w-full h-11 rounded-lg text-white text-sm font-medium transition-opacity hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
-              style={{ backgroundColor: brandColor }}
+              className="w-full h-11 text-white text-sm font-medium transition-opacity hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
+              style={{ backgroundColor: brandColor, borderRadius: radiusPx }}
             >
               {joinMutation.isPending && (
                 <Loader2 className="w-4 h-4 animate-spin" />

@@ -297,6 +297,8 @@ export const projectBranding = sqliteTable(
     description: text("description"),
     backgroundImage: text("background_image"), // R2 object key
     ctaText: text("cta_text").notNull().default("Become a Partner"),
+    fontFamily: text("font_family").notNull().default("Inter"),
+    borderRadius: text("border_radius").notNull().default("soft"),
     autoApprove: integer("auto_approve", { mode: "boolean" })
       .notNull()
       .default(false),

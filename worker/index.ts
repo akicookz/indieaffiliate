@@ -325,6 +325,8 @@ const app = new Hono<HonoAppContext>()
       headline: result.branding.headline,
       description: result.branding.description,
       ctaText: result.branding.ctaText,
+      fontFamily: result.branding.fontFamily,
+      borderRadius: result.branding.borderRadius,
       logo: result.branding.logo
         ? `${baseUrl}/api/uploads/${result.branding.logo}`
         : null,
@@ -1025,8 +1027,17 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Stripe not connected" }, 400);
     }
 
+    // Concurrency guard: prevent multiple syncs running simultaneously
+    if (conn.syncStatus === "syncing") {
+      return c.json({ error: "Sync already in progress" }, 409);
+    }
+
     const syncService = new StripeSyncService(db, stripeService);
     const result = await syncService.syncProject(projectId);
+
+    if (result.error) {
+      return c.json(result, 500);
+    }
 
     return c.json(result);
   })

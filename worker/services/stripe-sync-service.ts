@@ -12,6 +12,7 @@ interface StripeCharge {
   status: string;
   created: number; // unix timestamp
   metadata?: Record<string, string>;
+  invoice?: string | null;
 }
 
 interface StripeSubscription {
@@ -31,6 +32,32 @@ interface StripeCustomer {
   email: string | null;
 }
 
+export interface ReferralCodeInfo {
+  code: string;
+  count: number;
+  matched: boolean;
+  partnerName?: string;
+}
+
+export interface SyncSummary {
+  processedCount: number;
+  chargesFetched: number;
+  subscriptionsFetched: number;
+  customersLookedUp: number;
+  existingCustomersSkipped: number;
+  metadataFound: number;
+  metadataKeys: Record<string, number>; // key -> count of charges/subs with that key
+  partnersMatched: number;
+  unmatchedReferralCodes: string[];
+  referralCodes: ReferralCodeInfo[]; // all discovered referral codes with counts + match status
+  noMetadataCount: number;
+  noCustomerCount: number;
+  failedChargeStatusCount: number;
+  emailLookupFailures: number;
+  duplicateEventsSkipped: number;
+  error?: string;
+}
+
 export class StripeSyncService {
   constructor(
     private db: DrizzleD1Database<Record<string, unknown>>,
@@ -38,21 +65,37 @@ export class StripeSyncService {
   ) {}
 
   /**
-   * Sync a single project: fetch new Stripe charges, match to referrals, create commissions.
+   * Sync a single project: fetch new Stripe charges (and optionally subscriptions),
+   * match to referrals, create commissions. Returns a detailed summary.
    */
-  async syncProject(projectId: string): Promise<{
-    processedCount: number;
-    error?: string;
-  }> {
+  async syncProject(projectId: string): Promise<SyncSummary> {
     const logId = crypto.randomUUID();
     const startedAt = new Date();
+
+    const summary: SyncSummary = {
+      processedCount: 0,
+      chargesFetched: 0,
+      subscriptionsFetched: 0,
+      customersLookedUp: 0,
+      existingCustomersSkipped: 0,
+      metadataFound: 0,
+      metadataKeys: {},
+      partnersMatched: 0,
+      unmatchedReferralCodes: [],
+      referralCodes: [],
+      noMetadataCount: 0,
+      noCustomerCount: 0,
+      failedChargeStatusCount: 0,
+      emailLookupFailures: 0,
+      duplicateEventsSkipped: 0,
+    };
 
     // Record sync start
     await this.db.insert(syncLogs).values({
       id: logId,
       projectId,
       source: "stripe",
-      status: "success",
+      status: "success", // will be updated on error
       processedCount: 0,
       startedAt,
     });
@@ -67,12 +110,11 @@ export class StripeSyncService {
 
       const mappings = await this.stripeService.getMetadataMappings(projectId);
       const conn = await this.stripeService.getConnection(projectId);
+      // For first sync, look back 1 year to catch older subscriptions/charges.
+      // Subsequent syncs use lastSyncAt for incremental fetching.
       const sinceTimestamp = conn?.lastSyncAt
         ? Math.floor(conn.lastSyncAt.getTime() / 1000)
-        : Math.floor((Date.now() - 30 * 24 * 60 * 60 * 1000) / 1000); // default: last 30 days
-
-      // Fetch charges from Stripe
-      const charges = await this.fetchCharges(apiKey, sinceTimestamp);
+        : Math.floor((Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000);
 
       // Get all partners for this project (to match referrals)
       const projectPartners = await this.db
@@ -80,75 +122,205 @@ export class StripeSyncService {
         .from(partners)
         .where(eq(partners.projectId, projectId));
 
-      if (projectPartners.length === 0) {
-        await this.finalizeSyncLog(logId, 0, "success");
-        await this.stripeService.updateSyncStatus(projectId, "idle", undefined, new Date());
-        return { processedCount: 0 };
-      }
+      // Cache customer emails to avoid N+1 Stripe API calls
+      const emailCache = new Map<string, string | null>();
 
       const commissionService = new CommissionService(this.db);
-      let processedCount = 0;
 
-      for (const charge of charges) {
-        if (charge.status !== "succeeded" || !charge.customer) continue;
+      // Build a map of referral codes -> partner for fast matching
+      const partnerByCode = new Map(
+        projectPartners.map((p) => [p.referralCode.toUpperCase(), p]),
+      );
 
-        // Get customer email from Stripe
-        const email = await this.getCustomerEmail(apiKey, charge.customer);
-        if (!email) continue;
+      // Track all discovered referral codes with counts
+      const refCodeCounts = new Map<string, number>();
 
-        // Check if this customer already exists in our system for this project
-        const existingCustomers = await this.db
-          .select()
-          .from(customers)
-          .where(
-            and(
-              eq(customers.projectId, projectId),
-              eq(customers.email, email.toLowerCase()),
-            ),
-          )
-          .limit(1);
+      // ─── Fetch & process charges ─────────────────────────────────────────
+      if (mappings.source === "charge_metadata" || mappings.source === "both") {
+        const charges = await this.fetchCharges(apiKey, sinceTimestamp);
+        summary.chargesFetched = charges.length;
 
-        // If customer exists, they're already attributed — check for new revenue
-        if (existingCustomers[0]) {
-          // For simplicity, skip already-tracked customers to avoid double-counting.
-          // A more sophisticated approach would track individual charge IDs.
-          continue;
-        }
+        for (const charge of charges) {
+          if (charge.status !== "succeeded") {
+            summary.failedChargeStatusCount++;
+            continue;
+          }
+          if (!charge.customer) {
+            summary.noCustomerCount++;
+            continue;
+          }
 
-        // Try to match via referral: check charge metadata using configured keys
-        const refCode = this.extractReferralCode(charge.metadata, mappings);
-        const matchedPartner = refCode
-          ? projectPartners.find(
-              (p) => p.referralCode.toUpperCase() === refCode.toUpperCase(),
+          // Get customer email (cached)
+          const email = await this.getCachedCustomerEmail(apiKey, charge.customer, emailCache);
+          summary.customersLookedUp++;
+          if (!email) {
+            summary.emailLookupFailures++;
+            continue;
+          }
+
+          // Check if this customer already exists in our system for this project
+          const existingCustomers = await this.db
+            .select()
+            .from(customers)
+            .where(
+              and(
+                eq(customers.projectId, projectId),
+                eq(customers.email, email.toLowerCase()),
+              ),
             )
-          : undefined;
+            .limit(1);
 
-        // If no metadata match, skip — we can't attribute without a referral
-        if (!matchedPartner) continue;
+          if (existingCustomers[0]) {
+            summary.existingCustomersSkipped++;
+            continue;
+          }
 
-        const revenueInDollars = charge.amount / 100;
+          // Try to match via referral: check charge metadata using configured keys
+          const refCode = this.extractReferralCode(charge.metadata, mappings);
+          if (refCode) {
+            summary.metadataFound++;
+            refCodeCounts.set(refCode, (refCodeCounts.get(refCode) ?? 0) + 1);
+            // Track which metadata key was found
+            this.trackMetadataKey(charge.metadata, mappings, summary);
+          } else {
+            summary.noMetadataCount++;
+            continue;
+          }
 
-        await commissionService.recordConversion({
-          partnerId: matchedPartner.id,
-          projectId,
-          customerEmail: email.toLowerCase(),
-          revenue: revenueInDollars,
-          customerStatus: "paid",
-          eventId: charge.id,
-        });
+          const matchedPartner = partnerByCode.get(refCode.toUpperCase());
+          if (!matchedPartner) {
+            if (!summary.unmatchedReferralCodes.includes(refCode)) {
+              summary.unmatchedReferralCodes.push(refCode);
+            }
+            continue;
+          }
 
-        processedCount++;
+          summary.partnersMatched++;
+          const revenueInDollars = charge.amount / 100;
+
+          const result = await commissionService.recordConversion({
+            partnerId: matchedPartner.id,
+            projectId,
+            customerEmail: email.toLowerCase(),
+            revenue: revenueInDollars,
+            customerStatus: "paid",
+            eventId: charge.id,
+          });
+
+          if (result.isDuplicate) {
+            summary.duplicateEventsSkipped++;
+          } else {
+            summary.processedCount++;
+          }
+        }
       }
 
-      await this.finalizeSyncLog(logId, processedCount, "success");
+      // ─── Fetch & process subscriptions ───────────────────────────────────
+      if (mappings.source === "subscription_metadata" || mappings.source === "both") {
+        const subscriptions = await this.fetchSubscriptions(apiKey, {
+          status: "all",
+          createdAfter: sinceTimestamp,
+        });
+        summary.subscriptionsFetched = subscriptions.length;
+
+        for (const sub of subscriptions) {
+          if (!sub.customer) {
+            summary.noCustomerCount++;
+            continue;
+          }
+
+          // Get customer email (cached)
+          const email = await this.getCachedCustomerEmail(apiKey, sub.customer, emailCache);
+          summary.customersLookedUp++;
+          if (!email) {
+            summary.emailLookupFailures++;
+            continue;
+          }
+
+          // Check if this customer already exists in our system for this project
+          const existingCustomers = await this.db
+            .select()
+            .from(customers)
+            .where(
+              and(
+                eq(customers.projectId, projectId),
+                eq(customers.email, email.toLowerCase()),
+              ),
+            )
+            .limit(1);
+
+          if (existingCustomers[0]) {
+            summary.existingCustomersSkipped++;
+            continue;
+          }
+
+          // Try to match via referral: check subscription metadata using configured keys
+          const refCode = this.extractReferralCode(sub.metadata, mappings);
+          if (refCode) {
+            summary.metadataFound++;
+            refCodeCounts.set(refCode, (refCodeCounts.get(refCode) ?? 0) + 1);
+            this.trackMetadataKey(sub.metadata, mappings, summary);
+          } else {
+            summary.noMetadataCount++;
+            continue;
+          }
+
+          const matchedPartner = partnerByCode.get(refCode.toUpperCase());
+          if (!matchedPartner) {
+            if (!summary.unmatchedReferralCodes.includes(refCode)) {
+              summary.unmatchedReferralCodes.push(refCode);
+            }
+            continue;
+          }
+
+          summary.partnersMatched++;
+
+          // Calculate revenue from subscription items
+          const revenueInDollars = (sub.items?.data ?? []).reduce((sum, item) => {
+            return sum + (item.price?.unit_amount ?? 0) / 100;
+          }, 0);
+
+          if (revenueInDollars === 0) continue;
+
+          const result = await commissionService.recordConversion({
+            partnerId: matchedPartner.id,
+            projectId,
+            customerEmail: email.toLowerCase(),
+            revenue: revenueInDollars,
+            customerStatus: sub.status === "active" ? "paid" : "trialing",
+            eventId: sub.id,
+          });
+
+          if (result.isDuplicate) {
+            summary.duplicateEventsSkipped++;
+          } else {
+            summary.processedCount++;
+          }
+        }
+      }
+
+      // Build the referral codes summary from collected data
+      summary.referralCodes = Array.from(refCodeCounts.entries()).map(([code, count]) => {
+        const upperCode = code.toUpperCase();
+        const partner = partnerByCode.get(upperCode);
+        return {
+          code,
+          count,
+          matched: !!partner,
+          partnerName: partner?.name,
+        };
+      });
+
+      await this.finalizeSyncLog(logId, summary.processedCount, "success");
       await this.stripeService.updateSyncStatus(projectId, "idle", undefined, new Date());
 
-      return { processedCount };
+      return summary;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      summary.error = errorMessage;
       await this.finalizeSyncLog(logId, 0, "error", errorMessage);
       await this.stripeService.updateSyncStatus(projectId, "error", errorMessage);
-      return { processedCount: 0, error: errorMessage };
+      return summary;
     }
   }
 
@@ -178,7 +350,7 @@ export class StripeSyncService {
       );
 
       if (!response.ok) {
-        throw new Error(`Stripe API error: ${response.status}`);
+        throw new Error(`Stripe API error fetching charges: ${response.status}`);
       }
 
       const data = await response.json() as {
@@ -196,20 +368,29 @@ export class StripeSyncService {
   }
 
   /**
-   * Get a Stripe customer's email.
+   * Get a Stripe customer's email, with caching to avoid duplicate API calls.
    */
-  private async getCustomerEmail(
+  private async getCachedCustomerEmail(
     apiKey: string,
     customerId: string,
+    cache: Map<string, string | null>,
   ): Promise<string | null> {
+    if (cache.has(customerId)) {
+      return cache.get(customerId)!;
+    }
+
     const response = await fetch(
       `https://api.stripe.com/v1/customers/${customerId}`,
       { headers: { Authorization: `Bearer ${apiKey}` } },
     );
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      cache.set(customerId, null);
+      return null;
+    }
 
     const customer = (await response.json()) as StripeCustomer;
+    cache.set(customerId, customer.email);
     return customer.email;
   }
 
@@ -249,6 +430,23 @@ export class StripeSyncService {
   }
 
   /**
+   * Track which metadata key was actually found (for summary reporting).
+   */
+  private trackMetadataKey(
+    metadata: Record<string, string> | undefined,
+    mappings: MetadataMappings,
+    summary: SyncSummary,
+  ): void {
+    if (!metadata) return;
+    for (const key of mappings.referralCodeKeys) {
+      if (metadata[key]) {
+        summary.metadataKeys[key] = (summary.metadataKeys[key] ?? 0) + 1;
+        return;
+      }
+    }
+  }
+
+  /**
    * Fetch subscriptions from Stripe API with pagination and optional filters.
    */
   async fetchSubscriptions(
@@ -265,7 +463,7 @@ export class StripeSyncService {
 
     while (hasMore) {
       const params = new URLSearchParams({ limit: "100" });
-      if (filters?.status && filters.status !== "all") {
+      if (filters?.status) {
         params.set("status", filters.status);
       }
       if (filters?.createdAfter) {
@@ -284,7 +482,7 @@ export class StripeSyncService {
       );
 
       if (!response.ok) {
-        throw new Error(`Stripe API error: ${response.status}`);
+        throw new Error(`Stripe API error fetching subscriptions: ${response.status}`);
       }
 
       const data = (await response.json()) as {
