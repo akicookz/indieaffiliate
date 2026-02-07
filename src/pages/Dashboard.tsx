@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar } from "recharts";
+import { AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 import { TrendingUp, MousePointer, Users, DollarSign, Upload } from "lucide-react";
 import {
   Select,
@@ -311,7 +311,7 @@ function Dashboard() {
           </h3>
           {analyticsData?.revenueByDay && analyticsData.revenueByDay.length > 0 ? (
             <ChartContainer config={revenueChartConfig} className="h-64 w-full">
-              <BarChart data={analyticsData.revenueByDay} accessibilityLayer>
+              <LineChart data={analyticsData.revenueByDay} accessibilityLayer>
                 <CartesianGrid vertical={false} />
                 <XAxis
                   dataKey="date"
@@ -339,17 +339,21 @@ function Dashboard() {
                   }
                 />
                 <ChartLegend content={<ChartLegendContent />} />
-                <Bar
+                <Line
+                  type="monotone"
                   dataKey="revenue"
-                  fill="var(--color-revenue)"
-                  radius={[4, 4, 0, 0]}
+                  stroke="var(--color-revenue)"
+                  strokeWidth={2}
+                  dot={false}
                 />
-                <Bar
+                <Line
+                  type="monotone"
                   dataKey="commissions"
-                  fill="var(--color-commissions)"
-                  radius={[4, 4, 0, 0]}
+                  stroke="var(--color-commissions)"
+                  strokeWidth={2}
+                  dot={false}
                 />
-              </BarChart>
+              </LineChart>
             </ChartContainer>
           ) : (
             <div className="h-64 flex items-center justify-center border-2 border-dashed border-border/30 rounded-xl">

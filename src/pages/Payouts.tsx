@@ -11,6 +11,8 @@ import {
   AlertTriangle,
   CreditCard,
   Calendar,
+  Copy,
+  Check,
 } from "lucide-react";
 import {
   Select,
@@ -145,6 +147,73 @@ function deriveDescription(commission: CommissionDetail) {
   return `${formatCurrency(revenue)} revenue from ${commission.customerEmail} for ${month}`;
 }
 
+function buildPaymentNote(partner: PartnerGroup) {
+  const approved = partner.commissions.filter((c) => c.status === "approved");
+  if (approved.length === 0) return "";
+
+  const today = new Date().toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
+  const lines = approved.map((c) => {
+    const dateSource = c.eventDate ?? c.createdAt;
+    const date = new Date(dateSource).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+    return `  ${formatCurrency(c.amount)} - ${c.projectName}, ${date}`;
+  });
+
+  return [
+    `Affiliate payout - ${partner.partnerName}`,
+    `Date: ${today}`,
+    `Total: ${formatCurrency(partner.approvedAmount)}`,
+    ``,
+    `Commissions (${approved.length}):`,
+    ...lines,
+    ``,
+    `Powered by UnlockAffiliate`,
+  ].join("\n");
+}
+
+function CopyNoteButton({ partner }: { partner: PartnerGroup }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    const note = buildPaymentNote(partner);
+    navigator.clipboard.writeText(note).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  if (partner.approvedAmount <= 0) return null;
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-7 text-xs"
+      onClick={handleCopy}
+    >
+      {copied ? (
+        <>
+          <Check className="w-3 h-3 mr-1 text-green-600" />
+          Copied
+        </>
+      ) : (
+        <>
+          <Copy className="w-3 h-3 mr-1 text-muted-foreground" />
+          Copy Note
+        </>
+      )}
+    </Button>
+  );
+}
+
 function PartnerRow({
   partner,
   isExpanded,
@@ -165,7 +234,6 @@ function PartnerRow({
   const pendingIds = partner.commissions.filter((c) => c.status === "pending" && !c.fraudFlag).map((c) => c.id);
   const approvedIds = partner.commissions.filter((c) => c.status === "approved" && !c.fraudFlag).map((c) => c.id);
   const flaggedPendingIds = partner.commissions.filter((c) => c.status === "pending" && c.fraudFlag).map((c) => c.id);
-  const hasActionable = pendingIds.length > 0 || approvedIds.length > 0 || flaggedPendingIds.length > 0;
 
   return (
     <>
@@ -242,46 +310,45 @@ function PartnerRow({
           )}
         </TableCell>
         <TableCell onClick={(e) => e.stopPropagation()}>
-          {hasActionable && (
-            <div className="flex gap-1">
-              {pendingIds.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => onBulkAction(pendingIds, "approve")}
-                  disabled={isMutating}
-                >
-                  <CheckCircle className="w-3 h-3 mr-1 text-green-600" />
-                  Approve All ({pendingIds.length})
-                </Button>
-              )}
-              {approvedIds.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => onBulkAction(approvedIds, "pay")}
-                  disabled={isMutating}
-                >
-                  <DollarSign className="w-3 h-3 mr-1 text-blue-600" />
-                  Mark All Paid ({approvedIds.length})
-                </Button>
-              )}
-              {flaggedPendingIds.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-                  onClick={() => onBulkAction(flaggedPendingIds, "reject")}
-                  disabled={isMutating}
-                >
-                  <AlertTriangle className="w-3 h-3 mr-1" />
-                  Reject Flagged ({flaggedPendingIds.length})
-                </Button>
-              )}
-            </div>
-          )}
+          <div className="flex gap-1">
+            {pendingIds.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => onBulkAction(pendingIds, "approve")}
+                disabled={isMutating}
+              >
+                <CheckCircle className="w-3 h-3 mr-1 text-green-600" />
+                Approve All ({pendingIds.length})
+              </Button>
+            )}
+            {approvedIds.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => onBulkAction(approvedIds, "pay")}
+                disabled={isMutating}
+              >
+                <DollarSign className="w-3 h-3 mr-1 text-blue-600" />
+                Mark All Paid ({approvedIds.length})
+              </Button>
+            )}
+            <CopyNoteButton partner={partner} />
+            {flaggedPendingIds.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                onClick={() => onBulkAction(flaggedPendingIds, "reject")}
+                disabled={isMutating}
+              >
+                <AlertTriangle className="w-3 h-3 mr-1" />
+                Reject Flagged ({flaggedPendingIds.length})
+              </Button>
+            )}
+          </div>
         </TableCell>
       </TableRow>
 

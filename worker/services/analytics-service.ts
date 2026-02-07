@@ -71,7 +71,7 @@ export class AnalyticsService {
     const revenueByDay = await this.db
       .select({
         date: sql<string>`date(${commissions.createdAt}, 'unixepoch')`.as("date"),
-        revenue: sql<number>`coalesce(sum(${commissions.amount} / ${commissions.rate} * ${commissions.rate}), 0)`.as("revenue"),
+        revenue: sql<number>`coalesce(sum(case when ${commissions.rate} > 0 then ${commissions.amount} / ${commissions.rate} else 0 end), 0)`.as("revenue"),
         commissionAmount: sql<number>`coalesce(sum(${commissions.amount}), 0)`.as("commission_amount"),
       })
       .from(commissions)
