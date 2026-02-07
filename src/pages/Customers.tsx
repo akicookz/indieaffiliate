@@ -25,6 +25,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import StatCard from "@/components/StatCard";
 
+const FLAG_REASONS: Record<string, string> = {
+  self_referral: "Self Referral",
+  bot_click: "Bot / Fake Traffic",
+  suspicious_activity: "Suspicious Activity",
+  policy_violation: "Policy Violation",
+};
+
 interface Customer {
   id: string;
   email: string;
@@ -253,10 +260,10 @@ function Customers() {
                    <div>
                      <div className="flex items-center gap-2">
                        <span className="font-medium">{customer.email}</span>
-                       {customer.flagReason && (
+                       {customer.flagReason && FLAG_REASONS[customer.flagReason] && (
                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 border border-orange-300">
                            <ShieldAlert className="w-3 h-3 mr-1" />
-                           {customer.flagReason.replace(/_/g, " ")}
+                           {FLAG_REASONS[customer.flagReason]}
                          </span>
                        )}
                      </div>
