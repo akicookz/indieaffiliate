@@ -1,0 +1,1 @@
+ALTER TABLE `customers` ADD `flag_reason` text;

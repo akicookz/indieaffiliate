@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Home, Users, HandHeart, CreditCard, BarChart3, ShieldAlert } from "lucide-react";
+import { Home, Users, HandHeart, CreditCard, ShieldAlert } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
 import { NavProjects } from "@/components/nav-projects";
@@ -21,17 +21,12 @@ const navMain = [
     isActive: true,
   },
   {
-    title: "Analytics",
-    url: "/app/analytics",
-    icon: BarChart3,
-  },
-  {
     title: "Partners",
     url: "/app/partners",
     icon: HandHeart,
   },
   {
-    title: "Customers",
+    title: "Referred Customers",
     url: "/app/customers",
     icon: Users,
   },

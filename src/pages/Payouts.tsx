@@ -6,6 +6,11 @@ import {
   CheckCircle,
   XCircle,
   ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  AlertTriangle,
+  CreditCard,
+  Calendar,
 } from "lucide-react";
 import {
   Select,
@@ -30,31 +35,45 @@ import {
 import { Button } from "@/components/ui/button";
 import StatCard from "@/components/StatCard";
 
-interface Commission {
+interface CommissionDetail {
   id: string;
-  partnerId: string;
   customerId: string;
-  projectId: string;
+  customerEmail: string;
+  customerStatus: string | null;
+  customerRevenue: number;
   amount: number;
   rate: number;
   status: "pending" | "approved" | "paid" | "rejected";
-  partnerName: string;
-  partnerEmail: string;
-  customerEmail: string;
+  fraudFlag: string | null;
+  externalEventId: string | null;
   projectName: string;
+  eventDate: string | null;
   createdAt: string;
 }
 
-interface CommissionStats {
-  totalCommissions: number;
+interface PartnerGroup {
+  partnerId: string;
+  partnerName: string;
+  partnerEmail: string;
+  payoutLink: string | null;
+  pendingCount: number;
   pendingAmount: number;
+  approvedCount: number;
   approvedAmount: number;
+  paidCount: number;
   paidAmount: number;
+  rejectedCount: number;
+  rejectedAmount: number;
+  commissions: CommissionDetail[];
 }
 
-interface CommissionsResponse {
-  commissions: Commission[];
-  stats: CommissionStats;
+interface GroupedResponse {
+  partners: PartnerGroup[];
+  totals: {
+    pendingAmount: number;
+    approvedAmount: number;
+    paidAmount: number;
+  };
 }
 
 interface Project {
@@ -63,10 +82,353 @@ interface Project {
   slug: string;
 }
 
+function getStatusBadge(status: string) {
+  const styles: Record<string, string> = {
+    pending: "bg-yellow-100 text-yellow-800",
+    approved: "bg-blue-100 text-blue-800",
+    paid: "bg-green-100 text-green-800",
+    rejected: "bg-red-100 text-red-800",
+  };
+
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border ${
+        styles[status] ?? ""
+      }`}
+    >
+      {status}
+    </span>
+  );
+}
+
+function formatCurrency(amount: number) {
+  return `$${amount.toFixed(2)}`;
+}
+
+function getCustomerStatusBadge(status: string | null) {
+  if (!status) return null;
+  const styles: Record<string, string> = {
+    paid: "bg-green-100 text-green-800 border-green-200",
+    trialing: "bg-blue-100 text-blue-800 border-blue-200",
+    cancelled: "bg-red-100 text-red-800 border-red-200",
+    past_due: "bg-orange-100 text-orange-800 border-orange-200",
+    refunded: "bg-purple-100 text-purple-800 border-purple-200",
+    cancels_on: "bg-yellow-100 text-yellow-800 border-yellow-200",
+  };
+  const labels: Record<string, string> = {
+    paid: "Active",
+    trialing: "Trialing",
+    cancelled: "Cancelled",
+    past_due: "Past Due",
+    refunded: "Refunded",
+    cancels_on: "Cancels Soon",
+  };
+
+  return (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${
+        styles[status] ?? "bg-gray-100 text-gray-800 border-gray-200"
+      }`}
+    >
+      {labels[status] ?? status}
+    </span>
+  );
+}
+
+function deriveDescription(commission: CommissionDetail) {
+  const revenue = commission.rate > 0 ? commission.amount / commission.rate : 0;
+  const dateSource = commission.eventDate ?? commission.createdAt;
+  const month = new Date(dateSource).toLocaleDateString("en-US", {
+    month: "short",
+    year: "numeric",
+  });
+  return `${formatCurrency(revenue)} revenue from ${commission.customerEmail} for ${month}`;
+}
+
+function PartnerRow({
+  partner,
+  isExpanded,
+  onToggle,
+  onBulkAction,
+  onSingleAction,
+  onFlagCustomer,
+  isMutating,
+}: {
+  partner: PartnerGroup;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onBulkAction: (ids: string[], action: "approve" | "pay" | "reject") => void;
+  onSingleAction: (id: string, status: "approved" | "paid" | "rejected", fraudFlag?: string) => void;
+  onFlagCustomer: (customerId: string, reason: string) => void;
+  isMutating: boolean;
+}) {
+  const pendingIds = partner.commissions.filter((c) => c.status === "pending" && !c.fraudFlag).map((c) => c.id);
+  const approvedIds = partner.commissions.filter((c) => c.status === "approved" && !c.fraudFlag).map((c) => c.id);
+  const flaggedPendingIds = partner.commissions.filter((c) => c.status === "pending" && c.fraudFlag).map((c) => c.id);
+  const hasActionable = pendingIds.length > 0 || approvedIds.length > 0 || flaggedPendingIds.length > 0;
+
+  return (
+    <>
+      {/* Partner summary row */}
+      <TableRow
+        className="cursor-pointer hover:bg-muted/50"
+        onClick={onToggle}
+      >
+        <TableCell className="w-8">
+          {isExpanded ? (
+            <ChevronDown className="w-4 h-4 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+          )}
+        </TableCell>
+        <TableCell>
+          <div>
+            <div className="font-medium">{partner.partnerName}</div>
+            <div className="text-sm text-muted-foreground">
+              {partner.partnerEmail}
+            </div>
+          </div>
+        </TableCell>
+        <TableCell>
+          {partner.payoutLink ? (
+            <a
+              href={partner.payoutLink.startsWith("http") ? partner.payoutLink : `https://${partner.payoutLink}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {partner.payoutLink}
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          ) : (
+            <span className="text-xs text-muted-foreground">Not set</span>
+          )}
+        </TableCell>
+        <TableCell>
+          {partner.pendingCount > 0 ? (
+            <div className="text-sm">
+              <span className="font-medium text-yellow-700 dark:text-yellow-400">
+                {formatCurrency(partner.pendingAmount)}
+              </span>
+              <span className="text-muted-foreground ml-1">({partner.pendingCount})</span>
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground">-</span>
+          )}
+        </TableCell>
+        <TableCell>
+          {partner.approvedCount > 0 ? (
+            <div className="text-sm">
+              <span className="font-medium text-blue-700 dark:text-blue-400">
+                {formatCurrency(partner.approvedAmount)}
+              </span>
+              <span className="text-muted-foreground ml-1">({partner.approvedCount})</span>
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground">-</span>
+          )}
+        </TableCell>
+        <TableCell>
+          {partner.paidCount > 0 ? (
+            <div className="text-sm">
+              <span className="font-medium text-green-700 dark:text-green-400">
+                {formatCurrency(partner.paidAmount)}
+              </span>
+              <span className="text-muted-foreground ml-1">({partner.paidCount})</span>
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground">-</span>
+          )}
+        </TableCell>
+        <TableCell onClick={(e) => e.stopPropagation()}>
+          {hasActionable && (
+            <div className="flex gap-1">
+              {pendingIds.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => onBulkAction(pendingIds, "approve")}
+                  disabled={isMutating}
+                >
+                  <CheckCircle className="w-3 h-3 mr-1 text-green-600" />
+                  Approve All ({pendingIds.length})
+                </Button>
+              )}
+              {approvedIds.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => onBulkAction(approvedIds, "pay")}
+                  disabled={isMutating}
+                >
+                  <DollarSign className="w-3 h-3 mr-1 text-blue-600" />
+                  Mark All Paid ({approvedIds.length})
+                </Button>
+              )}
+              {flaggedPendingIds.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                  onClick={() => onBulkAction(flaggedPendingIds, "reject")}
+                  disabled={isMutating}
+                >
+                  <AlertTriangle className="w-3 h-3 mr-1" />
+                  Reject Flagged ({flaggedPendingIds.length})
+                </Button>
+              )}
+            </div>
+          )}
+        </TableCell>
+      </TableRow>
+
+      {/* Expanded commission detail rows */}
+      {isExpanded && partner.commissions.map((commission) => {
+        const eventDate = commission.eventDate
+          ? new Date(commission.eventDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+          : null;
+        const createdDate = new Date(commission.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+        return (
+          <TableRow key={commission.id} className="bg-muted/20">
+            <TableCell />
+            {/* Customer info + subscription status */}
+            <TableCell>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">{commission.customerEmail}</span>
+                  {getCustomerStatusBadge(commission.customerStatus)}
+                </div>
+                {commission.customerRevenue > 0 && (
+                  <div className="flex items-center gap-1 text-[11px] text-muted-foreground/70">
+                    <CreditCard className="w-3 h-3" />
+                    {formatCurrency(commission.customerRevenue)} lifetime revenue
+                  </div>
+                )}
+              </div>
+            </TableCell>
+            {/* Event date + Stripe reference */}
+            <TableCell>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Calendar className="w-3 h-3" />
+                  {eventDate ? (
+                    <span>{eventDate}</span>
+                  ) : (
+                    <span className="italic">{createdDate}</span>
+                  )}
+                </div>
+                {commission.externalEventId && (
+                  <div className="text-[10px] font-mono text-muted-foreground/60 truncate max-w-[160px]" title={commission.externalEventId}>
+                    {commission.externalEventId}
+                  </div>
+                )}
+              </div>
+            </TableCell>
+            {/* Commission amount */}
+            <TableCell>
+              <div className="space-y-0.5">
+                <div className="text-sm font-medium">{formatCurrency(commission.amount)}</div>
+                <div className="text-[11px] text-muted-foreground">{Math.round(commission.rate * 100)}% rate</div>
+              </div>
+            </TableCell>
+            {/* Description */}
+            <TableCell className="text-xs text-muted-foreground">
+              {deriveDescription(commission)}
+            </TableCell>
+            {/* Status + fraud flag */}
+            <TableCell>
+              <div className="flex items-center gap-1.5">
+                {getStatusBadge(commission.status)}
+                {commission.fraudFlag && (
+                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-700 border border-red-200" title={commission.fraudFlag}>
+                    <AlertTriangle className="w-3 h-3" />
+                    {commission.fraudFlag.replace(/_/g, " ")}
+                  </span>
+                )}
+              </div>
+            </TableCell>
+            {/* Actions */}
+            <TableCell onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-1">
+                {commission.status === "pending" && (
+                  <>
+                    {!commission.fraudFlag && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+                        onClick={() => onSingleAction(commission.id, "approved")}
+                        disabled={isMutating}
+                        aria-label="Approve"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-1 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          disabled={isMutating}
+                          aria-label="Reject"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() => onFlagCustomer(commission.customerId, "self_referral")}
+                          className="text-orange-600 font-medium"
+                        >
+                          Self Referral (block future)
+                        </DropdownMenuItem>
+                        {[
+                          { label: "Bot / Fake Traffic", flag: "bot_click" },
+                          { label: "Revenue Manipulation", flag: "revenue_cap" },
+                          { label: "Suspicious Activity", flag: "suspicious_activity" },
+                          { label: "Policy Violation", flag: "policy_violation" },
+                          { label: "No Reason", flag: undefined },
+                        ].map((item) => (
+                          <DropdownMenuItem
+                            key={item.label}
+                            onClick={() => onSingleAction(commission.id, "rejected", item.flag)}
+                          >
+                            {item.label}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </>
+                )}
+                {commission.status === "approved" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                    onClick={() => onSingleAction(commission.id, "paid")}
+                    disabled={isMutating}
+                  >
+                    Mark Paid
+                  </Button>
+                )}
+              </div>
+            </TableCell>
+          </TableRow>
+        );
+      })}
+    </>
+  );
+}
+
 function Payouts() {
   const queryClient = useQueryClient();
   const [selectedProject, setSelectedProject] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [expandedPartners, setExpandedPartners] = useState<Set<string>>(new Set());
 
   const { data: projectsData } = useQuery({
     queryKey: ["projects"],
@@ -78,25 +440,48 @@ function Payouts() {
   });
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["commissions", selectedProject, statusFilter],
-    queryFn: async (): Promise<CommissionsResponse> => {
+    queryKey: ["commissions-by-partner", selectedProject],
+    queryFn: async (): Promise<GroupedResponse> => {
       const params = new URLSearchParams();
       if (selectedProject !== "all") params.set("project", selectedProject);
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      const response = await fetch(`/api/commissions?${params}`);
+      const response = await fetch(`/api/commissions/by-partner?${params}`);
       if (!response.ok) throw new Error("Failed to fetch commissions");
       return response.json();
     },
   });
 
-  const updateStatusMutation = useMutation({
+  const bulkActionMutation = useMutation({
+    mutationFn: async ({
+      ids,
+      action,
+    }: {
+      ids: string[];
+      action: "approve" | "pay" | "reject";
+      fraudFlag?: string;
+    }) => {
+      const response = await fetch("/api/commissions/bulk-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, action }),
+      });
+      if (!response.ok) throw new Error("Failed to update commissions");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["commissions-by-partner"] });
+      queryClient.invalidateQueries({ queryKey: ["commissions"] });
+      queryClient.invalidateQueries({ queryKey: ["fraud-flags"] });
+    },
+  });
+
+  const singleActionMutation = useMutation({
     mutationFn: async ({
       id,
       status,
       fraudFlag,
     }: {
       id: string;
-      status: "approved" | "rejected" | "paid";
+      status: "approved" | "paid" | "rejected";
       fraudFlag?: string;
     }) => {
       const body: { status: string; fraudFlag?: string } = { status };
@@ -110,17 +495,62 @@ function Payouts() {
       return response.json();
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["commissions-by-partner"] });
       queryClient.invalidateQueries({ queryKey: ["commissions"] });
       queryClient.invalidateQueries({ queryKey: ["fraud-flags"] });
     },
   });
 
+  const flagCustomerMutation = useMutation({
+    mutationFn: async ({ customerId, reason }: { customerId: string; reason: string }) => {
+      const response = await fetch(`/api/customers/${customerId}/flag`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      if (!response.ok) throw new Error("Failed to flag customer");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["commissions-by-partner"] });
+      queryClient.invalidateQueries({ queryKey: ["commissions"] });
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
+      queryClient.invalidateQueries({ queryKey: ["fraud-flags"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+
   const projects = projectsData?.projects ?? [];
+  const isMutating = bulkActionMutation.isPending || singleActionMutation.isPending || flagCustomerMutation.isPending;
+
+  function togglePartner(partnerId: string) {
+    setExpandedPartners((prev) => {
+      const next = new Set(prev);
+      if (next.has(partnerId)) {
+        next.delete(partnerId);
+      } else {
+        next.add(partnerId);
+      }
+      return next;
+    });
+  }
+
+  function handleBulkAction(ids: string[], action: "approve" | "pay" | "reject") {
+    bulkActionMutation.mutate({ ids, action });
+  }
+
+  function handleSingleAction(id: string, status: "approved" | "paid" | "rejected", fraudFlag?: string) {
+    singleActionMutation.mutate({ id, status, fraudFlag });
+  }
+
+  function handleFlagCustomer(customerId: string, reason: string) {
+    flagCustomerMutation.mutate({ customerId, reason });
+  }
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-foreground/70">Loading commissions...</div>
+        <div className="text-lg text-foreground/70">Loading payouts...</div>
       </div>
     );
   }
@@ -129,40 +559,22 @@ function Payouts() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-lg text-destructive">
-          Error loading commissions: {error.message}
+          Error loading payouts: {error.message}
         </div>
       </div>
     );
   }
 
-  function getStatusBadge(status: string) {
-    const styles: Record<string, string> = {
-      pending: "bg-yellow-100 text-yellow-800",
-      approved: "bg-blue-100 text-blue-800",
-      paid: "bg-green-100 text-green-800",
-      rejected: "bg-red-100 text-red-800",
-    };
-
-    return (
-      <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border ${
-          styles[status] ?? ""
-        }`}
-      >
-        {status}
-      </span>
-    );
-  }
+  const totals = data?.totals ?? { pendingAmount: 0, approvedAmount: 0, paidAmount: 0 };
+  const partnerGroups = data?.partners ?? [];
 
   return (
     <div className="space-y-6 bg-background">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">
-          Payouts & Commissions
-        </h1>
+        <h1 className="text-2xl font-semibold text-foreground">Payouts</h1>
         <p className="text-muted-foreground">
-          Review, approve, and manage affiliate commissions
+          Review commissions by partner, approve, and track payments
         </p>
       </div>
 
@@ -188,221 +600,61 @@ function Payouts() {
             </SelectContent>
           </Select>
         </div>
-        <div className="w-48">
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="bg-card">
-              <span>
-                {statusFilter === "all" && "All Statuses"}
-                {statusFilter === "pending" && "Pending"}
-                {statusFilter === "approved" && "Approved"}
-                {statusFilter === "paid" && "Paid"}
-                {statusFilter === "rejected" && "Rejected"}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="approved">Approved</SelectItem>
-              <SelectItem value="paid">Paid</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-3 gap-6">
         <StatCard
-          title="Total Commissions"
-          value={(data?.stats.totalCommissions ?? 0).toLocaleString()}
-          Icon={DollarSign}
-        />
-        <StatCard
-          title="Pending"
-          value={`$${(data?.stats.pendingAmount ?? 0).toFixed(2)}`}
+          title="Pending Approval"
+          value={formatCurrency(totals.pendingAmount)}
           Icon={Clock}
         />
         <StatCard
-          title="Approved"
-          value={`$${(data?.stats.approvedAmount ?? 0).toFixed(2)}`}
-          Icon={CheckCircle}
+          title="Approved (Owed)"
+          value={formatCurrency(totals.approvedAmount)}
+          Icon={DollarSign}
         />
         <StatCard
           title="Paid"
-          value={`$${(data?.stats.paidAmount ?? 0).toFixed(2)}`}
+          value={formatCurrency(totals.paidAmount)}
           Icon={CheckCircle}
         />
       </div>
 
-      {/* Commissions Table */}
+      {/* Partner Balances Table */}
       <div className="shadow-xs bg-card/50 rounded-2xl p-6">
         <h3 className="text-sm font-medium text-foreground mb-4">
-          All Commissions
+          Partner Balances
         </h3>
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8" />
               <TableHead>Partner</TableHead>
-              <TableHead>Customer</TableHead>
-              <TableHead>Project</TableHead>
-              <TableHead>Amount</TableHead>
-              <TableHead>Rate</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Date</TableHead>
+              <TableHead>Payout Link</TableHead>
+              <TableHead>Pending</TableHead>
+              <TableHead>Approved (Owed)</TableHead>
+              <TableHead>Paid</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data?.commissions.map((commission) => (
-              <TableRow key={commission.id}>
-                <TableCell>
-                  <div>
-                    <div className="font-medium">{commission.partnerName}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {commission.partnerEmail}
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell className="text-sm">
-                  {commission.customerEmail}
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {commission.projectName}
-                </TableCell>
-                <TableCell className="font-medium">
-                  ${commission.amount.toFixed(2)}
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {Math.round(commission.rate * 100)}%
-                </TableCell>
-                <TableCell>{getStatusBadge(commission.status)}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {new Date(commission.createdAt).toLocaleDateString()}
-                </TableCell>
-                <TableCell>
-                  {commission.status === "pending" && (
-                    <div className="flex gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-green-600 hover:text-green-700 hover:bg-green-50"
-                        onClick={() =>
-                          updateStatusMutation.mutate({
-                            id: commission.id,
-                            status: "approved",
-                          })
-                        }
-                        disabled={updateStatusMutation.isPending}
-                        aria-label="Approve commission"
-                      >
-                        <CheckCircle className="w-3.5 h-3.5" />
-                      </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
-                            disabled={updateStatusMutation.isPending}
-                            aria-label="Reject commission"
-                          >
-                            <XCircle className="w-3.5 h-3.5 mr-1" />
-                            <ChevronDown className="w-3 h-3" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() =>
-                              updateStatusMutation.mutate({
-                                id: commission.id,
-                                status: "rejected",
-                                fraudFlag: "self_referral",
-                              })
-                            }
-                          >
-                            Self Referral
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() =>
-                              updateStatusMutation.mutate({
-                                id: commission.id,
-                                status: "rejected",
-                                fraudFlag: "bot_click",
-                              })
-                            }
-                          >
-                            Bot / Fake Traffic
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() =>
-                              updateStatusMutation.mutate({
-                                id: commission.id,
-                                status: "rejected",
-                                fraudFlag: "revenue_cap",
-                              })
-                            }
-                          >
-                            Revenue Manipulation
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() =>
-                              updateStatusMutation.mutate({
-                                id: commission.id,
-                                status: "rejected",
-                                fraudFlag: "suspicious_activity",
-                              })
-                            }
-                          >
-                            Suspicious Activity
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() =>
-                              updateStatusMutation.mutate({
-                                id: commission.id,
-                                status: "rejected",
-                                fraudFlag: "policy_violation",
-                              })
-                            }
-                          >
-                            Policy Violation
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() =>
-                              updateStatusMutation.mutate({
-                                id: commission.id,
-                                status: "rejected",
-                              })
-                            }
-                          >
-                            No Reason
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  )}
-                  {commission.status === "approved" && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                      onClick={() =>
-                        updateStatusMutation.mutate({
-                          id: commission.id,
-                          status: "paid",
-                        })
-                      }
-                      disabled={updateStatusMutation.isPending}
-                    >
-                      Mark Paid
-                    </Button>
-                  )}
-                </TableCell>
-              </TableRow>
+            {partnerGroups.map((partner) => (
+              <PartnerRow
+                key={partner.partnerId}
+                partner={partner}
+                isExpanded={expandedPartners.has(partner.partnerId)}
+                onToggle={() => togglePartner(partner.partnerId)}
+                onBulkAction={handleBulkAction}
+                onSingleAction={handleSingleAction}
+                onFlagCustomer={handleFlagCustomer}
+                isMutating={isMutating}
+              />
             ))}
-            {(!data?.commissions || data.commissions.length === 0) && (
+            {partnerGroups.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={8}
+                  colSpan={7}
                   className="text-center text-muted-foreground py-8"
                 >
                   No commissions yet. Commissions are created automatically when

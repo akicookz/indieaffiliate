@@ -29,6 +29,7 @@ import {
   createPartnerSchema,
   updatePartnerSchema,
   updateCommissionSchema,
+  bulkCommissionActionSchema,
   trackClickSchema,
   trackConversionSchema,
   createApiKeySchema,
@@ -39,9 +40,12 @@ import {
   createPayoutSchema,
   updatePayoutSchema,
   updateMetadataMappingsSchema,
+  updatePartnerPayoutLinkSchema,
   csvImportSchema,
   stripeImportPreviewSchema,
   stripeImportExecuteSchema,
+  stripeCustomerSearchSchema,
+  assignPartnerToCustomersSchema,
 } from "./validation";
 
 // ─── Simple IP-based rate limiter (in-memory, per-isolate) ───────────────────
@@ -589,15 +593,27 @@ const app = new Hono<HonoAppContext>()
     const hashedPartnerIp = await hashIP(partnerIp);
 
     const partnerService = new PartnerService(db);
-    const partner = await partnerService.createPartner({
-      projectId: parsed.data.projectId,
-      name: parsed.data.name.trim(),
-      email: parsed.data.email.trim().toLowerCase(),
-      commissionRate: parsed.data.commissionRate ?? 0.2,
-      referralCode: parsed.data.referralCode,
-      status: "pending",
-      registrationIp: hashedPartnerIp,
-    });
+    let partner;
+    try {
+      partner = await partnerService.createPartner({
+        projectId: parsed.data.projectId,
+        name: parsed.data.name.trim(),
+        email: parsed.data.email.trim().toLowerCase(),
+        commissionRate: parsed.data.commissionRate ?? 0.2,
+        referralCode: parsed.data.referralCode,
+        status: "active",
+        registrationIp: hashedPartnerIp,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("UNIQUE constraint failed")) {
+        return c.json(
+          { error: "A partner with this email or referral code already exists in this project" },
+          409,
+        );
+      }
+      throw err;
+    }
 
     // Fraud checks: owner-as-partner
     const fraudService = new FraudService(db);
@@ -615,18 +631,25 @@ const app = new Hono<HonoAppContext>()
       });
     }
 
-    // Send invitation email (async, don't block response)
-    const emailService = new EmailService(c.env.RESEND_API_KEY);
-    const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
-    emailService
-      .sendPartnerInvitation({
-        partnerName: partner.name,
-        partnerEmail: partner.email,
-        projectName: project.name,
-        referralCode: partner.referralCode,
-        baseUrl,
-      })
-      .catch((err) => console.error("Failed to send partner invitation:", err));
+    // Send invitation email only if requested
+    const sendInvite = (body as { sendInvite?: boolean }).sendInvite !== false;
+    if (sendInvite) {
+      try {
+        const emailService = new EmailService(c.env.RESEND_API_KEY);
+        const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
+        emailService
+          .sendPartnerInvitation({
+            partnerName: partner.name,
+            partnerEmail: partner.email,
+            projectName: project.name,
+            referralCode: partner.referralCode,
+            baseUrl,
+          })
+          .catch((err) => console.error("Failed to send partner invitation:", err));
+      } catch (err) {
+        console.error("Email service init failed:", err);
+      }
+    }
 
     return c.json({ partner }, 201);
   })
@@ -672,6 +695,63 @@ const app = new Hono<HonoAppContext>()
     const stats = await customerService.getCustomerStats(user.id, projectId);
 
     return c.json({ customers: customersList, stats });
+  })
+  .patch("/api/customers/:id/flag", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const customerId = c.req.param("id");
+    const body = await c.req.json();
+    const reason: string | null = body.reason ?? null;
+
+    const db = c.get("db");
+
+    // Verify ownership: customer must belong to one of user's projects
+    const customerService = new CustomerService(db);
+    const allCustomers = await customerService.getCustomersByUser(user.id, {});
+    const customer = allCustomers.find((c) => c.id === customerId);
+    if (!customer) {
+      return c.json({ error: "Customer not found" }, 404);
+    }
+
+    const commissionService = new CommissionService(db);
+    const result = await commissionService.flagCustomer(customerId, reason);
+
+    return c.json({
+      customerId,
+      flagReason: reason,
+      commissionsRejected: result.commissionsRejected,
+    });
+  })
+  // Legacy endpoint - redirects to new flag endpoint
+  .patch("/api/customers/:id/self-referral", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const customerId = c.req.param("id");
+    const body = await c.req.json();
+    const isSelfReferral = body.isSelfReferral === true;
+
+    const db = c.get("db");
+
+    const customerService = new CustomerService(db);
+    const allCustomers = await customerService.getCustomersByUser(user.id, {});
+    const customer = allCustomers.find((c) => c.id === customerId);
+    if (!customer) {
+      return c.json({ error: "Customer not found" }, 404);
+    }
+
+    const commissionService = new CommissionService(db);
+    const result = await commissionService.flagCustomer(
+      customerId,
+      isSelfReferral ? "self_referral" : null,
+    );
+
+    return c.json({
+      customerId,
+      isSelfReferral,
+      commissionsRejected: result.commissionsRejected,
+    });
   })
   // ─── Analytics ──────────────────────────────────────────────────────────────
   .get("/api/analytics", async (c) => {
@@ -739,6 +819,15 @@ const app = new Hono<HonoAppContext>()
       parsed.data.fraudFlag,
     );
 
+    // When approving a commission, auto-activate the partner if they're still pending
+    if (parsed.data.status === "approved") {
+      const partnerService = new PartnerService(db);
+      const partner = await partnerService.getPartnerById(commission.partnerId);
+      if (partner && partner.status === "pending") {
+        await partnerService.updatePartner(partner.id, { status: "active" });
+      }
+    }
+
     // When rejecting with a fraud reason, create a confirmed fraud flag
     if (parsed.data.status === "rejected" && parsed.data.fraudFlag) {
       const fraudService = new FraudService(db);
@@ -760,6 +849,68 @@ const app = new Hono<HonoAppContext>()
     }
 
     return c.json({ commission: updated });
+  })
+  .get("/api/commissions/by-partner", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.query("project");
+
+    const db = c.get("db");
+    const commissionService = new CommissionService(db);
+    const result = await commissionService.getCommissionsGroupedByPartner(
+      user.id,
+      { projectId },
+    );
+
+    return c.json(result);
+  })
+  .post("/api/commissions/bulk-action", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(bulkCommissionActionSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const commissionService = new CommissionService(db);
+
+    // Verify ownership: all commission IDs must belong to user's projects
+    const allCommissions = await commissionService.getCommissionsByUser(user.id, {});
+    const validIds = new Set(allCommissions.map((c) => c.id));
+    const requestedIds = parsed.data.ids.filter((id) => validIds.has(id));
+
+    if (requestedIds.length === 0) {
+      return c.json({ error: "No valid commission IDs found" }, 404);
+    }
+
+    const statusMap = {
+      approve: "approved" as const,
+      pay: "paid" as const,
+      reject: "rejected" as const,
+    };
+
+    const count = await commissionService.bulkUpdateStatus(
+      requestedIds,
+      statusMap[parsed.data.action],
+      parsed.data.fraudFlag,
+    );
+
+    // When bulk-approving, auto-activate any pending partners
+    if (parsed.data.action === "approve") {
+      const partnerService = new PartnerService(db);
+      const approvedCommissions = allCommissions.filter((c) => requestedIds.includes(c.id));
+      const partnerIds = [...new Set(approvedCommissions.map((c) => c.partnerId))];
+      for (const partnerId of partnerIds) {
+        const partner = await partnerService.getPartnerById(partnerId);
+        if (partner && partner.status === "pending") {
+          await partnerService.updatePartner(partner.id, { status: "active" });
+        }
+      }
+    }
+
+    return c.json({ updated: count });
   })
   // ─── Fraud Flags ────────────────────────────────────────────────────────────
   .get("/api/fraud-flags", async (c) => {
@@ -934,6 +1085,7 @@ const app = new Hono<HonoAppContext>()
     }
 
     const mappings = await stripeService.getMetadataMappings(projectId);
+    const lastSyncSummary = await stripeService.getLastSyncSummary(projectId);
 
     return c.json({
       connected: true,
@@ -942,6 +1094,7 @@ const app = new Hono<HonoAppContext>()
       syncError: conn.syncError,
       createdAt: conn.createdAt,
       metadataMappings: mappings,
+      lastSyncSummary,
     });
   })
   .post("/api/projects/:id/stripe", async (c) => {
@@ -1032,8 +1185,14 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Sync already in progress" }, 409);
     }
 
+    const body = await c.req.json().catch(() => ({}));
+    const fullResync = (body as { fullResync?: boolean })?.fullResync === true;
+
     const syncService = new StripeSyncService(db, stripeService);
-    const result = await syncService.syncProject(projectId);
+    const result = await syncService.syncProject(projectId, { fullResync });
+
+    // Persist the summary so it survives navigation
+    await stripeService.updateLastSyncSummary(projectId, result);
 
     if (result.error) {
       return c.json(result, 500);
@@ -1090,6 +1249,128 @@ const app = new Hono<HonoAppContext>()
 
     await stripeService.updateMetadataMappings(projectId, parsed.data);
     return c.json({ mappings: parsed.data });
+  })
+  // ─── Stripe Customer Browsing ─────────────────────────────────────────────────
+  .get("/api/projects/:id/stripe/customers", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const encryptionKey = c.env.ENCRYPTION_KEY;
+    if (!encryptionKey) {
+      return c.json({ error: "Encryption not configured" }, 500);
+    }
+
+    const stripeService = new StripeService(
+      db,
+      encryptionKey,
+      c.env.SALT ?? "",
+    );
+    const conn = await stripeService.getConnection(projectId);
+    if (!conn) {
+      return c.json({ error: "Stripe not connected" }, 400);
+    }
+
+    const apiKey = await stripeService.getDecryptedKey(projectId);
+    if (!apiKey) {
+      return c.json({ error: "Stripe API key not found" }, 500);
+    }
+
+    const params = validate(stripeCustomerSearchSchema, {
+      query: c.req.query("query"),
+      filter: c.req.query("filter") ?? "recent",
+      limit: c.req.query("limit") ?? "20",
+      starting_after: c.req.query("starting_after"),
+    });
+    if (!params.success) return c.json({ error: params.error }, 400);
+
+    const mappings = await stripeService.getMetadataMappings(projectId);
+    const syncService = new StripeSyncService(db, stripeService);
+
+    if (params.data.query) {
+      const result = await syncService.searchStripeCustomers(
+        apiKey,
+        params.data.query,
+        mappings.referralCodeKeys,
+        params.data.limit,
+      );
+      return c.json(result);
+    }
+
+    const result = await syncService.listDefaultCustomers(
+      apiKey,
+      params.data.filter,
+      params.data.limit,
+      params.data.starting_after,
+    );
+    return c.json(result);
+  })
+  .post("/api/projects/:id/stripe/assign-partner", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const body = await c.req.json();
+    const parsed = validate(assignPartnerToCustomersSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    // Verify partner belongs to project
+    const partnerService = new PartnerService(db);
+    const partner = await partnerService.getPartnerById(parsed.data.partnerId);
+    if (!partner || partner.projectId !== projectId) {
+      return c.json({ error: "Partner not found in this project" }, 404);
+    }
+
+    const encryptionKey = c.env.ENCRYPTION_KEY;
+    if (!encryptionKey) {
+      return c.json({ error: "Encryption not configured" }, 500);
+    }
+
+    const stripeService = new StripeService(
+      db,
+      encryptionKey,
+      c.env.SALT ?? "",
+    );
+    const apiKey = await stripeService.getDecryptedKey(projectId);
+    if (!apiKey) {
+      return c.json({ error: "Stripe API key not found" }, 500);
+    }
+
+    const syncService = new StripeSyncService(db, stripeService);
+
+    let totalCommissionsCreated = 0;
+    let totalDuplicatesSkipped = 0;
+
+    for (const customerId of parsed.data.stripeCustomerIds) {
+      const result = await syncService.syncCustomerHistory(
+        apiKey,
+        projectId,
+        parsed.data.partnerId,
+        customerId,
+      );
+      totalCommissionsCreated += result.commissionsCreated;
+      totalDuplicatesSkipped += result.duplicatesSkipped;
+    }
+
+    return c.json({
+      customersProcessed: parsed.data.stripeCustomerIds.length,
+      commissionsCreated: totalCommissionsCreated,
+      duplicatesSkipped: totalDuplicatesSkipped,
+    });
   })
   // ─── Import ─────────────────────────────────────────────────────────────────
   .post("/api/import/csv", async (c) => {
@@ -1456,6 +1737,7 @@ const app = new Hono<HonoAppContext>()
         referralCode: primary.referralCode,
         commissionRate: primary.commissionRate,
         status: primary.status,
+        payoutLink: primary.payoutLink,
       },
       programs: partnerRecords.map((p) => ({
         id: p.id,
@@ -1525,6 +1807,31 @@ const app = new Hono<HonoAppContext>()
     const payoutsList = await dashboardService.getPayouts(partnerIds);
 
     return c.json({ payouts: payoutsList });
+  })
+  .patch("/api/partner/payout-link", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(updatePartnerPayoutLinkSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const dashboardService = new PartnerDashboardService(db);
+    const partnerRecords = await dashboardService.getPartnersByUserId(user.id);
+    if (partnerRecords.length === 0) {
+      return c.json({ error: "No partner account found" }, 404);
+    }
+
+    // Update payout link on all partner records for this user
+    const partnerService = new PartnerService(db);
+    for (const record of partnerRecords) {
+      await partnerService.updatePartner(record.id, {
+        payoutLink: parsed.data.payoutLink,
+      });
+    }
+
+    return c.json({ payoutLink: parsed.data.payoutLink });
   });
 
 // ─── Cron handler for daily Stripe sync ────────────────────────────────────────

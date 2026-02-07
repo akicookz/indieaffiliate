@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { HandHeart, Users, TrendingUp, UserPlus, Copy, Check } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { HandHeart, Users, TrendingUp, UserPlus, Copy, Check, ExternalLink, Pencil, Upload, CheckCircle, XCircle } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -15,10 +16,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import StatCard from "@/components/StatCard";
 import InvitePartnerDialog from "@/components/InvitePartnerDialog";
-import ImportDialog from "@/components/ImportDialog";
 
 interface Partner {
   id: string;
@@ -30,6 +39,7 @@ interface Partner {
   commissionRate: number;
   projectName: string;
   referralCode: string;
+  payoutLink: string | null;
   createdAt: string;
 }
 
@@ -83,9 +93,217 @@ function CopyReferralLink({ referralCode }: { referralCode: string }) {
   );
 }
 
+function EditPartnerSheet({
+  partner,
+  open,
+  onOpenChange,
+}: {
+  partner: Partner;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState(partner.name);
+  const [email, setEmail] = useState(partner.email);
+  const [status, setStatus] = useState(partner.status);
+  const [commissionRate, setCommissionRate] = useState(
+    String(Math.round(partner.commissionRate * 100)),
+  );
+  const [referralCode, setReferralCode] = useState(partner.referralCode);
+  const [payoutLink, setPayoutLink] = useState(partner.payoutLink ?? "");
+
+  // Reset form when partner changes
+  useEffect(() => {
+    setName(partner.name);
+    setEmail(partner.email);
+    setStatus(partner.status);
+    setCommissionRate(String(Math.round(partner.commissionRate * 100)));
+    setReferralCode(partner.referralCode);
+    setPayoutLink(partner.payoutLink ?? "");
+  }, [partner]);
+
+  const updateMutation = useMutation({
+    mutationFn: async (data: Record<string, unknown>) => {
+      const response = await fetch(`/api/partners/${partner.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        const body = await response.json();
+        throw new Error((body as { error?: string }).error ?? "Failed to update partner");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["partners"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      onOpenChange(false);
+    },
+  });
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+
+    const updates: Record<string, unknown> = {};
+
+    if (name.trim() !== partner.name) updates.name = name.trim();
+    if (email.trim() !== partner.email) updates.email = email.trim().toLowerCase();
+    if (status !== partner.status) updates.status = status;
+
+    const rateDecimal = parseFloat(commissionRate) / 100;
+    if (!isNaN(rateDecimal) && rateDecimal !== partner.commissionRate) {
+      updates.commissionRate = rateDecimal;
+    }
+
+    if (referralCode.trim() !== partner.referralCode) {
+      updates.referralCode = referralCode.trim();
+    }
+
+    const newPayoutLink = payoutLink.trim() || null;
+    if (newPayoutLink !== partner.payoutLink) {
+      updates.payoutLink = newPayoutLink;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      onOpenChange(false);
+      return;
+    }
+
+    updateMutation.mutate(updates);
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="sm:max-w-md">
+        <SheetHeader>
+          <SheetTitle>Edit Partner</SheetTitle>
+          <SheetDescription>
+            Update partner details. Changes are saved immediately.
+          </SheetDescription>
+        </SheetHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-4 mt-6 px-4">
+          <div className="space-y-2">
+            <Label htmlFor="edit-name">Name</Label>
+            <Input
+              id="edit-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Partner name"
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="edit-email">Email</Label>
+            <Input
+              id="edit-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="partner@example.com"
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="edit-status">Status</Label>
+            <Select value={status} onValueChange={(v) => setStatus(v as Partner["status"])}>
+              <SelectTrigger id="edit-status">
+                <span className="capitalize">{status}</span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="inactive">Inactive</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="edit-commission">Commission Rate (%)</Label>
+            <Input
+              id="edit-commission"
+              type="number"
+              min="1"
+              max="100"
+              step="1"
+              value={commissionRate}
+              onChange={(e) => setCommissionRate(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="edit-referral">Referral Code</Label>
+            <Input
+              id="edit-referral"
+              value={referralCode}
+              onChange={(e) => setReferralCode(e.target.value)}
+              placeholder="CODE123"
+              className="font-mono"
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="edit-payout">Payout Link</Label>
+            <Input
+              id="edit-payout"
+              value={payoutLink}
+              onChange={(e) => setPayoutLink(e.target.value)}
+              placeholder="paypal.me/name or wise.com/pay/..."
+            />
+          </div>
+
+          {updateMutation.error && (
+            <p className="text-sm text-destructive">
+              {updateMutation.error.message}
+            </p>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 function Partners() {
+  const queryClient = useQueryClient();
   const [selectedProject, setSelectedProject] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [editingPartner, setEditingPartner] = useState<Partner | null>(null);
+
+  const statusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      const response = await fetch(`/api/partners/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok) {
+        const body = await response.json();
+        throw new Error((body as { error?: string }).error ?? "Failed to update status");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["partners"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
 
   const { data: projectsData } = useQuery({
     queryKey: ["projects"],
@@ -160,7 +378,12 @@ function Partners() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <ImportDialog projects={projects} />
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/app/import">
+              <Upload className="w-4 h-4 mr-2" />
+              Import
+            </Link>
+          </Button>
           <InvitePartnerDialog projects={projects} />
         </div>
       </div>
@@ -239,16 +462,18 @@ function Partners() {
         <h3 className="text-sm font-medium text-foreground mb-4">
           All Partners
         </h3>
-        <Table>
+         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Partner</TableHead>
               <TableHead>Project</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Referral Link</TableHead>
+              <TableHead>Payout Link</TableHead>
               <TableHead>Customers</TableHead>
               <TableHead>Revenue</TableHead>
               <TableHead>Commission</TableHead>
+              <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -271,6 +496,21 @@ function Partners() {
                 <TableCell>
                   <CopyReferralLink referralCode={partner.referralCode} />
                 </TableCell>
+                <TableCell>
+                  {partner.payoutLink ? (
+                    <a
+                      href={partner.payoutLink.startsWith("http") ? partner.payoutLink : `https://${partner.payoutLink}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline truncate max-w-[140px]"
+                    >
+                      {partner.payoutLink}
+                      <ExternalLink className="w-3 h-3 shrink-0" />
+                    </a>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">-</span>
+                  )}
+                </TableCell>
                 <TableCell className="font-medium">
                   {partner.referredCustomers}
                 </TableCell>
@@ -282,12 +522,49 @@ function Partners() {
                     {Math.round(partner.commissionRate * 100)}%
                   </span>
                 </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1">
+                    {partner.status === "pending" && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+                          onClick={() => statusMutation.mutate({ id: partner.id, status: "active" })}
+                          disabled={statusMutation.isPending}
+                          aria-label="Approve partner"
+                        >
+                          <CheckCircle className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          onClick={() => statusMutation.mutate({ id: partner.id, status: "inactive" })}
+                          disabled={statusMutation.isPending}
+                          aria-label="Reject partner"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                        </Button>
+                      </>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      onClick={() => setEditingPartner(partner)}
+                      aria-label="Edit partner"
+                    >
+                      <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                    </Button>
+                  </div>
+                </TableCell>
               </TableRow>
             ))}
             {(!data?.partners || data.partners.length === 0) && (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={9}
                   className="text-center text-muted-foreground py-8"
                 >
                   No partners yet. Create a project first, then invite partners.
@@ -297,6 +574,17 @@ function Partners() {
           </TableBody>
         </Table>
       </div>
+
+      {/* Edit Partner Sheet */}
+      {editingPartner && (
+        <EditPartnerSheet
+          partner={editingPartner}
+          open={editingPartner !== null}
+          onOpenChange={(open) => {
+            if (!open) setEditingPartner(null);
+          }}
+        />
+      )}
     </div>
   );
 }

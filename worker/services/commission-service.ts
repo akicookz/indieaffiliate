@@ -24,6 +24,7 @@ export class CommissionService {
     revenue: number;
     customerStatus?: "trialing" | "paid" | "cancelled";
     eventId?: string;
+    eventDate?: Date;
     conversionCountry?: string;
   }): Promise<{ customerId: string; commissionId: string; commissionAmount: number; isDuplicate?: boolean }> {
     const fraudService = new FraudService(this.db);
@@ -90,6 +91,25 @@ export class CommissionService {
 
     if (existingCustomer[0]) {
       customerId = existingCustomer[0].id;
+
+      // If customer is flagged, skip commission creation entirely
+      if (existingCustomer[0].flagReason || existingCustomer[0].isSelfReferral) {
+        // Still update the customer revenue/status for tracking accuracy
+        await this.db
+          .update(customers)
+          .set({
+            revenue: sql`${customers.revenue} + ${data.revenue}`,
+            status,
+          })
+          .where(eq(customers.id, customerId));
+        return {
+          customerId,
+          commissionId: "",
+          commissionAmount: 0,
+          isDuplicate: true, // signal to caller that no commission was created
+        };
+      }
+
       // Update revenue (add to existing)
       await this.db
         .update(customers)
@@ -122,8 +142,9 @@ export class CommissionService {
       projectId: data.projectId,
       amount: commissionAmount,
       rate: partner.commissionRate,
-      status: "pending",
+      status: fraudFlag ? "rejected" : "pending",
       externalEventId: data.eventId ?? null,
+      eventDate: data.eventDate ?? null,
       fraudFlag,
     };
     await this.db.insert(commissions).values(commissionRow);
@@ -321,6 +342,249 @@ export class CommissionService {
       approvedAmount: row?.approved ?? 0,
       paidAmount: row?.paid ?? 0,
     };
+  }
+
+  /**
+   * Get commissions grouped by partner for a user's projects.
+   * Each partner entry includes aggregated totals and their individual commissions.
+   */
+  async getCommissionsGroupedByPartner(
+    userId: string,
+    filters?: { projectId?: string },
+  ) {
+    const userProjects = await this.db
+      .select({ id: projects.id, name: projects.name })
+      .from(projects)
+      .where(eq(projects.userId, userId));
+
+    if (userProjects.length === 0) {
+      return { partners: [], totals: { pendingAmount: 0, approvedAmount: 0, paidAmount: 0 } };
+    }
+
+    const projectIds =
+      filters?.projectId && filters.projectId !== "all"
+        ? [filters.projectId]
+        : userProjects.map((p) => p.id);
+    const projectMap = new Map(userProjects.map((p) => [p.id, p.name]));
+
+    const conditions = [inArray(commissions.projectId, projectIds)];
+
+    const rows = await this.db
+      .select()
+      .from(commissions)
+      .where(and(...conditions));
+
+    if (rows.length === 0) {
+      return { partners: [], totals: { pendingAmount: 0, approvedAmount: 0, paidAmount: 0 } };
+    }
+
+    // Fetch partner info
+    const partnerIds = [...new Set(rows.map((r) => r.partnerId))];
+    const partnerRows = await this.db
+      .select({
+        id: partners.id,
+        name: partners.name,
+        email: partners.email,
+        payoutLink: partners.payoutLink,
+        commissionRate: partners.commissionRate,
+      })
+      .from(partners)
+      .where(inArray(partners.id, partnerIds));
+    const partnerMap = new Map(partnerRows.map((p) => [p.id, p]));
+
+    // Fetch customer info (email, subscription status, revenue)
+    const customerIds = [...new Set(rows.map((r) => r.customerId))];
+    const customerRows = customerIds.length > 0
+      ? await this.db
+          .select({
+            id: customers.id,
+            email: customers.email,
+            status: customers.status,
+            revenue: customers.revenue,
+          })
+          .from(customers)
+          .where(inArray(customers.id, customerIds))
+      : [];
+    const customerMap = new Map(customerRows.map((c) => [c.id, c]));
+
+    // Group commissions by partner
+    const grouped = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const existing = grouped.get(row.partnerId) ?? [];
+      existing.push(row);
+      grouped.set(row.partnerId, existing);
+    }
+
+    let totalPending = 0;
+    let totalApproved = 0;
+    let totalPaid = 0;
+
+    const partnerResults = Array.from(grouped.entries()).map(([partnerId, partnerCommissions]) => {
+      const partner = partnerMap.get(partnerId);
+      let pendingAmount = 0;
+      let pendingCount = 0;
+      let approvedAmount = 0;
+      let approvedCount = 0;
+      let paidAmount = 0;
+      let paidCount = 0;
+      let rejectedAmount = 0;
+      let rejectedCount = 0;
+
+      for (const c of partnerCommissions) {
+        if (c.status === "pending" && !c.fraudFlag) { pendingAmount += c.amount; pendingCount++; }
+        if (c.status === "approved") { approvedAmount += c.amount; approvedCount++; }
+        if (c.status === "paid") { paidAmount += c.amount; paidCount++; }
+        if (c.status === "rejected") { rejectedAmount += c.amount; rejectedCount++; }
+      }
+
+      totalPending += pendingAmount;
+      totalApproved += approvedAmount;
+      totalPaid += paidAmount;
+
+      return {
+        partnerId,
+        partnerName: partner?.name ?? "Unknown",
+        partnerEmail: partner?.email ?? "",
+        payoutLink: partner?.payoutLink ?? null,
+        pendingCount,
+        pendingAmount,
+        approvedCount,
+        approvedAmount,
+        paidCount,
+        paidAmount,
+        rejectedCount,
+        rejectedAmount,
+        commissions: partnerCommissions.map((c) => {
+          const customer = customerMap.get(c.customerId);
+          return {
+            id: c.id,
+            customerId: c.customerId,
+            customerEmail: customer?.email ?? "Unknown",
+            customerStatus: customer?.status ?? null,
+            customerRevenue: customer?.revenue ?? 0,
+            amount: c.amount,
+            rate: c.rate,
+            status: c.status,
+            fraudFlag: c.fraudFlag,
+            externalEventId: c.externalEventId,
+            projectName: projectMap.get(c.projectId) ?? "Unknown",
+            eventDate: c.eventDate,
+            createdAt: c.createdAt,
+          };
+        }),
+      };
+    });
+
+    // Sort: partners with pending first, then approved, then by amount descending
+    partnerResults.sort((a, b) => {
+      if (a.pendingCount > 0 && b.pendingCount === 0) return -1;
+      if (b.pendingCount > 0 && a.pendingCount === 0) return 1;
+      if (a.approvedCount > 0 && b.approvedCount === 0) return -1;
+      if (b.approvedCount > 0 && a.approvedCount === 0) return 1;
+      return (b.pendingAmount + b.approvedAmount) - (a.pendingAmount + a.approvedAmount);
+    });
+
+    return {
+      partners: partnerResults,
+      totals: {
+        pendingAmount: totalPending,
+        approvedAmount: totalApproved,
+        paidAmount: totalPaid,
+      },
+    };
+  }
+
+  /**
+   * Bulk update commission statuses. Returns count of updated records.
+   */
+  async bulkUpdateStatus(
+    ids: string[],
+    status: "pending" | "approved" | "paid" | "rejected",
+    fraudFlag?: string,
+  ): Promise<number> {
+    if (ids.length === 0) return 0;
+
+    const updates: { status: typeof status; fraudFlag?: string } = { status };
+    if (fraudFlag) {
+      updates.fraudFlag = fraudFlag;
+    }
+
+    await this.db
+      .update(commissions)
+      .set(updates)
+      .where(inArray(commissions.id, ids));
+
+    return ids.length;
+  }
+
+  /**
+   * Flag or unflag a customer.
+   * When flagging (reason is provided):
+   *   - Sets flagReason on the customer (also sets isSelfReferral for backwards compat if reason is self_referral)
+   *   - Auto-rejects all pending/approved commissions for that customer
+   *   - Future commissions will be blocked in recordConversion()
+   * When unflagging (reason is null):
+   *   - Clears flagReason and isSelfReferral
+   * Returns the count of commissions that were auto-rejected.
+   */
+  async flagCustomer(
+    customerId: string,
+    reason: string | null,
+  ): Promise<{ commissionsRejected: number }> {
+    const isSelfReferral = reason === "self_referral";
+
+    await this.db
+      .update(customers)
+      .set({
+        flagReason: reason,
+        isSelfReferral: reason ? isSelfReferral : false,
+      })
+      .where(eq(customers.id, customerId));
+
+    let commissionsRejected = 0;
+
+    if (reason) {
+      // Count pending/approved commissions before rejecting
+      const pending = await this.db
+        .select({ id: commissions.id })
+        .from(commissions)
+        .where(
+          and(
+            eq(commissions.customerId, customerId),
+            inArray(commissions.status, ["pending", "approved"]),
+          ),
+        );
+      commissionsRejected = pending.length;
+
+      if (commissionsRejected > 0) {
+        // Auto-reject all pending and approved commissions for this customer
+        await this.db
+          .update(commissions)
+          .set({ status: "rejected", fraudFlag: reason })
+          .where(
+            and(
+              eq(commissions.customerId, customerId),
+              inArray(commissions.status, ["pending", "approved"]),
+            ),
+          );
+      }
+    }
+
+    return { commissionsRejected };
+  }
+
+  /**
+   * @deprecated Use flagCustomer() instead. Kept for backwards compatibility.
+   */
+  async setCustomerSelfReferral(
+    customerId: string,
+    isSelfReferral: boolean,
+  ): Promise<{ commissionRejected: number }> {
+    const result = await this.flagCustomer(
+      customerId,
+      isSelfReferral ? "self_referral" : null,
+    );
+    return { commissionRejected: result.commissionsRejected };
   }
 
   /**

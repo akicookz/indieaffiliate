@@ -55,6 +55,7 @@ export const partners = sqliteTable(
       .default("pending"),
     commissionRate: real("commission_rate").notNull().default(0.2),
     referralCode: text("referral_code").notNull().unique(),
+    payoutLink: text("payout_link"), // e.g. PayPal.me, Wise, or Venmo link
     registrationIp: text("registration_ip"), // hashed IP at join time
     totalRevenue: real("total_revenue").notNull().default(0),
     referredCustomers: integer("referred_customers").notNull().default(0),
@@ -93,6 +94,8 @@ export const customers = sqliteTable(
     email: text("email").notNull(),
     name: text("name"), // customer display name (optional)
     stripeCustomerId: text("stripe_customer_id"), // Stripe customer ID for on-demand status lookups
+    isSelfReferral: integer("is_self_referral", { mode: "boolean" }).notNull().default(false),
+    flagReason: text("flag_reason"), // when set, customer is flagged and future commissions are blocked
     status: text("status", {
       enum: [
         "trialing",
@@ -180,6 +183,7 @@ export const commissions = sqliteTable(
       .notNull()
       .default("pending"),
     externalEventId: text("external_event_id"),
+    eventDate: integer("event_date", { mode: "timestamp" }), // when the payment actually occurred (e.g. Stripe charge/invoice date)
     fraudFlag: text("fraud_flag"),
     createdAt: integer("created_at", { mode: "timestamp" })
       .default(sql`(unixepoch())`)
@@ -235,6 +239,7 @@ export const stripeConnections = sqliteTable(
       .unique(),
     encryptedApiKey: text("encrypted_api_key").notNull(), // AES-GCM encrypted
     metadataMappings: text("metadata_mappings"), // JSON: { referralCodeKeys: string[], source: "charge_metadata" | "subscription_metadata" | "both" }
+    lastSyncSummary: text("last_sync_summary"), // JSON: SyncSummary from last sync run
     lastSyncAt: integer("last_sync_at", { mode: "timestamp" }),
     lastSyncCursor: text("last_sync_cursor"), // for incremental sync
     syncStatus: text("sync_status", { enum: ["idle", "syncing", "error"] })

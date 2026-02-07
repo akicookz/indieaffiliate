@@ -12,12 +12,12 @@ import PartnerLogin from "./pages/PartnerLogin";
 import AuthCallback from "./pages/AuthCallback";
 import Onboarding from "./pages/Onboarding";
 import Dashboard from "./pages/Dashboard";
-import Analytics from "./pages/Analytics";
 import Customers from "./pages/Customers";
 import Partners from "./pages/Partners";
 import Payouts from "./pages/Payouts";
 import FraudFlags from "./pages/FraudFlags";
 import ProjectSettings from "./pages/ProjectSettings";
+import Import from "./pages/Import";
 import PartnerPageDesigner from "./pages/PartnerPageDesigner";
 import JoinPartnerProgram from "./pages/JoinPartnerProgram";
 import PortalDashboard from "./pages/PortalDashboard";
@@ -55,11 +55,11 @@ function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="analytics" element={<Analytics />} />
         <Route path="customers" element={<Customers />} />
         <Route path="partners" element={<Partners />} />
         <Route path="payouts" element={<Payouts />} />
         <Route path="fraud-flags" element={<FraudFlags />} />
+        <Route path="import" element={<Import />} />
         <Route path="projects/:slug/settings" element={<ProjectSettings />} />
         <Route path="projects/:slug/partner-page" element={<PartnerPageDesigner />} />
       </Route>

@@ -243,6 +243,17 @@ export class ImportService {
       }
 
       try {
+        // Skip commission creation for self-referral customers
+        const customerRow = await this.db
+          .select({ isSelfReferral: customers.isSelfReferral })
+          .from(customers)
+          .where(eq(customers.id, customerId))
+          .limit(1);
+        if (customerRow[0]?.isSelfReferral) {
+          result.skipped.push({ row: i, reason: "Customer is marked as self-referral", type: "commission" });
+          continue;
+        }
+
         const partner = existingPartners.find((p) => p.id === partnerId) ||
           (await this.db.select().from(partners).where(eq(partners.id, partnerId)).limit(1))[0];
 

@@ -20,6 +20,7 @@ export class StripeService {
         "https://api.stripe.com/v1/customers?limit=1",
         "https://api.stripe.com/v1/subscriptions?limit=1",
         "https://api.stripe.com/v1/charges?limit=1",
+        "https://api.stripe.com/v1/invoices?limit=1",
       ];
       const results = await Promise.all(
         endpoints.map((url) => fetch(url, { headers })),
@@ -139,6 +140,32 @@ export class StripeService {
       };
     } catch {
       return DEFAULT_METADATA_MAPPINGS;
+    }
+  }
+
+  /**
+   * Persist the last sync summary JSON on the stripe connection.
+   */
+  async updateLastSyncSummary(
+    projectId: string,
+    summary: object,
+  ): Promise<void> {
+    await this.db
+      .update(stripeConnections)
+      .set({ lastSyncSummary: JSON.stringify(summary) })
+      .where(eq(stripeConnections.projectId, projectId));
+  }
+
+  /**
+   * Get the persisted last sync summary for a project.
+   */
+  async getLastSyncSummary(projectId: string): Promise<object | null> {
+    const conn = await this.getConnection(projectId);
+    if (!conn?.lastSyncSummary) return null;
+    try {
+      return JSON.parse(conn.lastSyncSummary);
+    } catch {
+      return null;
     }
   }
 

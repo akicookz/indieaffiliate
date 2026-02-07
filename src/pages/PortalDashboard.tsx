@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   DollarSign,
   MousePointer,
@@ -7,6 +7,8 @@ import {
   Clock,
   CheckCircle,
   Copy,
+  Wallet,
+  Pencil,
 } from "lucide-react";
 import { useState } from "react";
 import StatCard from "@/components/StatCard";
@@ -19,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface PartnerDashboardData {
   partner: {
@@ -27,6 +30,7 @@ interface PartnerDashboardData {
     referralCode: string;
     commissionRate: number;
     status: string;
+    payoutLink: string | null;
   };
   programs: Array<{
     id: string;
@@ -57,6 +61,111 @@ interface Payout {
   periodEnd: string | null;
   paidAt: string | null;
   createdAt: string;
+}
+
+function PayoutLinkCard({ currentLink }: { currentLink: string | null }) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(currentLink ?? "");
+
+  const mutation = useMutation({
+    mutationFn: async (payoutLink: string | null) => {
+      const response = await fetch("/api/partner/payout-link", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payoutLink }),
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error ?? "Failed to update");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["partner-dashboard"] });
+      setEditing(false);
+    },
+  });
+
+  return (
+    <div className="bg-card/50 border border-border rounded-2xl p-5 shadow-xs">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <Wallet className="w-4 h-4 text-muted-foreground" />
+          <h3 className="text-sm font-medium text-foreground">
+            Payout Link
+          </h3>
+        </div>
+        {!editing && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => {
+              setValue(currentLink ?? "");
+              setEditing(true);
+            }}
+          >
+            <Pencil className="w-3 h-3 mr-1" />
+            {currentLink ? "Edit" : "Add"}
+          </Button>
+        )}
+      </div>
+      {editing ? (
+        <div className="flex items-center gap-2">
+          <Input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="paypal.me/yourname or payment link"
+            className="text-sm"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                mutation.mutate(value.trim() || null);
+              }
+              if (e.key === "Escape") {
+                setEditing(false);
+                setValue(currentLink ?? "");
+              }
+            }}
+            autoFocus
+          />
+          <Button
+            size="sm"
+            onClick={() => mutation.mutate(value.trim() || null)}
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending ? "Saving..." : "Save"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setEditing(false);
+              setValue(currentLink ?? "");
+            }}
+          >
+            Cancel
+          </Button>
+        </div>
+      ) : currentLink ? (
+        <a
+          href={currentLink.startsWith("http") ? currentLink : `https://${currentLink}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm text-primary hover:underline"
+        >
+          {currentLink}
+        </a>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No payout link set. Add one so the project owner knows where to send payments.
+        </p>
+      )}
+      {mutation.error && (
+        <p className="text-sm text-destructive mt-2">{mutation.error.message}</p>
+      )}
+    </div>
+  );
 }
 
 function PortalDashboard() {
@@ -165,6 +274,9 @@ function PortalDashboard() {
           </Button>
         </div>
       </div>
+
+      {/* Payout Link Card */}
+      <PayoutLinkCard currentLink={data?.partner.payoutLink ?? null} />
 
       {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

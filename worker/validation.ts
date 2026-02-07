@@ -25,11 +25,25 @@ export const updatePartnerSchema = z.object({
   email: z.string().email().optional(),
   status: z.enum(["active", "pending", "inactive"]).optional(),
   commissionRate: z.number().min(0.01).max(1).optional(),
+  payoutLink: z.string().max(500).nullable().optional(),
+  referralCode: z.string().min(1).max(50).optional(),
 });
 
 // ─── Commissions ──────────────────────────────────────────────────────────────
 export const updateCommissionSchema = z.object({
   status: z.enum(["pending", "approved", "paid", "rejected"]),
+  fraudFlag: z.enum([
+    "self_referral",
+    "bot_click",
+    "revenue_cap",
+    "suspicious_activity",
+    "policy_violation",
+  ]).optional(),
+});
+
+export const bulkCommissionActionSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1, "At least one commission ID is required"),
+  action: z.enum(["approve", "pay", "reject"]),
   fraudFlag: z.enum([
     "self_referral",
     "bot_click",
@@ -110,6 +124,11 @@ export const updatePayoutSchema = z.object({
   status: z.enum(["scheduled", "paid", "failed"]),
 });
 
+// ─── Partner Self-Edit ─────────────────────────────────────────────────────────
+export const updatePartnerPayoutLinkSchema = z.object({
+  payoutLink: z.string().max(500).nullable(),
+});
+
 // ─── Partner Magic Link Login ─────────────────────────────────────────────────
 export const partnerMagicLinkSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -179,4 +198,17 @@ export const stripeImportExecuteSchema = z.object({
     action: z.enum(["link", "skip"]),
   })),
   filters: importFiltersSchema.optional(),
+});
+
+// ─── Stripe Customer Browsing ──────────────────────────────────────────────────
+export const stripeCustomerSearchSchema = z.object({
+  query: z.string().optional(),
+  filter: z.enum(["recent", "active_subscribers"]).default("recent"),
+  limit: z.coerce.number().min(1).max(100).default(20),
+  starting_after: z.string().optional(),
+});
+
+export const assignPartnerToCustomersSchema = z.object({
+  partnerId: z.string().min(1),
+  stripeCustomerIds: z.array(z.string().min(1)).min(1),
 });

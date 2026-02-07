@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Settings,
@@ -11,22 +11,14 @@ import {
   Plus,
   Eye,
   EyeOff,
-  RefreshCw,
   Unplug,
   ArrowUpRight,
   X,
-  UserPlus,
+  Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { generateTrackingSnippet } from "@/lib/utils";
 
 interface Project {
@@ -59,32 +51,6 @@ interface StripeConnection {
   metadataMappings?: MetadataMappings;
 }
 
-interface ReferralCodeInfo {
-  code: string;
-  count: number;
-  matched: boolean;
-  partnerName?: string;
-}
-
-interface SyncSummary {
-  processedCount: number;
-  chargesFetched: number;
-  subscriptionsFetched: number;
-  customersLookedUp: number;
-  existingCustomersSkipped: number;
-  metadataFound: number;
-  metadataKeys: Record<string, number>;
-  partnersMatched: number;
-  unmatchedReferralCodes: string[];
-  referralCodes: ReferralCodeInfo[];
-  noMetadataCount: number;
-  noCustomerCount: number;
-  failedChargeStatusCount: number;
-  emailLookupFailures: number;
-  duplicateEventsSkipped: number;
-  error?: string;
-}
-
 function ProjectSettings() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
@@ -110,15 +76,6 @@ function ProjectSettings() {
   const [metadataSource, setMetadataSource] = useState<"charge_metadata" | "subscription_metadata" | "both">("both");
   const [newMetadataKey, setNewMetadataKey] = useState("");
   const [mappingsDirty, setMappingsDirty] = useState(false);
-
-  // Sync summary state
-  const [lastSyncSummary, setLastSyncSummary] = useState<SyncSummary | null>(null);
-
-  // Create-partner-from-code dialog state
-  const [createPartnerCode, setCreatePartnerCode] = useState<string | null>(null);
-  const [newPartnerName, setNewPartnerName] = useState("");
-  const [newPartnerEmail, setNewPartnerEmail] = useState("");
-  const [newPartnerCommission, setNewPartnerCommission] = useState("20");
 
   const { data: projectsData, isLoading } = useQuery({
     queryKey: ["projects"],
@@ -323,64 +280,6 @@ function ProjectSettings() {
     },
   });
 
-  const syncStripeMutation = useMutation({
-    mutationFn: async (projectId: string): Promise<SyncSummary> => {
-      const response = await fetch(`/api/projects/${projectId}/stripe/sync`, {
-        method: "POST",
-      });
-      const data = await response.json() as SyncSummary & { error?: string };
-      if (!response.ok) {
-        throw new Error(data.error ?? "Failed to sync");
-      }
-      return data;
-    },
-    onSuccess: (data) => {
-      setLastSyncSummary(data);
-      queryClient.invalidateQueries({ queryKey: ["stripe-connection", project?.id] });
-      queryClient.invalidateQueries({ queryKey: ["commissions"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-    },
-  });
-
-  const createPartnerMutation = useMutation({
-    mutationFn: async (data: { referralCode: string; name: string; email: string; commissionRate: number }) => {
-      const response = await fetch("/api/partners", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: project?.id,
-          name: data.name,
-          email: data.email,
-          commissionRate: data.commissionRate,
-          referralCode: data.referralCode,
-        }),
-      });
-      if (!response.ok) {
-        const body = await response.json();
-        throw new Error((body as { error?: string }).error ?? "Failed to create partner");
-      }
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["partners"] });
-      setCreatePartnerCode(null);
-      setNewPartnerName("");
-      setNewPartnerEmail("");
-      setNewPartnerCommission("20");
-    },
-  });
-
-  function handleCreatePartnerFromCode(e: React.FormEvent) {
-    e.preventDefault();
-    if (!createPartnerCode || !newPartnerName.trim() || !newPartnerEmail.trim()) return;
-    createPartnerMutation.mutate({
-      referralCode: createPartnerCode,
-      name: newPartnerName.trim(),
-      email: newPartnerEmail.trim().toLowerCase(),
-      commissionRate: parseFloat(newPartnerCommission) / 100,
-    });
-  }
-
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -448,11 +347,6 @@ function ProjectSettings() {
     if (confirm("Are you sure you want to disconnect Stripe? Automatic sync will stop.")) {
       disconnectStripeMutation.mutate(project.id);
     }
-  }
-
-  function handleSyncStripe() {
-    if (!project) return;
-    syncStripeMutation.mutate(project.id);
   }
 
   function handleAddMetadataKey() {
@@ -726,8 +620,13 @@ function ProjectSettings() {
             {stripeData?.connected ? (
               <div className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  Stripe is connected. Charges with referral metadata are
-                  automatically synced as commissions daily at 6 AM UTC.
+                  Stripe is connected. To sync data or assign partners to referral codes, go to the{" "}
+                  <Link
+                    to="/app/import"
+                    className="text-primary hover:underline font-medium"
+                  >
+                    Import page
+                  </Link>.
                 </p>
 
                 {/* Sync status */}
@@ -758,16 +657,11 @@ function ProjectSettings() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleSyncStripe}
-                    disabled={syncStripeMutation.isPending}
-                  >
-                    <RefreshCw
-                      className={`w-3 h-3 mr-1.5 ${syncStripeMutation.isPending ? "animate-spin" : ""}`}
-                    />
-                    {syncStripeMutation.isPending ? "Syncing..." : "Sync Now"}
+                  <Button variant="outline" size="sm" asChild>
+                    <Link to="/app/import">
+                      <Upload className="w-3 h-3 mr-1.5" />
+                      Go to Import
+                    </Link>
                   </Button>
                   <Button
                     variant="ghost"
@@ -780,141 +674,6 @@ function ProjectSettings() {
                     Disconnect
                   </Button>
                 </div>
-
-                {syncStripeMutation.error && (
-                  <p className="text-sm text-destructive">
-                    {syncStripeMutation.error.message}
-                  </p>
-                )}
-
-                {/* Sync Summary */}
-                {lastSyncSummary && (
-                  <div className="bg-muted/30 rounded-xl px-4 py-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-foreground">
-                        Last Sync Summary
-                      </span>
-                      <button
-                        onClick={() => setLastSyncSummary(null)}
-                        className="text-muted-foreground hover:text-foreground"
-                        aria-label="Dismiss summary"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                      {lastSyncSummary.chargesFetched > 0 && (
-                        <>
-                          <span className="text-muted-foreground">Charges fetched</span>
-                          <span className="font-medium text-right">{lastSyncSummary.chargesFetched}</span>
-                        </>
-                      )}
-                      {lastSyncSummary.subscriptionsFetched > 0 && (
-                        <>
-                          <span className="text-muted-foreground">Subscriptions fetched</span>
-                          <span className="font-medium text-right">{lastSyncSummary.subscriptionsFetched}</span>
-                        </>
-                      )}
-                      <span className="text-muted-foreground">Customers looked up</span>
-                      <span className="font-medium text-right">{lastSyncSummary.customersLookedUp}</span>
-
-                      {lastSyncSummary.existingCustomersSkipped > 0 && (
-                        <>
-                          <span className="text-muted-foreground">Already tracked (skipped)</span>
-                          <span className="font-medium text-right">{lastSyncSummary.existingCustomersSkipped}</span>
-                        </>
-                      )}
-
-                      <span className="text-muted-foreground">With referral metadata</span>
-                      <span className="font-medium text-right">{lastSyncSummary.metadataFound}</span>
-
-                      <span className="text-muted-foreground">Without metadata (skipped)</span>
-                      <span className="font-medium text-right">{lastSyncSummary.noMetadataCount}</span>
-
-                      <span className="text-muted-foreground">Partners matched</span>
-                      <span className="font-medium text-right">{lastSyncSummary.partnersMatched}</span>
-
-                      {lastSyncSummary.duplicateEventsSkipped > 0 && (
-                        <>
-                          <span className="text-muted-foreground">Duplicates skipped</span>
-                          <span className="font-medium text-right">{lastSyncSummary.duplicateEventsSkipped}</span>
-                        </>
-                      )}
-
-                      <span className="text-muted-foreground font-medium">New commissions created</span>
-                      <span className="font-medium text-right text-green-600">{lastSyncSummary.processedCount}</span>
-                    </div>
-
-                    {Object.keys(lastSyncSummary.metadataKeys).length > 0 && (
-                      <div className="pt-1 border-t border-border/50">
-                        <span className="text-xs text-muted-foreground">Metadata keys found:</span>
-                        <div className="flex flex-wrap gap-1.5 mt-1">
-                          {Object.entries(lastSyncSummary.metadataKeys).map(([key, count]) => (
-                            <span
-                              key={key}
-                              className="inline-flex items-center gap-1 text-xs bg-muted px-2 py-0.5 rounded-lg font-mono"
-                            >
-                              {key}
-                              <span className="text-muted-foreground">({count})</span>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {lastSyncSummary.referralCodes.length > 0 && (
-                      <div className="pt-1 border-t border-border/50 space-y-2">
-                        <span className="text-xs font-medium text-foreground">
-                          Discovered referral codes:
-                        </span>
-                        <div className="space-y-1">
-                          {lastSyncSummary.referralCodes.map((rc) => (
-                            <div
-                              key={rc.code}
-                              className="flex items-center justify-between text-xs"
-                            >
-                              <div className="flex items-center gap-2">
-                                <code className="font-mono bg-muted px-1.5 py-0.5 rounded">
-                                  {rc.code}
-                                </code>
-                                <span className="text-muted-foreground">
-                                  ({rc.count} {rc.count === 1 ? "record" : "records"})
-                                </span>
-                              </div>
-                              {rc.matched ? (
-                                <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
-                                  <Check className="w-3 h-3" />
-                                  {rc.partnerName}
-                                </span>
-                              ) : (
-                                <button
-                                  onClick={() => {
-                                    setCreatePartnerCode(rc.code);
-                                    setNewPartnerName("");
-                                    setNewPartnerEmail("");
-                                    setNewPartnerCommission("20");
-                                    createPartnerMutation.reset();
-                                  }}
-                                  className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 underline underline-offset-2 decoration-dashed"
-                                >
-                                  <UserPlus className="w-3 h-3" />
-                                  Create partner
-                                </button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {lastSyncSummary.emailLookupFailures > 0 && (
-                      <p className="text-xs text-amber-600 dark:text-amber-400">
-                        {lastSyncSummary.emailLookupFailures} customer email lookups failed
-                      </p>
-                    )}
-                  </div>
-                )}
 
                 {/* Metadata Mappings */}
                 <div className="border-t border-border pt-4 space-y-3">
@@ -974,11 +733,10 @@ function ProjectSettings() {
                       {(["both", "charge_metadata", "subscription_metadata"] as const).map((src) => (
                         <button
                           key={src}
-                          className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-                            metadataSource === src
-                              ? "border-primary bg-primary/10 text-primary"
-                              : "border-border text-muted-foreground hover:border-muted-foreground/30"
-                          }`}
+                          className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${metadataSource === src
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border text-muted-foreground hover:border-muted-foreground/30"
+                            }`}
                           onClick={() => handleMetadataSourceChange(src)}
                         >
                           {src === "both" ? "Both" : src === "charge_metadata" ? "Charges" : "Subscriptions"}
@@ -1046,7 +804,7 @@ function ProjectSettings() {
                     </li>
                   </ul>
                   <a
-                    href="https://dashboard.stripe.com/apikeys/create"
+                    href="https://dashboard.stripe.com/apikeys/create?name=UnlockAffiliate&permissions[]=rak_charge_read&permissions[]=rak_invoice_read&permissions[]=rak_customer_read&permissions[]=rak_subscription_read"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline mt-1"
@@ -1163,99 +921,6 @@ function ProjectSettings() {
         </div>
       </div>
 
-      {/* Create Partner from Referral Code Dialog */}
-      <Dialog
-        open={createPartnerCode !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setCreatePartnerCode(null);
-            setNewPartnerName("");
-            setNewPartnerEmail("");
-            setNewPartnerCommission("20");
-            createPartnerMutation.reset();
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Create Partner</DialogTitle>
-            <DialogDescription>
-              Create a partner for referral code{" "}
-              <code className="font-mono bg-muted px-1.5 py-0.5 rounded text-foreground">
-                {createPartnerCode}
-              </code>
-              . After creating the partner, run sync again to process their records.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreatePartnerFromCode} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="cp-code">Referral Code</Label>
-              <Input
-                id="cp-code"
-                value={createPartnerCode ?? ""}
-                disabled
-                className="font-mono bg-muted"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="cp-name">Name</Label>
-              <Input
-                id="cp-name"
-                value={newPartnerName}
-                onChange={(e) => setNewPartnerName(e.target.value)}
-                placeholder="Partner's name"
-                required
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="cp-email">Email</Label>
-              <Input
-                id="cp-email"
-                type="email"
-                value={newPartnerEmail}
-                onChange={(e) => setNewPartnerEmail(e.target.value)}
-                placeholder="partner@example.com"
-                required
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="cp-commission">Commission Rate (%)</Label>
-              <Input
-                id="cp-commission"
-                type="number"
-                min="1"
-                max="100"
-                step="1"
-                value={newPartnerCommission}
-                onChange={(e) => setNewPartnerCommission(e.target.value)}
-              />
-            </div>
-
-            {createPartnerMutation.error && (
-              <p className="text-sm text-destructive">
-                {createPartnerMutation.error.message}
-              </p>
-            )}
-
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setCreatePartnerCode(null)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={createPartnerMutation.isPending}>
-                <UserPlus className="w-4 h-4 mr-2" />
-                {createPartnerMutation.isPending ? "Creating..." : "Create Partner"}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

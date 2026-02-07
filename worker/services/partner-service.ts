@@ -89,7 +89,7 @@ export class PartnerService {
 
   async updatePartner(
     id: string,
-    updates: Partial<Pick<PartnerRow, "name" | "email" | "status" | "commissionRate">>,
+    updates: Partial<Pick<PartnerRow, "name" | "email" | "status" | "commissionRate" | "payoutLink" | "referralCode">>,
   ): Promise<PartnerRow | null> {
     await this.db
       .update(partners)

@@ -1,0 +1,1 @@
+ALTER TABLE `commissions` ADD `event_date` integer;
