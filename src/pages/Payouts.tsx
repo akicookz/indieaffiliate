@@ -151,32 +151,29 @@ function buildPaymentNote(partner: PartnerGroup) {
   const approved = partner.commissions.filter((c) => c.status === "approved");
   if (approved.length === 0) return "";
 
-  const today = new Date().toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
+  // Group by month, then by amount within each month
+  const byMonth = new Map<string, CommissionDetail[]>();
+  for (const c of approved) {
+    const d = c.eventDate ?? c.createdAt;
+    const month = new Date(d).toLocaleDateString("en-US", { month: "short" });
+    const list = byMonth.get(month) ?? [];
+    list.push(c);
+    byMonth.set(month, list);
+  }
+
+  const projectName = approved[0]?.projectName ?? "Affiliate";
+
+  const months = Array.from(byMonth.entries()).map(([month, comms]) => {
+    const total = comms.reduce((s, c) => s + c.amount, 0);
+    const counts = new Map<number, number>();
+    for (const c of comms) counts.set(c.amount, (counts.get(c.amount) ?? 0) + 1);
+    const items = Array.from(counts.entries())
+      .map(([amt, n]) => `${formatCurrency(amt)} x${n}`)
+      .join(", ");
+    return `${month}: ${formatCurrency(total)} (${items})`;
   });
 
-  const lines = approved.map((c) => {
-    const dateSource = c.eventDate ?? c.createdAt;
-    const date = new Date(dateSource).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-    return `  ${formatCurrency(c.amount)} - ${c.projectName}, ${date}`;
-  });
-
-  return [
-    `Affiliate payout - ${partner.partnerName}`,
-    `Date: ${today}`,
-    `Total: ${formatCurrency(partner.approvedAmount)}`,
-    ``,
-    `Commissions (${approved.length}):`,
-    ...lines,
-    ``,
-    `Powered by UnlockAffiliate`,
-  ].join("\n");
+  return `${projectName} Affiliate payout ${formatCurrency(partner.approvedAmount)}: ${months.join(", ")} - thank you!`;
 }
 
 function CopyNoteButton({ partner }: { partner: PartnerGroup }) {

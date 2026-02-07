@@ -1,35 +1,42 @@
 {
-	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "unlockaffiliate",
-	"main": "worker/index.ts",
-	"compatibility_date": "2025-05-24",
-	"compatibility_flags": ["nodejs_compat"],
-	"account_id": "35bc7a4522237728214ba9d54c36002e",
-	"assets": {
-		"binding": "ASSETS",
-		"not_found_handling": "single-page-application"
-	},
-	"observability": {
-		"enabled": true
-	},
-	"d1_databases": [
-		{
-			"binding": "DB",
-			"database_name": "unlockaffiliate-db",
-			"database_id": "eba98925-3b0c-44b7-b4ac-a26c1171a9a4",
-			"migrations_dir": "worker/db/drizzle"
-		}
-	],
-	"r2_buckets": [
-		{
-			"binding": "UPLOADS",
-			"bucket_name": "unlockaffiliate-uploads"
-		}
-	],
-	"vars": {
-		"BETTER_AUTH_URL": "http://localhost:5173"
-	},
-	"triggers": {
-		"crons": ["0 6 * * *"]
-	}
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "unlockaffiliate",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-05-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "account_id": "35bc7a4522237728214ba9d54c36002e",
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+  },
+  "observability": {
+    "enabled": true,
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "unlockaffiliate-db",
+      "database_id": "eba98925-3b0c-44b7-b4ac-a26c1171a9a4",
+      "migrations_dir": "worker/db/drizzle",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "UPLOADS",
+      "bucket_name": "unlockaffiliate-uploads",
+    },
+  ],
+  "vars": {
+    "BETTER_AUTH_URL": "http://localhost:5173",
+  },
+  "triggers": {
+    "crons": ["0 6 * * *"],
+  },
+  "env": {
+    "production": {
+      "vars": {
+        "BETTER_AUTH_URL": "https://unlockaffiliate.com",
+      },
+    },
+  },
 }
