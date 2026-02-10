@@ -35,10 +35,10 @@ function Landing() {
               </span>
             </div>
             <div className="flex items-center space-x-4">
-              <Button variant="ghost" className="hidden md:inline-flex">
+              <Button variant="ghost" className="hidden md:inline-flex" onClick={()=>document.getElementById("features")?.scrollIntoView({behavior:"smooth"})}>
                 Features
               </Button>
-              <Button variant="ghost" className="hidden md:inline-flex">
+              <Button variant="ghost" className="hidden md:inline-flex" onClick={()=>document.getElementById("pricing")?.scrollIntoView({behavior:"smooth"})}>
                 Pricing
               </Button>
               <Link to="/login">
@@ -73,7 +73,7 @@ function Landing() {
 
           <p className="text-lg text-muted-foreground mb-8 max-w-3xl mx-auto">
             <span className="text-primary italic">
-              Reach your first $2,000 affiliate MRR before you pay us a dime.
+              Reach your first $1,000 affiliate MRR before you pay us a dime.
             </span>
             <br />
             Most affiliate softwares are one way exchange. They start charging
@@ -109,7 +109,7 @@ function Landing() {
                 />
               ))}
             </div>
-            <span>Trusted by 320+ founders</span>
+            <span>Helping 8 founders reach 1st $1k affiliate MRR</span>
           </div>
         </div>
       </section>
@@ -151,7 +151,7 @@ function Landing() {
       </section>
 
       {/* Features Bento Grid */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8">
+      <section className="py-20 px-4 sm:px-6 lg:px-8" id="features">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl mb-4 font-heading italic">
@@ -281,7 +281,7 @@ function Landing() {
       </section>
 
       {/* Pricing Section */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-transparent to-accent/5">
+      <section className="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-transparent to-accent/5" id="pricing">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl mb-4">
@@ -340,9 +340,11 @@ function Landing() {
                     <span className="text-sm">Community Slack support</span>
                   </div>
                 </div>
+                <Link to="/signup?plan=free">
                 <Button className="w-full mt-6" variant="outline">
                   Start Free
                 </Button>
+                </Link>
               </CardContent>
             </Card>
 
@@ -408,7 +410,9 @@ function Landing() {
                     <span className="text-sm">Wise bulk payouts</span>
                   </div>
                 </div>
+                <Link to="/signup?plan=growth">
                 <Button className="w-full mt-6">Start 14-day free trial</Button>
+                </Link>
               </CardContent>
             </Card>
 
@@ -467,9 +471,11 @@ function Landing() {
                     <span className="text-sm">Refund sync</span>
                   </div>
                 </div>
+                <Link to="/signup?plan=scale">
                 <Button variant="outline" className="w-full mt-6">
                   Start 14-day free trial
                 </Button>
+                </Link>
               </CardContent>
             </Card>
           </div>
@@ -561,7 +567,7 @@ function Landing() {
                   </Button>
                 </Link>
                 <p className="text-sm text-muted-foreground">
-                  No credit card required • Free until $2,000 referral MRR
+                  No credit card required • Free until $1,000 referral MRR
                 </p>
               </div>
             </CardContent>
@@ -594,7 +600,8 @@ function Landing() {
                 <li>API</li>
               </ul>
             </div>
-            <div>
+            {/* This section is hidden for now */}
+            {/* <div>
               <h3 className="font-semibold mb-4">Company</h3>
               <ul className="space-y-2 text-muted-foreground">
                 <li>About</li>
@@ -602,7 +609,7 @@ function Landing() {
                 <li>Contact</li>
                 <li>Support</li>
               </ul>
-            </div>
+            </div> */}
           </div>
           <div className="border-t border-border/40 mt-8 pt-8 text-center text-muted-foreground">
             <p>&copy; 2026 UnlockAffiliate. Unlock your affiliate revenue.</p>
