@@ -1,0 +1,30 @@
+---
+description: Documentation and onboarding consistency rules
+alwaysApply: true
+---
+
+# UnlockAffiliate Docs Rules
+
+## Source of Truth
+
+- Keep `README.md` as the canonical local setup and project structure reference.
+- Keep `AGENTS.md` focused on working conventions for contributors/agents.
+
+## Documentation Hygiene
+
+- Use placeholders for env vars; never include real secrets/tokens.
+- Update docs when scripts, folder structure, or env requirements change.
+- Keep command examples aligned with current `package.json` scripts.
+
+## Project-Specific Notes to Preserve
+
+- Runtime/package manager is `bun`.
+- Frontend is in `src/`; backend worker is in `worker/`.
+- D1 migrations live under `worker/db/drizzle`.
+- Cloudflare bindings and vars are defined in `wrangler.jsonc`.
+
+## Writing Style
+
+- Keep docs concise and task-oriented.
+- Prefer concrete steps and copy-paste commands.
+- Avoid duplicating large sections across files when one file is source of truth.

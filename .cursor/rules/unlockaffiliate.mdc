@@ -1,112 +1,42 @@
 ---
-description: 
-globs: 
+description: Core engineering rules for UnlockAffiliate
 alwaysApply: true
 ---
-# UnlockAffiliate Project Cursor Rules
 
-## Stack & Technology
+# UnlockAffiliate Core Rules
 
-- **Runtime**: Bun (always use `bun` for package management and script execution)
-- **Framework**: React with TypeScript
-- **Styling**: Tailwind CSS v4 with ShadCN/UI components
-- **Deployment**: Cloudflare Workers/Pages
-- **Build Tool**: Vite
-- **Package Manager**: Bun (never use npm or yarn)
+## Tooling and Runtime
 
-## Development Guidelines
+- Use `bun` for installs and scripts; do not use npm/yarn.
+- Prefer existing scripts in `package.json` before introducing new commands.
+- Keep Cloudflare Worker compatibility in mind for backend code.
 
-### Function Syntax
+## TypeScript and Imports
 
-- **ALWAYS** use function declarations instead of arrow functions
-- ✅ `function functionName() { }`
-- ❌ `const functionName = () => { }`
-- ✅ `export function ComponentName() { }`
-- ❌ `export const ComponentName = () => { }`
+- Use TypeScript everywhere and keep strict typing.
+- Use `@/` alias for imports from `src/`.
+- Use `import type` for type-only imports.
 
-### Package Management
+## Function and Component Patterns
 
-- Before installing any package, check `@package.json` to see if it's absolutely necessary
-- Always use `bun add` instead of `npm install` or `yarn add`
-- Use `bun run` for script execution
-- Use `bun dev` for development server
+- Use function declarations for named functions/components.
+- Arrow functions are acceptable only for inline callbacks.
+- Keep components focused; extract reusable logic into hooks/services.
 
-### Code Quality
+## UI Workflow
 
-- Use TypeScript for all files
-- Import paths should use `@/` alias for src directory
-- Follow React best practices with proper component structure
-- Use proper TypeScript types and interfaces
+1. Check shadcn/ui first.
+2. Reuse existing components in `src/components/`.
+3. Create custom components only when needed.
 
-## UI/UX Design System
+## Styling and Accessibility
 
-### Visual Design
+- Follow existing glassmorphism style tokens and spacing patterns.
+- Use semantic color tokens from `src/index.css`.
+- Ensure keyboard accessibility, ARIA usage, and color contrast.
 
-- **Primary Style**: Glassmorphism effect with subtle transparency
-- **Border Radius**: Use `rounded-2xl` for cards and components
-- **Card background**: Slightly darker version of the page background with subtle shadows
-- **Borders**: Subtle borders with low opacity
-- **Accent Color**: Purple (use very sparingly - only for key highlights)
-- **Layout**: Card-based UI with bento grid layouts
+## Data and API Conventions
 
-### Typography
-
-- **Dashboard & UI Text**: Satoshi font family
-- **Marketing Headers**: Playfair Display font family
-- Ensure proper font loading and fallbacks
-
-### Component Development
-
-1. **First Priority**: Use `shadcn-ui-server` to check if component you want to make is already available, mcp server allows you to use following tools:
-
-   - `list_shadcn_components` - Get a list of all available shadcn/ui components
-   - `get_component_details` - Get detailed information about a specific component
-   - `get_component_examples` - Get usage examples for a specific component
-   - `search_components` - Search for components by keyword
-
-2. **Second Priority**: Look at existing components in /components and /ui folder and use that if it already exists
-3. **Last Resort**: Create new custom components following the design system
-
-### Component Structure
-
-- Use ShadCN/UI as the base component library
-- Extend with custom styling following glassmorphism principles
-- Implement proper responsive design
-- Use Tailwind CSS classes for styling
-
-## File Organization
-
-```
-src/
-├── components/
-│   ├── ui/          # ShadCN base components
-│   └── ...          # Custom components
-├── lib/             # Utilities and helpers
-├── hooks/           # Custom React hooks
-└── ...
-```
-
-## Development Workflow
-
-1. Check existing components before creating new ones
-2. Use TypeScript for type safety
-3. Follow component composition patterns
-4. Implement proper error handling
-5. Test components thoroughly
-6. Use proper semantic HTML
-
-## Performance Considerations
-
-- Optimize for Cloudflare Workers environment
-- Use code splitting appropriately
-- Implement proper caching strategies
-- Minimize bundle size
-
-## Accessibility
-
-- Implement proper ARIA labels
-- Ensure keyboard navigation
-- Maintain proper color contrast
-- Use semantic HTML elements
-
-Remember: This is a modern, glassmorphism-styled affiliate marketing platform built with cutting-edge technologies. Prioritize clean, maintainable code and beautiful, accessible user interfaces.
+- Use React Query for frontend data fetching.
+- Keep API access routed through `/api/*` worker endpoints.
+- Keep worker service layer typed and domain-focused.

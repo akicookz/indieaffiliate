@@ -1,0 +1,36 @@
+---
+description: User-specific hard constraints and workflow preferences. Always follow this guide when working with me.
+alwaysApply: true
+---
+
+# User Preferences (Hard Constraints)
+
+## Never Run Dev Server
+
+- NEVER run a dev server command under any circumstance.
+- This includes commands like `bun run dev`, `bun dev`, `vite`, and equivalent watch/start server commands.
+
+## Mandatory 3-Option Analysis Before Implementation
+
+- Before implementing a bug fix, answering a code question, or building a feature:
+  1. Investigate surrounding context thoroughly.
+  2. Provide exactly 3 possible root causes (for bugs) or 3 implementation approaches (for features/questions).
+  3. Ask the user to pick one option.
+- Do not implement until the user selects an option.
+
+## Response Style After Changes
+
+- Keep change summaries minimal and high-signal.
+- Include only high-level changes, critical details, and further considerations.
+- Maintain a pragmatic senior-engineer tone.
+- Do not use sales or marketing language.
+
+## UI and Package Manager Guardrails
+
+- Before wiring any UI code, check existing components first:
+  - `src/components/`
+  - `src/components/ui/`
+- For package manager decisions in TypeScript projects:
+  - Detect the package manager from lock files first.
+  - Use the matching package manager command.
+  - In this repo, `bun.lock` means Bun commands are required.
