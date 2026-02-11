@@ -1,5 +1,12 @@
 import * as React from "react";
-import { Home, Users, HandHeart, CreditCard, ShieldAlert } from "lucide-react";
+import {
+  Home,
+  Users,
+  HandHeart,
+  CreditCard,
+  ShieldAlert,
+  LineChart,
+} from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
 import { NavProjects } from "@/components/nav-projects";
@@ -34,6 +41,11 @@ const navMain = [
     title: "Payouts",
     url: "/app/payouts",
     icon: CreditCard,
+  },
+  {
+    title: "Analytics",
+    url: "/app/analytics",
+    icon: LineChart,
   },
   {
     title: "Fraud Detection",

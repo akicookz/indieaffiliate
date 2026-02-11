@@ -35,10 +35,10 @@ function Landing() {
               </span>
             </div>
             <div className="flex items-center space-x-4">
-              <Button variant="ghost" className="hidden md:inline-flex">
+              <Button variant="ghost" className="hidden md:inline-flex" onClick={()=>document.getElementById("features")?.scrollIntoView({behavior:"smooth"})}>
                 Features
               </Button>
-              <Button variant="ghost" className="hidden md:inline-flex">
+              <Button variant="ghost" className="hidden md:inline-flex" onClick={()=>document.getElementById("pricing")?.scrollIntoView({behavior:"smooth"})}>
                 Pricing
               </Button>
               <Link to="/login">
@@ -60,7 +60,7 @@ function Landing() {
             className="rounded-full mb-6 px-4 py-1.5 shadow-sm shadow-primary/90"
           >
             <Zap className="w-3 h-3 mr-1" />
-            We have a free plan
+            We have a free plan 
           </Badge>
 
           <h1 className="text-4xl md:text-6xl lg:text-7xl font-semibold mb-6 bg-gradient-to-r from-foreground via-foreground to-foreground/80 bg-clip-text text-transparent leading-tight">
@@ -73,7 +73,7 @@ function Landing() {
 
           <p className="text-lg text-muted-foreground mb-8 max-w-3xl mx-auto">
             <span className="text-primary italic">
-              Reach your first $2,000 affiliate MRR before you pay us a dime.
+              Reach your first $1,000 affiliate MRR before you pay us a dime.
             </span>
             <br />
             Most affiliate softwares are one way exchange. They start charging
@@ -109,20 +109,20 @@ function Landing() {
                 />
               ))}
             </div>
-            <span>Trusted by 320+ founders</span>
+            <span>Helping 8 founders reach 1st $1k affiliate MRR</span>
           </div>
         </div>
       </section>
 
       {/* Screenshot Placeholder Section */}
-      <section className="py-16 px-4 sm:px-6 lg:px-8 relative">
-        <div className="max-w-5xl mx-auto">
+      <section className="py-20 px-4 sm:px-6 lg:px-8 relative">
+        <div className="max-w-6xl mx-auto">
           <div className="relative">
             {/* Screenshot Container */}
-            <div className="bg-background max-h-[500px] backdrop-blur-xl rounded-3xl overflow-hidden relative">
-              <div>
+            <div className="bg-background max-h-[500px] backdrop-blur-xl rounded-3xl overflow-hidden relative p-6 sm:p-8">
+              <div className="space-y-4">
                 {/* Browser Chrome Mockup */}
-                <div className="mx-auto">
+                <div className="mx-auto max-w-fit">
                   <div className="flex items-center space-x-2 bg-background/80 backdrop-blur-sm rounded-full px-4 py-2">
                     <div className="flex space-x-1.5">
                       <div className="w-3 h-3 bg-red-500 rounded-full"></div>
@@ -138,7 +138,7 @@ function Landing() {
                 <img
                   src="/screenshots/dashboard.webp"
                   alt="Dashboard"
-                  className="max-w-5xl mx-auto object-contain"
+                  className="w-full mx-auto object-contain rounded-lg"
                 />
               </div>
 
@@ -151,7 +151,7 @@ function Landing() {
       </section>
 
       {/* Features Bento Grid */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8">
+      <section className="py-20 px-4 sm:px-6 lg:px-8" id="features">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl mb-4 font-heading italic">
@@ -266,6 +266,7 @@ function Landing() {
                       className="w-full h-full"
                     />
                   </div>
+                  <Badge>Coming Soon</Badge>
                 </div>
                 <CardTitle className="text-xl">
                   Stripe and Paddle Integration
@@ -281,7 +282,7 @@ function Landing() {
       </section>
 
       {/* Pricing Section */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-transparent to-accent/5">
+      <section className="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-transparent to-accent/5" id="pricing">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl mb-4">
@@ -340,9 +341,11 @@ function Landing() {
                     <span className="text-sm">Community Slack support</span>
                   </div>
                 </div>
+                <Link to="/signup?plan=free">
                 <Button className="w-full mt-6" variant="outline">
                   Start Free
                 </Button>
+                </Link>
               </CardContent>
             </Card>
 
@@ -372,6 +375,7 @@ function Landing() {
                   <div className="flex items-center space-x-3">
                     <Check className="w-4 h-4 text-green-600" />
                     <span className="text-sm">3 admin seats</span>
+                    <Badge>Coming Soon</Badge>
                   </div>
                   <div className="flex items-center space-x-3">
                     <Check className="w-4 h-4 text-green-600" />
@@ -380,6 +384,7 @@ function Landing() {
                   <div className="flex items-center space-x-3">
                     <Check className="w-4 h-4 text-green-600" />
                     <span className="text-sm">Coupon codes</span>
+                    <Badge>Coming Soon</Badge>
                   </div>
                   <div className="flex items-center space-x-3">
                     <Check className="w-4 h-4 text-green-600" />
@@ -408,7 +413,9 @@ function Landing() {
                     <span className="text-sm">Wise bulk payouts</span>
                   </div>
                 </div>
+                <Link to="/signup?plan=growth">
                 <Button className="w-full mt-6">Start 14-day free trial</Button>
+                </Link>
               </CardContent>
             </Card>
 
@@ -435,6 +442,7 @@ function Landing() {
                   <div className="flex items-center space-x-3">
                     <Check className="w-4 h-4 text-green-600" />
                     <span className="text-sm">10 admin seats</span>
+                    <Badge>Coming Soon</Badge>
                   </div>
                   <div className="flex items-center space-x-3">
                     <Check className="w-4 h-4 text-green-600" />
@@ -467,9 +475,11 @@ function Landing() {
                     <span className="text-sm">Refund sync</span>
                   </div>
                 </div>
+                <Link to="/signup?plan=scale">
                 <Button variant="outline" className="w-full mt-6">
                   Start 14-day free trial
                 </Button>
+                </Link>
               </CardContent>
             </Card>
           </div>
@@ -561,7 +571,7 @@ function Landing() {
                   </Button>
                 </Link>
                 <p className="text-sm text-muted-foreground">
-                  No credit card required • Free until $2,000 referral MRR
+                  No credit card required • Free until $1,000 referral MRR
                 </p>
               </div>
             </CardContent>
@@ -594,7 +604,8 @@ function Landing() {
                 <li>API</li>
               </ul>
             </div>
-            <div>
+            {/* This section is hidden for now */}
+            {/* <div>
               <h3 className="font-semibold mb-4">Company</h3>
               <ul className="space-y-2 text-muted-foreground">
                 <li>About</li>
@@ -602,7 +613,7 @@ function Landing() {
                 <li>Contact</li>
                 <li>Support</li>
               </ul>
-            </div>
+            </div> */}
           </div>
           <div className="border-t border-border/40 mt-8 pt-8 text-center text-muted-foreground">
             <p>&copy; 2026 UnlockAffiliate. Unlock your affiliate revenue.</p>

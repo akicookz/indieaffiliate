@@ -12,6 +12,7 @@ import PartnerLogin from "./pages/PartnerLogin";
 import AuthCallback from "./pages/AuthCallback";
 import Onboarding from "./pages/Onboarding";
 import Dashboard from "./pages/Dashboard";
+import Analytics from "./pages/Analytics";
 import Customers from "./pages/Customers";
 import Partners from "./pages/Partners";
 import Payouts from "./pages/Payouts";
@@ -24,6 +25,7 @@ import PortalDashboard from "./pages/PortalDashboard";
 import PortalReferrals from "./pages/PortalReferrals";
 import PortalCommissions from "./pages/PortalCommissions";
 import PortalPayouts from "./pages/PortalPayouts";
+import NotFound from "./pages/NotFound";
 
 function App() {
   return (
@@ -55,6 +57,7 @@ function App() {
         }
       >
         <Route index element={<Dashboard />} />
+        <Route path="analytics" element={<Analytics />} />
         <Route path="customers" element={<Customers />} />
         <Route path="partners" element={<Partners />} />
         <Route path="payouts" element={<Payouts />} />
@@ -62,6 +65,7 @@ function App() {
         <Route path="import" element={<Import />} />
         <Route path="projects/:slug/settings" element={<ProjectSettings />} />
         <Route path="projects/:slug/partner-page" element={<PartnerPageDesigner />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
       {/* Partner Portal */}
       <Route
@@ -78,7 +82,9 @@ function App() {
         <Route path="referrals" element={<PortalReferrals />} />
         <Route path="commissions" element={<PortalCommissions />} />
         <Route path="payouts" element={<PortalPayouts />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }

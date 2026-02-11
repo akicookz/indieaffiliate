@@ -1,12 +1,25 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { signIn } from "@/lib/auth-client";
+import { signIn, useSession } from "@/lib/auth-client";
 
 function Signup() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState<"google" | "github" | null>(null);
+  const { data: session, isPending } = useSession();
+
+  if (isPending) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+        <div className="text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
+  if (session) {
+    return <Navigate to="/app" replace />;
+  }
 
   async function handleSocialLogin(provider: "google" | "github") {
     setError("");
