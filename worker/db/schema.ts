@@ -408,6 +408,54 @@ export const payouts = sqliteTable(
 export type PayoutRow = typeof payouts.$inferSelect;
 export type NewPayoutRow = typeof payouts.$inferInsert;
 
+// Stripe Subscriptions - maps app users to Stripe subscription state
+export const stripeSubscriptions = sqliteTable(
+  "stripe_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authSchema.users.id, { onDelete: "cascade" }),
+    stripeCustomerId: text("stripe_customer_id").notNull(),
+    stripeSubscriptionId: text("stripe_subscription_id").notNull(),
+    planId: text("plan_id").notNull(), // internal plan identifier, e.g. "starter", "growth"
+    status: text("status", {
+      enum: [
+        "trialing",
+        "active",
+        "past_due",
+        "canceled",
+        "unpaid",
+        "incomplete",
+        "incomplete_expired",
+      ],
+    })
+      .notNull()
+      .default("incomplete"),
+    currentPeriodEnd: integer("current_period_end", { mode: "timestamp" }),
+    cancelAtPeriodEnd: integer("cancel_at_period_end", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_stripe_subscriptions_user").on(table.userId),
+    uniqueIndex("idx_stripe_subscriptions_subscription").on(
+      table.stripeSubscriptionId,
+    ),
+    index("idx_stripe_subscriptions_customer").on(table.stripeCustomerId),
+  ],
+);
+
+export type StripeSubscriptionRow = typeof stripeSubscriptions.$inferSelect;
+export type NewStripeSubscriptionRow = typeof stripeSubscriptions.$inferInsert;
+
 export const schema = {
   ...authSchema,
   projects,
@@ -421,4 +469,5 @@ export const schema = {
   projectBranding,
   fraudFlags,
   payouts,
+  stripeSubscriptions,
 } as const;

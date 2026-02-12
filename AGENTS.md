@@ -82,6 +82,20 @@ bun run db:generate
 - Use `@tanstack/react-query` for async data access
 - Route API requests through `/api/*` endpoints in the worker
 
+## Stripe billing (env keys)
+
+To connect Stripe for SaaS billing (Checkout, Customer Portal, webhooks), set these in the Worker (e.g. via `bunx wrangler secret put <NAME>` or in Cloudflare dashboard):
+
+| Secret / Var | Required | Description |
+|--------------|----------|-------------|
+| `BILLING_STRIPE_SECRET_KEY` | Yes (for checkout/portal) | Stripe secret key (sk_live_… or sk_test_…) from Stripe Dashboard → Developers → API keys. |
+| `BILLING_STRIPE_WEBHOOK_SECRET` | Yes (for webhooks) | Signing secret from Stripe Dashboard → Developers → Webhooks → your endpoint (e.g. `…/api/billing/webhook`) → “Signing secret”. |
+| `BILLING_PRICE_GROWTH` | Yes (for Growth plan) | Stripe Price ID for Growth (e.g. price_…). Create a recurring price in Stripe for $39/mo. |
+| `BILLING_PRICE_SCALE` | Yes (for Scale plan) | Stripe Price ID for Scale (e.g. price_…). Create a recurring price for $99/mo. |
+| `BILLING_PRICE_STARTER` | Optional | Only if you have a $0 Stripe price for Starter; otherwise free users have no Stripe subscription. |
+
+Growth and Scale checkout sessions use a **14-day free trial**; Stripe collects the card at checkout and charges when the trial ends.
+
 ## Backend Notes
 
 - Hono context carries `user`, `session`, and `db`

@@ -43,6 +43,11 @@ const navMain = [
     icon: CreditCard,
   },
   {
+    title: "Billing",
+    url: "/app/billing",
+    icon: CreditCard,
+  },
+  {
     title: "Analytics",
     url: "/app/analytics",
     icon: LineChart,

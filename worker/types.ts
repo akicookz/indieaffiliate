@@ -11,6 +11,11 @@ export interface AppEnv extends Env {
   RESEND_API_KEY: string;
   ENCRYPTION_KEY?: string;
   UPLOADS: R2Bucket;
+  BILLING_STRIPE_SECRET_KEY?: string;
+  BILLING_PRICE_STARTER?: string;
+  BILLING_PRICE_GROWTH?: string;
+  BILLING_PRICE_SCALE?: string;
+  BILLING_STRIPE_WEBHOOK_SECRET?: string;
 }
 
 export interface HonoAppContext {

@@ -2,6 +2,7 @@ import { Routes, Route } from "react-router-dom";
 
 import Layout from "./components/Layout";
 import AuthGuard from "./components/AuthGuard";
+import BillingGuard from "./components/BillingGuard";
 import PartnerAuthGuard from "./components/PartnerAuthGuard";
 import PartnerLayout from "./components/PartnerLayout";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -13,6 +14,7 @@ import AuthCallback from "./pages/AuthCallback";
 import Onboarding from "./pages/Onboarding";
 import Dashboard from "./pages/Dashboard";
 import Analytics from "./pages/Analytics";
+import Billing from "./pages/Billing";
 import Customers from "./pages/Customers";
 import Partners from "./pages/Partners";
 import Payouts from "./pages/Payouts";
@@ -51,13 +53,16 @@ function App() {
         element={
           <ErrorBoundary>
             <AuthGuard>
-              <Layout />
+              <BillingGuard>
+                <Layout />
+              </BillingGuard>
             </AuthGuard>
           </ErrorBoundary>
         }
       >
         <Route index element={<Dashboard />} />
         <Route path="analytics" element={<Analytics />} />
+        <Route path="billing" element={<Billing />} />
         <Route path="customers" element={<Customers />} />
         <Route path="partners" element={<Partners />} />
         <Route path="payouts" element={<Payouts />} />
@@ -84,7 +89,7 @@ function App() {
         <Route path="payouts" element={<PortalPayouts />} />
         <Route path="*" element={<NotFound />} />
       </Route>
-      <Route path="*" element={<NotFound />} />
+      {/* <Route path="*" element={<NotFound />} /> */}
     </Routes>
   );
 }

@@ -212,3 +212,8 @@ export const assignPartnerToCustomersSchema = z.object({
   partnerId: z.string().min(1),
   stripeCustomerIds: z.array(z.string().min(1)).min(1),
 });
+
+// ─── Billing / Checkout ────────────────────────────────────────────────────────
+export const billingCheckoutSchema = z.object({
+  planId: z.enum(["starter", "growth", "scale"]),
+});

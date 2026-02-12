@@ -5,7 +5,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { except } from "hono/combine";
 import { createAuth } from "./auth";
 import { type HonoAppContext, type AppEnv } from "./types";
-import { partners } from "./db";
+import { partners, stripeSubscriptions } from "./db";
 import { ProjectService } from "./services/project-service";
 import { PartnerService } from "./services/partner-service";
 import { CustomerService } from "./services/customer-service";
@@ -46,6 +46,7 @@ import {
   stripeImportExecuteSchema,
   stripeCustomerSearchSchema,
   assignPartnerToCustomersSchema,
+  billingCheckoutSchema,
 } from "./validation";
 
 // ─── Simple IP-based rate limiter (in-memory, per-isolate) ───────────────────
@@ -82,6 +83,137 @@ function validate<T>(
   if (result.success) return { success: true, data: result.data as T };
   const message = result.error?.issues?.[0]?.message ?? "Validation failed";
   return { success: false, error: message };
+}
+
+// ─── Stripe webhook signature helper ───────────────────────────────────────────
+async function verifyStripeSignature(
+  body: string,
+  header: string | undefined,
+  secret: string | undefined,
+): Promise<boolean> {
+  if (!secret) {
+    // If no secret is configured, skip verification (e.g. local dev)
+    return true;
+  }
+  if (!header) return false;
+
+  const parts = header.split(",");
+  const sig: Record<string, string> = {};
+  for (const part of parts) {
+    const [k, v] = part.split("=");
+    if (k && v) sig[k] = v;
+  }
+
+  const timestamp = sig.t;
+  const signature = sig.v1;
+  if (!timestamp || !signature) {
+    return false;
+  }
+
+  const encoder = new TextEncoder();
+  const signingKey = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+
+  const payload = `${timestamp}.${body}`;
+  const digest = await crypto.subtle.sign(
+    "HMAC",
+    signingKey,
+    encoder.encode(payload),
+  );
+
+  const hex = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  if (hex.length !== signature.length) {
+    return false;
+  }
+
+  // Constant-time compare
+  let diff = 0;
+  for (let i = 0; i < hex.length; i++) {
+    diff |= hex.charCodeAt(i) ^ signature.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+function normalizeStripeSubscriptionStatus(
+  status: string | undefined,
+): "trialing" | "active" | "past_due" | "canceled" | "unpaid" | "incomplete" | "incomplete_expired" {
+  const allowed = new Set([
+    "trialing",
+    "active",
+    "past_due",
+    "canceled",
+    "unpaid",
+    "incomplete",
+    "incomplete_expired",
+  ]);
+  if (!status || !allowed.has(status)) {
+    return "active";
+  }
+  return status as
+    | "trialing"
+    | "active"
+    | "past_due"
+    | "canceled"
+    | "unpaid"
+    | "incomplete"
+    | "incomplete_expired";
+}
+
+async function getUserPlan(
+  db: DrizzleD1Database<Record<string, unknown>>,
+  userId: string,
+): Promise<{
+  planId: "starter" | "growth" | "scale";
+  status:
+    | "trialing"
+    | "active"
+    | "past_due"
+    | "canceled"
+    | "unpaid"
+    | "incomplete"
+    | "incomplete_expired"
+    | "none";
+}> {
+  const [sub] = await db
+    .select()
+    .from(stripeSubscriptions)
+    .where(eq(stripeSubscriptions.userId, userId))
+    .limit(1);
+
+  if (!sub) {
+    // Default to free Starter plan when no subscription exists
+    return { planId: "starter", status: "none" };
+  }
+
+  const normalized = normalizeStripeSubscriptionStatus(sub.status);
+  const planId =
+    sub.planId === "growth" || sub.planId === "scale" ? sub.planId : "starter";
+
+  return {
+    planId,
+    status: normalized,
+  };
+}
+
+function getPlanLimits(planId: "starter" | "growth" | "scale"): {
+  maxProjects: number | null;
+} {
+  if (planId === "starter") {
+    return { maxProjects: 1 };
+  }
+  if (planId === "growth") {
+    return { maxProjects: 5 };
+  }
+  // Scale: effectively unlimited projects
+  return { maxProjects: null };
 }
 
 const app = new Hono<HonoAppContext>()
@@ -510,6 +642,26 @@ const app = new Hono<HonoAppContext>()
       .replace(/^-|-$/g, "");
 
     const db = c.get("db");
+
+    // Enforce plan-based project limits
+    const { planId } = await getUserPlan(db, user.id);
+    const { maxProjects } = getPlanLimits(planId);
+    if (maxProjects !== null) {
+      const projectServiceForCount = new ProjectService(db);
+      const existingProjects =
+        await projectServiceForCount.getProjectsByUserId(user.id);
+      if (existingProjects.length >= maxProjects) {
+        return c.json(
+          {
+            error: "Project limit reached for your current plan",
+            planId,
+            maxProjects,
+          },
+          402,
+        );
+      }
+    }
+
     const projectService = new ProjectService(db);
     const project = await projectService.createProject({
       userId: user.id,
@@ -1479,6 +1631,353 @@ const app = new Hono<HonoAppContext>()
     );
 
     return c.json(result);
+  })
+  // ─── Billing / Stripe Checkout ───────────────────────────────────────────────
+  .post("/api/billing/checkout", async (c) => {
+    const user = c.get("user");
+    if (!user) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const body = await c.req.json();
+    const parsed = validate(
+      billingCheckoutSchema,
+      body,
+    );
+    if (!parsed.success) {
+      return c.json({ error: parsed.error }, 400);
+    }
+
+    const planId = parsed.data.planId;
+    const secretKey = c.env.BILLING_STRIPE_SECRET_KEY;
+    if (!secretKey) {
+      return c.json(
+        { error: "Stripe billing is not configured" },
+        500,
+      );
+    }
+
+    const priceEnvKey =
+      planId === "starter"
+        ? c.env.BILLING_PRICE_STARTER
+        : planId === "growth"
+          ? c.env.BILLING_PRICE_GROWTH
+          : c.env.BILLING_PRICE_SCALE;
+
+    if (!priceEnvKey) {
+      return c.json(
+        { error: `Price ID not configured for plan '${planId}'` },
+        500,
+      );
+    }
+
+    const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
+    const successUrl = `${baseUrl}/app/billing?billing=success`;
+    const cancelUrl = `${baseUrl}/app/billing?billing=cancelled`;
+
+    const form = new URLSearchParams();
+    form.set("mode", "subscription");
+    form.set("success_url", successUrl);
+    form.set("cancel_url", cancelUrl);
+    form.set("line_items[0][price]", priceEnvKey);
+    form.set("line_items[0][quantity]", "1");
+    form.set("client_reference_id", user.id);
+    if (user.email) {
+      form.set("customer_email", user.email);
+    }
+    // 14-day free trial for paid plans (Stripe charges when trial ends)
+    if (planId === "growth" || planId === "scale") {
+      form.set("subscription_data[trial_period_days]", "14");
+    }
+    form.set("metadata[user_id]", user.id);
+    form.set("metadata[plan_id]", planId);
+    form.set("subscription_data[metadata][user_id]", user.id);
+    form.set("subscription_data[metadata][plan_id]", planId);
+
+    const resp = await fetch(
+      "https://api.stripe.com/v1/checkout/sessions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${secretKey}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: form.toString(),
+      },
+    );
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      return c.json(
+        {
+          error: "Failed to create Stripe Checkout session",
+          details: text.slice(0, 500),
+        },
+        502,
+      );
+    }
+
+    const session = (await resp.json()) as {
+      id: string;
+      url?: string;
+    };
+
+    return c.json(
+      { id: session.id, url: session.url },
+      201,
+    );
+  })
+  .post("/api/billing/portal", async (c) => {
+    const user = c.get("user");
+    if (!user) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const secretKey = c.env.BILLING_STRIPE_SECRET_KEY;
+    if (!secretKey) {
+      return c.json(
+        { error: "Stripe billing is not configured" },
+        500,
+      );
+    }
+
+    const db = c.get("db");
+    const [sub] = await db
+      .select()
+      .from(stripeSubscriptions)
+      .where(eq(stripeSubscriptions.userId, user.id))
+      .limit(1);
+
+    if (!sub) {
+      return c.json(
+        { error: "No active subscription found for this user" },
+        404,
+      );
+    }
+
+    if (!sub.stripeCustomerId) {
+      return c.json(
+        { error: "Stripe customer not linked for this user" },
+        500,
+      );
+    }
+
+    const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
+    const returnUrl = `${baseUrl}/app?billing=portal_return`;
+
+    const form = new URLSearchParams();
+    form.set("customer", sub.stripeCustomerId);
+    form.set("return_url", returnUrl);
+
+    const resp = await fetch(
+      "https://api.stripe.com/v1/billing_portal/sessions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${secretKey}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: form.toString(),
+      },
+    );
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      return c.json(
+        {
+          error: "Failed to create Stripe Billing Portal session",
+          details: text.slice(0, 500),
+        },
+        502,
+      );
+    }
+
+    const session = (await resp.json()) as {
+      id: string;
+      url?: string;
+    };
+
+    return c.json(
+      { id: session.id, url: session.url },
+      201,
+    );
+  })
+  .get("/api/billing/status", async (c) => {
+    const user = c.get("user");
+    if (!user) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const db = c.get("db");
+    const [sub] = await db
+      .select()
+      .from(stripeSubscriptions)
+      .where(eq(stripeSubscriptions.userId, user.id))
+      .limit(1);
+
+    if (!sub) {
+      return c.json({
+        planId: null,
+        status: "none",
+        cancelAtPeriodEnd: false,
+        currentPeriodEnd: null,
+      });
+    }
+
+    return c.json({
+      planId: sub.planId,
+      status: sub.status,
+      cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+      currentPeriodEnd: sub.currentPeriodEnd,
+    });
+  })
+  .post("/api/billing/webhook", async (c) => {
+    const rawBody = await c.req.raw.text();
+    const signature = c.req.header("stripe-signature");
+    const secret = c.env.BILLING_STRIPE_WEBHOOK_SECRET;
+
+    const valid = await verifyStripeSignature(rawBody, signature, secret);
+    if (!valid) {
+      return c.text("Invalid signature", 400);
+    }
+
+    let event: {
+      type: string;
+      data?: { object?: Record<string, unknown> };
+    };
+
+    try {
+      event = JSON.parse(rawBody) as typeof event;
+    } catch {
+      return c.text("Invalid JSON payload", 400);
+    }
+
+    const db = c.get("db");
+    const obj = event.data?.object ?? {};
+
+    switch (event.type) {
+      case "checkout.session.completed": {
+        const session = obj as {
+          mode?: string;
+          subscription?: string | { id: string };
+          customer?: string;
+          client_reference_id?: string;
+          metadata?: Record<string, unknown>;
+        };
+
+        if (session.mode !== "subscription") {
+          break;
+        }
+
+        const subscriptionId =
+          typeof session.subscription === "string"
+            ? session.subscription
+            : session.subscription?.id;
+        const stripeCustomerId = session.customer;
+        const userId =
+          (session.metadata?.user_id as string | undefined) ??
+          session.client_reference_id;
+        const planId = session.metadata?.plan_id as string | undefined;
+
+        if (!subscriptionId || !stripeCustomerId || !userId || !planId) {
+          break;
+        }
+
+        const existing = await db
+          .select()
+          .from(stripeSubscriptions)
+          .where(eq(stripeSubscriptions.userId, userId))
+          .limit(1);
+
+        if (existing.length > 0) {
+          await db
+            .update(stripeSubscriptions)
+            .set({
+              stripeCustomerId,
+              stripeSubscriptionId: subscriptionId,
+              planId,
+              status: "incomplete",
+            })
+            .where(eq(stripeSubscriptions.id, existing[0].id));
+        } else {
+          await db.insert(stripeSubscriptions).values({
+            id: crypto.randomUUID(),
+            userId,
+            stripeCustomerId,
+            stripeSubscriptionId: subscriptionId,
+            planId,
+            status: "incomplete",
+          });
+        }
+        break;
+      }
+      case "customer.subscription.updated":
+      case "customer.subscription.deleted": {
+        const sub = obj as {
+          id: string;
+          customer?: string;
+          status?: string;
+          metadata?: Record<string, unknown>;
+          current_period_end?: number;
+          cancel_at_period_end?: boolean;
+        };
+
+        const subscriptionId = sub.id;
+        const stripeCustomerId = sub.customer;
+        if (!subscriptionId || !stripeCustomerId) {
+          break;
+        }
+
+        const metadata = sub.metadata ?? {};
+        const metaUserId = metadata.user_id as string | undefined;
+        const metaPlanId = metadata.plan_id as string | undefined;
+        const normalizedStatus = normalizeStripeSubscriptionStatus(
+          sub.status,
+        );
+        const currentPeriodEnd =
+          typeof sub.current_period_end === "number"
+            ? new Date(sub.current_period_end * 1000)
+            : undefined;
+        const cancelAtPeriodEnd = sub.cancel_at_period_end ?? false;
+
+        const existing = await db
+          .select()
+          .from(stripeSubscriptions)
+          .where(eq(stripeSubscriptions.stripeSubscriptionId, subscriptionId))
+          .limit(1);
+
+        if (existing.length > 0) {
+          const current = existing[0];
+          await db
+            .update(stripeSubscriptions)
+            .set({
+              stripeCustomerId,
+              status: normalizedStatus,
+              planId: metaPlanId ?? current.planId,
+              currentPeriodEnd: currentPeriodEnd ?? current.currentPeriodEnd,
+              cancelAtPeriodEnd,
+            })
+            .where(eq(stripeSubscriptions.id, current.id));
+        } else if (metaUserId && metaPlanId) {
+          await db.insert(stripeSubscriptions).values({
+            id: crypto.randomUUID(),
+            userId: metaUserId,
+            stripeCustomerId,
+            stripeSubscriptionId: subscriptionId,
+            planId: metaPlanId,
+            status: normalizedStatus,
+            currentPeriodEnd,
+            cancelAtPeriodEnd,
+          });
+        }
+
+        break;
+      }
+      default:
+        break;
+    }
+
+    return c.json({ received: true });
   })
   // ─── Branding ──────────────────────────────────────────────────────────────
   .get("/api/projects/:id/branding", async (c) => {
