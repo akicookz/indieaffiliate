@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { signIn, useSession } from "@/lib/auth-client";
+import { signIn, useSession, getLoginCallbackUrl } from "@/lib/auth-client";
 
 function Login() {
   const [error, setError] = useState("");
@@ -28,7 +28,7 @@ function Login() {
     try {
       await signIn.social({
         provider,
-        callbackURL: "/app",
+        callbackURL: getLoginCallbackUrl(),
       });
     } catch {
       setError("An unexpected error occurred");

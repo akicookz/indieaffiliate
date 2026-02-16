@@ -64,11 +64,11 @@ function Landing() {
           </Badge>
 
           <h1 className="text-4xl md:text-6xl lg:text-7xl font-semibold mb-6 bg-gradient-to-r from-foreground via-foreground to-foreground/80 bg-clip-text text-transparent leading-tight">
+            Unlock{" "}
             <span className="text-primary font-[family-name:var(--font-heading)] italic">
               Affiliate Marketing
-            </span>
-            <br />
-            Unlock it as a channel for free.
+            </span>{" "}
+            as a channel for free.
           </h1>
 
           <p className="text-lg text-muted-foreground mb-8 max-w-3xl mx-auto">
@@ -122,14 +122,14 @@ function Landing() {
             <div className="bg-background max-h-[500px] backdrop-blur-xl rounded-3xl overflow-hidden relative p-6 sm:p-8">
               <div className="space-y-4">
                 {/* Browser Chrome Mockup */}
-                <div className="mx-auto max-w-fit">
-                  <div className="flex items-center space-x-2 bg-background/80 backdrop-blur-sm rounded-full px-4 py-2">
-                    <div className="flex space-x-1.5">
-                      <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                      <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                      <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                <div className="w-full">
+                  <div className="flex items-center gap-3 bg-background/80 backdrop-blur-sm rounded-full px-4 py-2.5 border border-border/40">
+                    <div className="flex shrink-0 space-x-1.5" aria-hidden>
+                      <div className="w-3 h-3 bg-red-500 rounded-full" />
+                      <div className="w-3 h-3 bg-yellow-500 rounded-full" />
+                      <div className="w-3 h-3 bg-green-500 rounded-full" />
                     </div>
-                    <div className="flex-1 bg-muted/50 rounded-full px-3 py-1 text-xs text-muted-foreground ml-4">
+                    <div className="flex-1 min-w-0 bg-muted/50 rounded-full px-3 py-1.5 text-xs text-muted-foreground text-center">
                       app.unlockaffiliate.com/dashboard
                     </div>
                   </div>
