@@ -43,21 +43,10 @@ function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
           google: {
             clientId: env?.GOOGLE_CLIENT_ID ?? "",
             clientSecret: env?.GOOGLE_CLIENT_SECRET ?? "",
-            // Explicit redirect URI so production callbacks match provider console config
-            ...(env?.BETTER_AUTH_URL
-              ? {
-                  redirectURI: `${env.BETTER_AUTH_URL.replace(/\/$/, "")}/api/auth/callback/google`,
-                }
-              : {}),
           },
           github: {
             clientId: env?.GITHUB_CLIENT_ID ?? "",
             clientSecret: env?.GITHUB_CLIENT_SECRET ?? "",
-            ...(env?.BETTER_AUTH_URL
-              ? {
-                  redirectURI: `${env.BETTER_AUTH_URL.replace(/\/$/, "")}/api/auth/callback/github`,
-                }
-              : {}),
           },
         },
         plugins: [
@@ -107,13 +96,6 @@ function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
         },
         secret: env?.BETTER_AUTH_SECRET,
         baseURL: env?.BETTER_AUTH_URL,
-        // Trust base URL and any extra origins (e.g. www, staging) for callbackURL/redirect validation
-        trustedOrigins: [
-          ...(env?.BETTER_AUTH_URL ? [env.BETTER_AUTH_URL.replace(/\/$/, "")] : []),
-          ...(env?.TRUSTED_ORIGINS
-            ? env.TRUSTED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
-            : []),
-        ],
       },
     ),
     // Fallback database adapter for CLI schema generation

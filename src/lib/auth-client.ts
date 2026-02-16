@@ -7,7 +7,10 @@ export const authClient = createAuthClient({
 
 export const { signIn, signOut, useSession } = authClient;
 
-/** Callback URL after login/signup: production uses VITE_SITE_URL, dev uses current origin (e.g. localhost). */
+/** Callback URL after login/signup.
+ * - Production: use VITE_SITE_URL (canonical app URL, e.g. https://unlockaffiliate.com)
+ * - Dev / fallback: use current browser origin (e.g. http://localhost:5173)
+ */
 export function getLoginCallbackUrl(): string {
   const base =
     (import.meta.env.VITE_SITE_URL as string | undefined) || window.location.origin;
