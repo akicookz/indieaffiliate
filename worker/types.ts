@@ -10,6 +10,8 @@ export interface AppEnv extends Env {
   GITHUB_CLIENT_SECRET: string;
   RESEND_API_KEY: string;
   ENCRYPTION_KEY?: string;
+  /** Comma-separated extra origins for auth (e.g. https://www.unlockaffiliate.com). Optional. */
+  TRUSTED_ORIGINS?: string;
   UPLOADS: R2Bucket;
 }
 
