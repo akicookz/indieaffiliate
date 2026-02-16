@@ -1,6 +1,7 @@
-import { useMemo } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CreditCard, Settings, AlertCircle } from "lucide-react";
+import { useLocation } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -57,6 +58,11 @@ function formatDate(value: string | null): string {
 }
 
 function Billing() {
+  const location = useLocation();
+  const queryClient = useQueryClient();
+  const [manageOpen, setManageOpen] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<"growth" | "scale">("growth");
+
   const {
     data: billing,
     isLoading: billingLoading,
@@ -121,6 +127,12 @@ function Billing() {
     },
   });
 
+  useEffect(() => {
+    if (location.search.includes("billing=success")) {
+      queryClient.invalidateQueries({ queryKey: ["billingStatus"] });
+    }
+  }, [location.search, queryClient]);
+
   const hasSubscription =
     billing &&
     billing.planId != null &&
@@ -129,9 +141,9 @@ function Billing() {
   function handleManageBilling() {
     if (hasSubscription) {
       portalMutation.mutate();
-    } else {
-      checkoutMutation.mutate("growth");
+      return;
     }
+    setManageOpen(true);
   }
 
   const isLoading = billingLoading || dashboardLoading;
@@ -258,6 +270,69 @@ function Billing() {
             )}
           </CardContent>
         </Card>
+
+        {manageOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="w-full max-w-md rounded-3xl bg-card shadow-xs border border-border/50 p-6 space-y-4">
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold text-foreground">
+                  Choose your billing plan
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Select a plan to start your subscription. You can change or
+                  cancel anytime from the Stripe billing portal.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedPlan("growth")}
+                  className={`rounded-2xl border p-3 text-left text-sm transition ${
+                    selectedPlan === "growth"
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:bg-muted/40"
+                  }`}
+                >
+                  <div className="font-medium">Growth</div>
+                  <div className="text-xs text-muted-foreground">
+                    $39/month • 14-day free trial
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedPlan("scale")}
+                  className={`rounded-2xl border p-3 text-left text-sm transition ${
+                    selectedPlan === "scale"
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:bg-muted/40"
+                  }`}
+                >
+                  <div className="font-medium">Scale</div>
+                  <div className="text-xs text-muted-foreground">
+                    $99/month • 14-day free trial
+                  </div>
+                </button>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setManageOpen(false)}
+                  disabled={checkoutMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => checkoutMutation.mutate(selectedPlan)}
+                  disabled={checkoutMutation.isPending}
+                >
+                  {checkoutMutation.isPending ? "Redirecting…" : "Continue"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
