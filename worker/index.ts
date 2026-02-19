@@ -23,6 +23,7 @@ import { FraudService } from "./services/fraud-service";
 import { PartnerDashboardService } from "./services/partner-dashboard-service";
 import { PayoutService } from "./services/payout-service";
 import { ImportService } from "./services/import-service";
+import { WebhookService } from "./services/webhook-service";
 import {
   createProjectSchema,
   updateProjectSchema,
@@ -46,6 +47,8 @@ import {
   stripeImportExecuteSchema,
   stripeCustomerSearchSchema,
   assignPartnerToCustomersSchema,
+  createWebhookEndpointSchema,
+  updateWebhookEndpointSchema,
 } from "./validation";
 
 // ─── Simple IP-based rate limiter (in-memory, per-isolate) ───────────────────
@@ -137,7 +140,7 @@ const app = new Hono<HonoAppContext>()
       : undefined;
 
     // Record click (with fraud detection)
-    await trackingService.recordClick({
+    const clickResult = await trackingService.recordClick({
       partnerId: partner.id,
       projectId: partner.projectId,
       referralCode: partner.referralCode,
@@ -147,6 +150,17 @@ const app = new Hono<HonoAppContext>()
       landingPage: c.req.query("url"),
       country,
       botScore,
+    });
+
+    // Fire webhook for click.recorded
+    const webhookService = new WebhookService(db);
+    void webhookService.fireEvent(partner.projectId, "click.recorded", {
+      clickId: clickResult.clickId,
+      partnerId: partner.id,
+      referralCode: partner.referralCode,
+      isUnique: clickResult.isUnique,
+      country,
+      landingPage: c.req.query("url"),
     });
 
     // Set referral cookie (30 days)
@@ -226,7 +240,7 @@ const app = new Hono<HonoAppContext>()
           ?.score
       : undefined;
 
-    const { clickId } = await trackingService.recordClick({
+    const { clickId, isUnique } = await trackingService.recordClick({
       partnerId: partner.id,
       projectId: partner.projectId,
       referralCode: partner.referralCode,
@@ -236,6 +250,17 @@ const app = new Hono<HonoAppContext>()
       landingPage: parsed.data.landingPage,
       country: clickCountry,
       botScore: clickBotScore,
+    });
+
+    // Fire webhook for click.recorded
+    const webhookService = new WebhookService(db);
+    void webhookService.fireEvent(partner.projectId, "click.recorded", {
+      clickId,
+      partnerId: partner.id,
+      referralCode: partner.referralCode,
+      isUnique,
+      country: clickCountry,
+      landingPage: parsed.data.landingPage,
     });
 
     const maxAge = 30 * 24 * 60 * 60;
@@ -293,6 +318,41 @@ const app = new Hono<HonoAppContext>()
       eventId: parsed.data.eventId,
       conversionCountry: convCf?.country as string | undefined,
     });
+
+    // Fire webhooks if not duplicate
+    if (!result.isDuplicate) {
+      const webhookService = new WebhookService(db);
+      
+      // Get customer and commission details for webhooks
+      const customerService = new CustomerService(db);
+      const customers = await customerService.getCustomersByUser(keyResult.userId, {
+        projectId: keyResult.projectId,
+      });
+      const customer = customers.find((c) => c.id === result.customerId);
+      
+      if (customer) {
+        // Fire customer.created webhook (only for new customers)
+        void webhookService.fireEvent(keyResult.projectId, "customer.created", {
+          id: customer.id,
+          email: customer.email,
+          name: customer.name,
+          partnerId: customer.partnerId,
+          status: customer.status,
+          revenue: customer.revenue,
+          createdAt: customer.createdAt?.toISOString(),
+        });
+      }
+
+      // Fire commission.created webhook
+      void webhookService.fireEvent(keyResult.projectId, "commission.created", {
+        id: result.commissionId,
+        partnerId: partner.id,
+        customerId: result.customerId,
+        amount: result.commissionAmount,
+        revenue: parsed.data.revenue,
+        status: "pending",
+      });
+    }
 
     return c.json(result, result.isDuplicate ? 200 : 201);
   })
@@ -651,6 +711,18 @@ const app = new Hono<HonoAppContext>()
       }
     }
 
+    // Fire webhook for partner.created
+    const webhookService = new WebhookService(db);
+    void webhookService.fireEvent(partner.projectId, "partner.created", {
+      id: partner.id,
+      name: partner.name,
+      email: partner.email,
+      referralCode: partner.referralCode,
+      status: partner.status,
+      commissionRate: partner.commissionRate,
+      createdAt: partner.createdAt?.toISOString(),
+    });
+
     return c.json({ partner }, 201);
   })
   .patch("/api/partners/:id", async (c) => {
@@ -676,6 +748,20 @@ const app = new Hono<HonoAppContext>()
     }
 
     const partner = await partnerService.updatePartner(id, parsed.data);
+    
+    // Fire webhook for partner.approved if status changed to active
+    if (parsed.data.status === "active" && existing.status !== "active") {
+      const webhookService = new WebhookService(db);
+      void webhookService.fireEvent(partner!.projectId, "partner.approved", {
+        id: partner!.id,
+        name: partner!.name,
+        email: partner!.email,
+        referralCode: partner!.referralCode,
+        status: partner!.status,
+        commissionRate: partner!.commissionRate,
+      });
+    }
+
     return c.json({ partner });
   })
   // ─── Customers ──────────────────────────────────────────────────────────────
@@ -825,7 +911,29 @@ const app = new Hono<HonoAppContext>()
       const partner = await partnerService.getPartnerById(commission.partnerId);
       if (partner && partner.status === "pending") {
         await partnerService.updatePartner(partner.id, { status: "active" });
+        
+        // Fire webhook for partner.approved
+        const webhookService = new WebhookService(db);
+        void webhookService.fireEvent(partner.projectId, "partner.approved", {
+          id: partner.id,
+          name: partner.name,
+          email: partner.email,
+          referralCode: partner.referralCode,
+          status: "active",
+          commissionRate: partner.commissionRate,
+        });
       }
+      
+      // Fire webhook for commission.approved
+      const webhookService = new WebhookService(db);
+      void webhookService.fireEvent(updated.projectId, "commission.approved", {
+        id: updated.id,
+        partnerId: updated.partnerId,
+        customerId: updated.customerId,
+        amount: updated.amount,
+        rate: updated.rate,
+        status: updated.status,
+      });
     }
 
     // When rejecting with a fraud reason, create a confirmed fraud flag
@@ -900,13 +1008,36 @@ const app = new Hono<HonoAppContext>()
     // When bulk-approving, auto-activate any pending partners
     if (parsed.data.action === "approve") {
       const partnerService = new PartnerService(db);
+      const webhookService = new WebhookService(db);
       const approvedCommissions = allCommissions.filter((c) => requestedIds.includes(c.id));
       const partnerIds = [...new Set(approvedCommissions.map((c) => c.partnerId))];
       for (const partnerId of partnerIds) {
         const partner = await partnerService.getPartnerById(partnerId);
         if (partner && partner.status === "pending") {
           await partnerService.updatePartner(partner.id, { status: "active" });
+          
+          // Fire webhook for partner.approved
+          void webhookService.fireEvent(partner.projectId, "partner.approved", {
+            id: partner.id,
+            name: partner.name,
+            email: partner.email,
+            referralCode: partner.referralCode,
+            status: "active",
+            commissionRate: partner.commissionRate,
+          });
         }
+      }
+      
+      // Fire webhooks for commission.approved
+      for (const commission of approvedCommissions) {
+        void webhookService.fireEvent(commission.projectId, "commission.approved", {
+          id: commission.id,
+          partnerId: commission.partnerId,
+          customerId: commission.customerId,
+          amount: commission.amount,
+          rate: commission.rate,
+          status: "approved",
+        });
       }
     }
 
@@ -1678,6 +1809,19 @@ const app = new Hono<HonoAppContext>()
       status: "scheduled",
     });
 
+    // Fire webhook for payout.created
+    const webhookService = new WebhookService(db);
+    void webhookService.fireEvent(payout.projectId, "payout.created", {
+      id: payout.id,
+      partnerId: payout.partnerId,
+      amount: payout.amount,
+      currency: payout.currency,
+      status: payout.status,
+      periodStart: payout.periodStart?.toISOString(),
+      periodEnd: payout.periodEnd?.toISOString(),
+      createdAt: payout.createdAt?.toISOString(),
+    });
+
     return c.json({ payout }, 201);
   })
   .patch("/api/payouts/:id", async (c) => {
@@ -1832,6 +1976,152 @@ const app = new Hono<HonoAppContext>()
     }
 
     return c.json({ payoutLink: parsed.data.payoutLink });
+  })
+  // ─── Webhooks ────────────────────────────────────────────────────────────────
+  .get("/api/webhooks", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.query("projectId");
+    if (!projectId) return c.json({ error: "projectId is required" }, 400);
+
+    // Verify project ownership
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const webhookService = new WebhookService(db);
+    const endpoints = await webhookService.getEndpointsByProjectId(projectId);
+
+    return c.json({ endpoints });
+  })
+  .post("/api/webhooks", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(createWebhookEndpointSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    // Verify project ownership
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(parsed.data.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const webhookService = new WebhookService(db);
+    const endpoint = await webhookService.createEndpoint({
+      projectId: parsed.data.projectId,
+      url: parsed.data.url,
+      events: JSON.stringify(parsed.data.events),
+      isActive: true,
+    });
+
+    return c.json({ endpoint });
+  })
+  .patch("/api/webhooks/:id", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const id = c.req.param("id");
+    const body = await c.req.json();
+    const parsed = validate(updateWebhookEndpointSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const webhookService = new WebhookService(db);
+    const endpoint = await webhookService.getEndpointById(id);
+    if (!endpoint) return c.json({ error: "Webhook endpoint not found" }, 404);
+
+    // Verify project ownership
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(endpoint.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Unauthorized" }, 403);
+    }
+
+    const updates: {
+      url?: string;
+      events?: string;
+      isActive?: boolean;
+    } = {};
+    if (parsed.data.url !== undefined) updates.url = parsed.data.url;
+    if (parsed.data.events !== undefined)
+      updates.events = JSON.stringify(parsed.data.events);
+    if (parsed.data.isActive !== undefined)
+      updates.isActive = parsed.data.isActive;
+
+    const updated = await webhookService.updateEndpoint(id, updates);
+    return c.json({ endpoint: updated });
+  })
+  .delete("/api/webhooks/:id", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const id = c.req.param("id");
+
+    const db = c.get("db");
+    const webhookService = new WebhookService(db);
+    const endpoint = await webhookService.getEndpointById(id);
+    if (!endpoint) return c.json({ error: "Webhook endpoint not found" }, 404);
+
+    // Verify project ownership
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(endpoint.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Unauthorized" }, 403);
+    }
+
+    await webhookService.deleteEndpoint(id);
+    return c.json({ success: true });
+  })
+  .post("/api/webhooks/:id/test", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const id = c.req.param("id");
+
+    const db = c.get("db");
+    const webhookService = new WebhookService(db);
+    const endpoint = await webhookService.getEndpointById(id);
+    if (!endpoint) return c.json({ error: "Webhook endpoint not found" }, 404);
+
+    // Verify project ownership
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(endpoint.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Unauthorized" }, 403);
+    }
+
+    const result = await webhookService.sendTestWebhook(id);
+    return c.json(result);
+  })
+  .get("/api/webhooks/:id/logs", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const id = c.req.param("id");
+    const limit = parseInt(c.req.query("limit") || "100", 10);
+
+    const db = c.get("db");
+    const webhookService = new WebhookService(db);
+    const endpoint = await webhookService.getEndpointById(id);
+    if (!endpoint) return c.json({ error: "Webhook endpoint not found" }, 404);
+
+    // Verify project ownership
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(endpoint.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Unauthorized" }, 403);
+    }
+
+    const logs = await webhookService.getLogsByEndpointId(id, limit);
+    return c.json({ logs });
   });
 
 // ─── Cron handler for daily Stripe sync ────────────────────────────────────────

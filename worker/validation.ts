@@ -212,3 +212,26 @@ export const assignPartnerToCustomersSchema = z.object({
   partnerId: z.string().min(1),
   stripeCustomerIds: z.array(z.string().min(1)).min(1),
 });
+
+// ─── Webhooks ───────────────────────────────────────────────────────────────────
+export const webhookEventSchema = z.enum([
+  "partner.created",
+  "partner.approved",
+  "customer.created",
+  "commission.created",
+  "commission.approved",
+  "payout.created",
+  "click.recorded",
+]);
+
+export const createWebhookEndpointSchema = z.object({
+  projectId: z.string().min(1, "projectId is required"),
+  url: z.string().url("Invalid URL").max(2048),
+  events: z.array(webhookEventSchema).min(1, "At least one event is required"),
+});
+
+export const updateWebhookEndpointSchema = z.object({
+  url: z.string().url("Invalid URL").max(2048).optional(),
+  events: z.array(webhookEventSchema).min(1).optional(),
+  isActive: z.boolean().optional(),
+});
