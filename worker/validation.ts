@@ -212,3 +212,15 @@ export const assignPartnerToCustomersSchema = z.object({
   partnerId: z.string().min(1),
   stripeCustomerIds: z.array(z.string().min(1)).min(1),
 });
+
+// ─── Subscriptions ────────────────────────────────────────────────────────────
+export const createCheckoutSessionSchema = z.object({
+  plan: z.enum(["starter", "growth", "scale"]),
+  successUrl: z.string().url(),
+  cancelUrl: z.string().url(),
+  interval: z.enum(["month", "year"]).optional(),
+});
+
+export const createPortalSessionSchema = z.object({
+  returnUrl: z.string().url(),
+});

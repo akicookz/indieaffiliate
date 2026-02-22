@@ -17,6 +17,7 @@ import Customers from "./pages/Customers";
 import Partners from "./pages/Partners";
 import Payouts from "./pages/Payouts";
 import FraudFlags from "./pages/FraudFlags";
+import Billing from "./pages/Billing";
 import ProjectSettings from "./pages/ProjectSettings";
 import Import from "./pages/Import";
 import PartnerPageDesigner from "./pages/PartnerPageDesigner";
@@ -62,6 +63,7 @@ function App() {
         <Route path="partners" element={<Partners />} />
         <Route path="payouts" element={<Payouts />} />
         <Route path="fraud-flags" element={<FraudFlags />} />
+        <Route path="billing" element={<Billing />} />
         <Route path="import" element={<Import />} />
         <Route path="projects/:slug/settings" element={<ProjectSettings />} />
         <Route path="projects/:slug/partner-page" element={<PartnerPageDesigner />} />
