@@ -6,6 +6,7 @@ import {
   CreditCard,
   ShieldAlert,
   LineChart,
+  Receipt,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
@@ -51,6 +52,11 @@ const navMain = [
     title: "Fraud Detection",
     url: "/app/fraud-flags",
     icon: ShieldAlert,
+  },
+  {
+    title: "Billing",
+    url: "/app/billing",
+    icon: Receipt,
   },
 ];
 

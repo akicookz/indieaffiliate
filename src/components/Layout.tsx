@@ -5,6 +5,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { UpgradePrompt } from "./UpgradePrompt";
 
 function Layout() {
   return (
@@ -21,6 +22,7 @@ function Layout() {
             <Outlet />
           </main>
         </div>
+        <UpgradePrompt />
       </SidebarInset>
     </SidebarProvider>
   );

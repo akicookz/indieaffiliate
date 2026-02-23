@@ -12,6 +12,24 @@ import { type AppEnv } from "./types";
 
 const ENABLE_DEBUG_LOGS = false;
 
+/** Build trusted origins for Better Auth (production social sign-in / CSRF). */
+function getTrustedOrigins(env?: AppEnv): string[] {
+  const origins: string[] = [];
+  if (env?.BETTER_AUTH_URL) {
+    try {
+      origins.push(new URL(env.BETTER_AUTH_URL).origin);
+    } catch {
+      // ignore invalid URL
+    }
+  }
+  if (env?.TRUSTED_ORIGINS) {
+    origins.push(
+      ...env.TRUSTED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean),
+    );
+  }
+  return origins;
+}
+
 function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
   const db = env
     ? drizzle(env.DB, { schema, logger: ENABLE_DEBUG_LOGS })
@@ -96,6 +114,14 @@ function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
         },
         secret: env?.BETTER_AUTH_SECRET,
         baseURL: env?.BETTER_AUTH_URL,
+        // Explicit trusted origins for production: base URL origin + any extra (e.g. www)
+        trustedOrigins: getTrustedOrigins(env),
+        // OAuth redirects from Google/GitHub are cross-site navigations; browsers often omit
+        // the Origin header, causing Better Auth to return 403. Disable origin check so
+        // callback GET requests succeed. We still use trustedOrigins for same-origin fetches.
+        advanced: {
+          disableOriginCheck: true,
+        },
       },
     ),
     // Fallback database adapter for CLI schema generation

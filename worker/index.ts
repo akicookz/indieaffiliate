@@ -5,7 +5,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { except } from "hono/combine";
 import { createAuth } from "./auth";
 import { type HonoAppContext, type AppEnv } from "./types";
-import { partners } from "./db";
+import { partners, userSubscriptions } from "./db";
 import { ProjectService } from "./services/project-service";
 import { PartnerService } from "./services/partner-service";
 import { CustomerService } from "./services/customer-service";
@@ -23,6 +23,17 @@ import { FraudService } from "./services/fraud-service";
 import { PartnerDashboardService } from "./services/partner-dashboard-service";
 import { PayoutService } from "./services/payout-service";
 import { ImportService } from "./services/import-service";
+import { SubscriptionService } from "./services/subscription-service";
+import { WebhookService } from "./services/webhook-service";
+import {
+  getPriceId,
+  createCheckoutSession,
+  createBillingPortalSession,
+  getPlanFromPriceId,
+  type Plan,
+} from "./services/stripe-checkout";
+import { verifyStripeWebhookSignature } from "./services/stripe-webhook";
+import { getMaxProjects, canCreateProject, type Plan as BillingPlan } from "./billing";
 import {
   createProjectSchema,
   updateProjectSchema,
@@ -46,6 +57,10 @@ import {
   stripeImportExecuteSchema,
   stripeCustomerSearchSchema,
   assignPartnerToCustomersSchema,
+  createCheckoutSessionSchema,
+  createPortalSessionSchema,
+  createWebhookEndpointSchema,
+  updateWebhookEndpointSchema,
 } from "./validation";
 
 // ─── Simple IP-based rate limiter (in-memory, per-isolate) ───────────────────
@@ -137,7 +152,7 @@ const app = new Hono<HonoAppContext>()
       : undefined;
 
     // Record click (with fraud detection)
-    await trackingService.recordClick({
+    const { clickId: redirectClickId } = await trackingService.recordClick({
       partnerId: partner.id,
       projectId: partner.projectId,
       referralCode: partner.referralCode,
@@ -147,6 +162,14 @@ const app = new Hono<HonoAppContext>()
       landingPage: c.req.query("url"),
       country,
       botScore,
+    });
+
+    const webhookServiceClick = new WebhookService(db);
+    await webhookServiceClick.fireEvent(partner.projectId, "click.recorded", {
+      clickId: redirectClickId,
+      partnerId: partner.id,
+      projectId: partner.projectId,
+      referralCode: partner.referralCode,
     });
 
     // Set referral cookie (30 days)
@@ -238,6 +261,14 @@ const app = new Hono<HonoAppContext>()
       botScore: clickBotScore,
     });
 
+    const webhookServiceTrack = new WebhookService(db);
+    await webhookServiceTrack.fireEvent(partner.projectId, "click.recorded", {
+      clickId,
+      partnerId: partner.id,
+      projectId: partner.projectId,
+      referralCode: partner.referralCode,
+    });
+
     const maxAge = 30 * 24 * 60 * 60;
     c.header(
       "Set-Cookie",
@@ -293,6 +324,22 @@ const app = new Hono<HonoAppContext>()
       eventId: parsed.data.eventId,
       conversionCountry: convCf?.country as string | undefined,
     });
+
+    if (!result.isDuplicate) {
+      const webhookServiceConv = new WebhookService(db);
+      await webhookServiceConv.fireEvent(keyResult.projectId, "customer.created", {
+        customerId: result.customerId,
+        partnerId: partner.id,
+        email: parsed.data.customerEmail.trim().toLowerCase(),
+        revenue: parsed.data.revenue,
+      });
+      await webhookServiceConv.fireEvent(keyResult.projectId, "commission.created", {
+        commissionId: result.commissionId,
+        customerId: result.customerId,
+        partnerId: partner.id,
+        amount: result.commissionAmount,
+      });
+    }
 
     return c.json(result, result.isDuplicate ? 200 : 201);
   })
@@ -388,6 +435,15 @@ const app = new Hono<HonoAppContext>()
       commissionRate: branding.defaultCommissionRate,
       status,
       registrationIp: joinHashedIp,
+    });
+
+    const webhookServiceJoin = new WebhookService(db);
+    await webhookServiceJoin.fireEvent(branding.projectId, "partner.created", {
+      partnerId: partner.id,
+      name: partner.name,
+      email: partner.email,
+      status: partner.status,
+      referralCode: partner.referralCode ?? null,
     });
 
     // Fraud checks: owner-as-partner + multi-account
@@ -504,13 +560,27 @@ const app = new Hono<HonoAppContext>()
     const parsed = validate(createProjectSchema, body);
     if (!parsed.success) return c.json({ error: parsed.error }, 400);
 
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const subscriptionService = new SubscriptionService(db);
+    const subscription = await subscriptionService.getOrCreateSubscription(user.id);
+    const existingProjects = await projectService.getProjectsByUserId(user.id);
+    if (!canCreateProject(subscription.plan as BillingPlan, existingProjects.length)) {
+      return c.json(
+        {
+          error: "Plan limit reached",
+          code: "upgrade_required",
+          maxProjects: getMaxProjects(subscription.plan as BillingPlan),
+        },
+        403,
+      );
+    }
+
     const slug = parsed.data.name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "");
 
-    const db = c.get("db");
-    const projectService = new ProjectService(db);
     const project = await projectService.createProject({
       userId: user.id,
       name: parsed.data.name.trim(),
@@ -615,6 +685,15 @@ const app = new Hono<HonoAppContext>()
       throw err;
     }
 
+    const webhookServicePartners = new WebhookService(db);
+    await webhookServicePartners.fireEvent(parsed.data.projectId, "partner.created", {
+      partnerId: partner.id,
+      name: partner.name,
+      email: partner.email,
+      status: partner.status,
+      referralCode: partner.referralCode ?? null,
+    });
+
     // Fraud checks: owner-as-partner
     const fraudService = new FraudService(db);
     const ownerCheck = await fraudService.checkOwnerAsPartner(
@@ -676,6 +755,15 @@ const app = new Hono<HonoAppContext>()
     }
 
     const partner = await partnerService.updatePartner(id, parsed.data);
+    if (parsed.data.status === "active" && existing.status !== "active") {
+      const webhookServicePartner = new WebhookService(db);
+      await webhookServicePartner.fireEvent(existing.projectId, "partner.approved", {
+        partnerId: partner.id,
+        name: partner.name,
+        email: partner.email,
+        status: partner.status,
+      });
+    }
     return c.json({ partner });
   })
   // ─── Customers ──────────────────────────────────────────────────────────────
@@ -819,12 +907,29 @@ const app = new Hono<HonoAppContext>()
       parsed.data.fraudFlag,
     );
 
+    if (parsed.data.status === "approved") {
+      const webhookServiceComm = new WebhookService(db);
+      await webhookServiceComm.fireEvent(commission.projectId, "commission.approved", {
+        commissionId: id,
+        partnerId: commission.partnerId,
+        customerId: commission.customerId,
+        amount: commission.amount,
+      });
+    }
+
     // When approving a commission, auto-activate the partner if they're still pending
     if (parsed.data.status === "approved") {
       const partnerService = new PartnerService(db);
       const partner = await partnerService.getPartnerById(commission.partnerId);
       if (partner && partner.status === "pending") {
         await partnerService.updatePartner(partner.id, { status: "active" });
+        const webhookServicePartnerAct = new WebhookService(db);
+        await webhookServicePartnerAct.fireEvent(commission.projectId, "partner.approved", {
+          partnerId: partner.id,
+          name: partner.name,
+          email: partner.email,
+          status: "active",
+        });
       }
     }
 
@@ -897,15 +1002,29 @@ const app = new Hono<HonoAppContext>()
       parsed.data.fraudFlag,
     );
 
-    // When bulk-approving, auto-activate any pending partners
     if (parsed.data.action === "approve") {
-      const partnerService = new PartnerService(db);
+      const webhookServiceBulk = new WebhookService(db);
       const approvedCommissions = allCommissions.filter((c) => requestedIds.includes(c.id));
+      for (const comm of approvedCommissions) {
+        await webhookServiceBulk.fireEvent(comm.projectId, "commission.approved", {
+          commissionId: comm.id,
+          partnerId: comm.partnerId,
+          customerId: comm.customerId,
+          amount: comm.amount,
+        });
+      }
+      const partnerService = new PartnerService(db);
       const partnerIds = [...new Set(approvedCommissions.map((c) => c.partnerId))];
       for (const partnerId of partnerIds) {
         const partner = await partnerService.getPartnerById(partnerId);
         if (partner && partner.status === "pending") {
           await partnerService.updatePartner(partner.id, { status: "active" });
+          await webhookServiceBulk.fireEvent(partner.projectId, "partner.approved", {
+            partnerId: partner.id,
+            name: partner.name,
+            email: partner.email,
+            status: "active",
+          });
         }
       }
     }
@@ -1678,6 +1797,16 @@ const app = new Hono<HonoAppContext>()
       status: "scheduled",
     });
 
+    const webhookServicePayout = new WebhookService(db);
+    await webhookServicePayout.fireEvent(parsed.data.projectId, "payout.created", {
+      payoutId: payout.id,
+      projectId: payout.projectId,
+      partnerId: payout.partnerId,
+      amount: payout.amount,
+      currency: payout.currency,
+      status: payout.status,
+    });
+
     return c.json({ payout }, 201);
   })
   .patch("/api/payouts/:id", async (c) => {
@@ -1832,6 +1961,674 @@ const app = new Hono<HonoAppContext>()
     }
 
     return c.json({ payoutLink: parsed.data.payoutLink });
+  })
+  // ─── Webhooks ──────────────────────────────────────────────────────────────────
+  .get("/api/webhooks", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.query("projectId")?.trim();
+    if (!projectId) return c.json({ error: "projectId is required" }, 400);
+
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const webhookService = new WebhookService(db);
+    const endpoints = await webhookService.getEndpointsByProjectId(projectId);
+    return c.json({ endpoints });
+  })
+  .post("/api/webhooks", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(createWebhookEndpointSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(parsed.data.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const webhookService = new WebhookService(db);
+    const endpoint = await webhookService.createEndpoint({
+      projectId: parsed.data.projectId,
+      url: parsed.data.url,
+      events: parsed.data.events,
+    });
+    return c.json({ endpoint }, 201);
+  })
+  .patch("/api/webhooks/:id", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const id = c.req.param("id");
+    const body = await c.req.json();
+    const parsed = validate(updateWebhookEndpointSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const webhookService = new WebhookService(db);
+    const projectService = new ProjectService(db);
+    const endpoint = await webhookService.getEndpointById(id);
+    if (!endpoint) return c.json({ error: "Endpoint not found" }, 404);
+    const project = await projectService.getProjectById(endpoint.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const updated = await webhookService.updateEndpoint(id, {
+      url: parsed.data.url,
+      events: parsed.data.events,
+      isActive: parsed.data.isActive,
+    });
+    return c.json({ endpoint: updated });
+  })
+  .delete("/api/webhooks/:id", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const id = c.req.param("id");
+    const db = c.get("db");
+    const webhookService = new WebhookService(db);
+    const projectService = new ProjectService(db);
+    const endpoint = await webhookService.getEndpointById(id);
+    if (!endpoint) return c.json({ error: "Endpoint not found" }, 404);
+    const project = await projectService.getProjectById(endpoint.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    await webhookService.deleteEndpoint(id);
+    return c.json({ ok: true });
+  })
+  .post("/api/webhooks/:id/test", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const id = c.req.param("id");
+    const db = c.get("db");
+    const webhookService = new WebhookService(db);
+    const projectService = new ProjectService(db);
+    const endpoint = await webhookService.getEndpointById(id);
+    if (!endpoint) return c.json({ error: "Endpoint not found" }, 404);
+    const project = await projectService.getProjectById(endpoint.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const result = await webhookService.sendTestWebhook(id);
+    return c.json(result);
+  })
+  .get("/api/webhooks/:id/logs", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const id = c.req.param("id");
+    const limit = Math.min(Number(c.req.query("limit")) || 50, 100);
+    const db = c.get("db");
+    const webhookService = new WebhookService(db);
+    const projectService = new ProjectService(db);
+    const endpoint = await webhookService.getEndpointById(id);
+    if (!endpoint) return c.json({ error: "Endpoint not found" }, 404);
+    const project = await projectService.getProjectById(endpoint.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const logs = await webhookService.getLogsByEndpointId(id, limit);
+    return c.json({
+      logs: logs.map((l) => ({
+        ...l,
+        createdAt: l.createdAt instanceof Date ? l.createdAt.toISOString() : l.createdAt,
+      })),
+    });
+  })
+  // ─── Billing (primary API) ─────────────────────────────────────────────────────
+  .get("/api/billing", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const defaultBilling = () =>
+      c.json({
+        subscription: {
+          plan: "starter",
+          status: "active",
+          stripeCustomerId: null,
+          stripeSubscriptionId: null,
+          currentPeriodEnd: null,
+        },
+        mrr: 0,
+        usage: { projectCount: 0, maxProjects: 1 },
+        trialEndsAt: null,
+      });
+
+    try {
+      const db = c.get("db");
+      const subscriptionService = new SubscriptionService(db);
+      const projectService = new ProjectService(db);
+      const subscription = await subscriptionService.getOrCreateSubscription(user.id);
+      const mrr = await subscriptionService.calculateMRR(user.id);
+      const projectsList = await projectService.getProjectsByUserId(user.id);
+      const maxProjects = getMaxProjects(subscription.plan as BillingPlan);
+
+      return c.json({
+        subscription: {
+          plan: subscription.plan,
+          status: subscription.status,
+          stripeCustomerId: subscription.stripeCustomerId,
+          stripeSubscriptionId: subscription.stripeSubscriptionId ?? null,
+          currentPeriodEnd:
+            subscription.currentPeriodEnd instanceof Date
+              ? subscription.currentPeriodEnd.toISOString()
+              : subscription.currentPeriodEnd ?? null,
+        },
+        mrr,
+        usage: {
+          projectCount: projectsList.length,
+          maxProjects,
+        },
+        trialEndsAt:
+          subscription.trialEndsAt instanceof Date
+            ? subscription.trialEndsAt.toISOString()
+            : subscription.trialEndsAt ?? null,
+      });
+    } catch (err) {
+      console.error("GET /api/billing error:", err);
+      return defaultBilling();
+    }
+  })
+  .post("/api/billing/checkout", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(createCheckoutSessionSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const subscriptionService = new SubscriptionService(db);
+    const billing = await subscriptionService.getOrCreateSubscription(user.id);
+
+    const interval = (parsed.data.interval ?? "month") as "month" | "year";
+    const priceId = getPriceId(c.env, parsed.data.plan as Plan, interval);
+
+    if (!priceId) {
+      return c.json({ error: "invalid_plan" }, 400);
+    }
+
+    const eligibleForTrial =
+      (parsed.data.plan === "growth" || parsed.data.plan === "scale") &&
+      !billing.stripeSubscriptionId;
+
+    const session = await createCheckoutSession(c.env, {
+      customerId: billing.stripeCustomerId ?? undefined,
+      successUrl: parsed.data.successUrl,
+      cancelUrl: parsed.data.cancelUrl,
+      userId: user.id,
+      priceId,
+      eligibleForTrial,
+    });
+
+    if (!session) {
+      return c.json({ error: "stripe_session_failed" }, 500);
+    }
+
+    return c.json({ url: session.url });
+  })
+  .post("/api/billing/portal", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(createPortalSessionSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const subscriptionService = new SubscriptionService(db);
+    const billing = await subscriptionService.getOrCreateSubscription(user.id);
+
+    if (!billing.stripeCustomerId) {
+      return c.json({ error: "no_customer" }, 400);
+    }
+
+    const session = await createBillingPortalSession(c.env, {
+      returnUrl: parsed.data.returnUrl,
+      customerId: billing.stripeCustomerId,
+      subscriptionId: billing.stripeSubscriptionId ?? undefined,
+    });
+
+    if (!session) {
+      return c.json({ error: "portal_failed" }, 500);
+    }
+
+    return c.json({ url: session.url });
+  })
+  // ─── Subscriptions (legacy aliases) ─────────────────────────────────────────────
+  .get("/api/subscription", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const defaultSubscription = () =>
+      c.json({
+        subscription: {
+          plan: "starter",
+          status: "active",
+          stripeCustomerId: null,
+          stripeSubscriptionId: null,
+          currentPeriodEnd: null,
+          trialEndsAt: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        mrr: 0,
+        shouldShowUpgrade: false,
+      });
+
+    try {
+      const db = c.get("db");
+      const subscriptionService = new SubscriptionService(db);
+      const subscription = await subscriptionService.getOrCreateSubscription(user.id);
+      const mrr = await subscriptionService.calculateMRR(user.id);
+      const shouldShowUpgrade = await subscriptionService.shouldShowUpgradePrompt(user.id);
+
+      return c.json({
+        subscription: {
+          id: subscription.id,
+          userId: subscription.userId,
+          plan: subscription.plan,
+          status: subscription.status,
+          stripeCustomerId: subscription.stripeCustomerId,
+          stripeSubscriptionId: subscription.stripeSubscriptionId,
+          currentPeriodEnd:
+            subscription.currentPeriodEnd instanceof Date
+              ? subscription.currentPeriodEnd.toISOString()
+              : subscription.currentPeriodEnd ?? null,
+          trialEndsAt:
+            subscription.trialEndsAt instanceof Date
+              ? subscription.trialEndsAt.toISOString()
+              : subscription.trialEndsAt ?? null,
+          createdAt:
+            subscription.createdAt instanceof Date
+              ? subscription.createdAt.toISOString()
+              : String(subscription.createdAt),
+          updatedAt:
+            subscription.updatedAt instanceof Date
+              ? subscription.updatedAt.toISOString()
+              : String(subscription.updatedAt),
+        },
+        mrr,
+        shouldShowUpgrade,
+      });
+    } catch (err) {
+      console.error("[GET /api/subscription] Error:", err instanceof Error ? err.message : String(err));
+      if (err instanceof Error && err.stack) {
+        console.error("[GET /api/subscription] Stack:", err.stack);
+      }
+      return defaultSubscription();
+    }
+  })
+  .post("/api/subscription/checkout", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(createCheckoutSessionSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const subscriptionService = new SubscriptionService(db);
+    const billing = await subscriptionService.getOrCreateSubscription(user.id);
+
+    const interval = (parsed.data.interval ?? "month") as "month" | "year";
+    const priceId = getPriceId(c.env, parsed.data.plan as Plan, interval);
+
+    if (!priceId) {
+      console.error("Invalid plan or missing price config", parsed.data.plan, interval);
+      return c.json({ error: "invalid_plan" }, 400);
+    }
+
+    const eligibleForTrial =
+      (parsed.data.plan === "growth" || parsed.data.plan === "scale") &&
+      !billing.stripeSubscriptionId;
+
+    const session = await createCheckoutSession(c.env, {
+      customerId: billing.stripeCustomerId ?? undefined,
+      successUrl: parsed.data.successUrl,
+      cancelUrl: parsed.data.cancelUrl,
+      userId: user.id,
+      priceId,
+      eligibleForTrial,
+    });
+
+    if (!session) {
+      console.error("Stripe session failed");
+      return c.json({ error: "stripe_session_failed" }, 500);
+    }
+
+    return c.json({ url: session.url });
+  })
+  .post("/api/subscription/portal", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(createPortalSessionSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const subscriptionService = new SubscriptionService(db);
+    const billing = await subscriptionService.getOrCreateSubscription(user.id);
+
+    if (!billing.stripeCustomerId) {
+      return c.json({ error: "no_customer" }, 400);
+    }
+
+    const session = await createBillingPortalSession(c.env, {
+      returnUrl: parsed.data.returnUrl,
+      customerId: billing.stripeCustomerId,
+      subscriptionId: billing.stripeSubscriptionId ?? undefined,
+    });
+
+    if (!session) {
+      console.error("Stripe portal session failed");
+      return c.json({ error: "portal_failed" }, 500);
+    }
+
+    return c.json({ url: session.url });
+  })
+  .get("/api/billing/stripe-connection", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const secret = c.env.STRIPE_SECRET_KEY;
+    if (!secret || secret.length === 0) {
+      return c.json({
+        connected: false,
+        message: "STRIPE_SECRET_KEY is not set.",
+        configured: false,
+      });
+    }
+
+    try {
+      const res = await fetch("https://api.stripe.com/v1/balance", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${secret}` },
+      });
+
+      if (res.ok) {
+        return c.json({
+          connected: true,
+          message: "Stripe connection successful.",
+          configured: true,
+        });
+      }
+
+      const text = await res.text();
+      let message = `Stripe API returned ${res.status}.`;
+      try {
+        const err = JSON.parse(text) as { error?: { message?: string } };
+        if (err?.error?.message) message = err.error.message;
+      } catch {
+        if (text) message = text.slice(0, 200);
+      }
+      console.error("[GET /api/billing/stripe-connection] Stripe API error:", res.status, message);
+
+      return c.json({
+        connected: false,
+        message: res.status === 401 ? "Invalid Stripe secret key." : message,
+        configured: true,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[GET /api/billing/stripe-connection] Error:", msg);
+      return c.json({
+        connected: false,
+        message: `Connection failed: ${msg}`,
+        configured: true,
+      });
+    }
+  })
+  .get("/api/webhooks/stripe/status", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const configured =
+      !!c.env.STRIPE_WEBHOOK_SECRET &&
+      c.env.STRIPE_WEBHOOK_SECRET.length > 0 &&
+      !!c.env.STRIPE_SECRET_KEY;
+    const message = configured
+      ? "Webhook endpoint is configured. Send test events from Stripe Dashboard to verify."
+      : "Set STRIPE_WEBHOOK_SECRET and STRIPE_SECRET_KEY to enable webhooks.";
+
+    return c.json({
+      configured,
+      message,
+      endpoint: "/api/webhooks/stripe",
+    });
+  })
+  .post("/api/webhooks/stripe", async (c) => {
+    const rawBody = await c.req.text();
+    const signature = c.req.header("stripe-signature")?? null;
+
+    if (!c.env.STRIPE_SECRET_KEY) {
+      return c.json({ error: "Stripe not configured" }, 500);
+    }
+
+    if (c.env.STRIPE_WEBHOOK_SECRET) {
+      const valid = await verifyStripeWebhookSignature(
+        rawBody,
+        signature,
+        c.env.STRIPE_WEBHOOK_SECRET,
+      );
+      if (!valid) {
+        console.error("Stripe webhook signature verification failed");
+        return c.json({ error: "Invalid signature" }, 400);
+      }
+    }
+
+    let event: { type: string; data: { object: Record<string, unknown> } };
+    try {
+      event = JSON.parse(rawBody) as { type: string; data: { object: Record<string, unknown> } };
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    const db = c.get("db");
+    const subscriptionService = new SubscriptionService(db);
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object as {
+        client_reference_id?: string;
+        customer?: string;
+        subscription?: string;
+      };
+
+      if (session.client_reference_id && session.customer && session.subscription) {
+        const subResponse = await fetch(
+          `https://api.stripe.com/v1/subscriptions/${session.subscription}`,
+          {
+            headers: { Authorization: `Bearer ${c.env.STRIPE_SECRET_KEY}` },
+          },
+        );
+        if (subResponse.ok) {
+          const sub = (await subResponse.json()) as {
+            items: { data: Array<{ price: { id: string } }> };
+            current_period_end: number;
+            status: string;
+          };
+          const priceId = sub.items.data[0]?.price.id;
+          const plan = getPlanFromPriceId(c.env, priceId);
+          const periodEnd = new Date(sub.current_period_end * 1000);
+          const isTrialing = sub.status === "trialing";
+
+          await subscriptionService.updateSubscription(session.client_reference_id, {
+            plan,
+            stripeCustomerId: session.customer as string,
+            stripeSubscriptionId: session.subscription as string,
+            status: sub.status === "active" ? "active" : "trialing",
+            currentPeriodEnd: periodEnd,
+            trialEndsAt: isTrialing ? periodEnd : undefined,
+          });
+        }
+      }
+    }
+
+    if (
+      event.type === "customer.subscription.updated" ||
+      event.type === "customer.subscription.deleted"
+    ) {
+      const sub = event.data.object as {
+        id?: string;
+        customer?: string;
+        status?: string;
+        current_period_end?: number;
+        items?: { data: Array<{ price: { id: string } }> };
+      };
+
+      if (sub.customer && sub.id) {
+        const rows = await db
+          .select()
+          .from(userSubscriptions)
+          .where(eq(userSubscriptions.stripeCustomerId, sub.customer as string))
+          .limit(1);
+
+        if (rows[0]) {
+          const priceId = sub.items?.data[0]?.price.id;
+          const plan = priceId ? getPlanFromPriceId(c.env, priceId) : "starter";
+          const periodEnd = sub.current_period_end
+            ? new Date(sub.current_period_end * 1000)
+            : undefined;
+          const isTrialing = sub.status === "trialing";
+
+          await subscriptionService.updateSubscription(rows[0].userId, {
+            plan,
+            status:
+              sub.status === "active"
+                ? "active"
+                : sub.status === "canceled"
+                  ? "canceled"
+                  : sub.status === "past_due"
+                    ? "past_due"
+                    : "trialing",
+            currentPeriodEnd: periodEnd,
+            trialEndsAt: isTrialing ? periodEnd : undefined,
+          });
+        }
+      }
+    }
+
+    return c.json({ received: true });
+  })
+  .post("/api/billing/webhook", async (c) => {
+    const rawBody = await c.req.text();
+    const signature = c.req.header("stripe-signature") ?? null;
+
+    if (!c.env.STRIPE_SECRET_KEY) {
+      return c.json({ error: "Stripe not configured" }, 500);
+    }
+    if (c.env.STRIPE_WEBHOOK_SECRET) {
+      const valid = await verifyStripeWebhookSignature(
+        rawBody,
+        signature,
+        c.env.STRIPE_WEBHOOK_SECRET,
+      );
+      if (!valid) {
+        return c.json({ error: "Invalid signature" }, 400);
+      }
+    }
+
+    let event: { type: string; data: { object: Record<string, unknown> } };
+    try {
+      event = JSON.parse(rawBody) as { type: string; data: { object: Record<string, unknown> } };
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    const db = c.get("db");
+    const subscriptionService = new SubscriptionService(db);
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object as {
+        client_reference_id?: string;
+        customer?: string;
+        subscription?: string;
+      };
+      if (session.client_reference_id && session.customer && session.subscription) {
+        const subResponse = await fetch(
+          `https://api.stripe.com/v1/subscriptions/${session.subscription}`,
+          { headers: { Authorization: `Bearer ${c.env.STRIPE_SECRET_KEY}` } },
+        );
+        if (subResponse.ok) {
+          const sub = (await subResponse.json()) as {
+            items: { data: Array<{ price: { id: string } }> };
+            current_period_end: number;
+            status: string;
+          };
+          const priceId = sub.items.data[0]?.price.id;
+          const plan = getPlanFromPriceId(c.env, priceId);
+          const periodEnd = new Date(sub.current_period_end * 1000);
+          const isTrialing = sub.status === "trialing";
+          await subscriptionService.updateSubscription(session.client_reference_id, {
+            plan,
+            stripeCustomerId: session.customer as string,
+            stripeSubscriptionId: session.subscription as string,
+            status: sub.status === "active" ? "active" : "trialing",
+            currentPeriodEnd: periodEnd,
+            trialEndsAt: isTrialing ? periodEnd : undefined,
+          });
+        }
+      }
+    }
+
+    if (
+      event.type === "customer.subscription.updated" ||
+      event.type === "customer.subscription.deleted"
+    ) {
+      const sub = event.data.object as {
+        customer?: string;
+        id?: string;
+        status?: string;
+        current_period_end?: number;
+        items?: { data: Array<{ price: { id: string } }> };
+      };
+      if (sub.customer && sub.id) {
+        const rows = await db
+          .select()
+          .from(userSubscriptions)
+          .where(eq(userSubscriptions.stripeCustomerId, sub.customer as string))
+          .limit(1);
+        if (rows[0]) {
+          const priceId = sub.items?.data[0]?.price.id;
+          const plan = priceId ? getPlanFromPriceId(c.env, priceId) : "starter";
+          const periodEnd = sub.current_period_end
+            ? new Date(sub.current_period_end * 1000)
+            : undefined;
+          const isTrialing = sub.status === "trialing";
+          await subscriptionService.updateSubscription(rows[0].userId, {
+            plan,
+            status:
+              sub.status === "active"
+                ? "active"
+                : sub.status === "canceled"
+                  ? "canceled"
+                  : sub.status === "past_due"
+                    ? "past_due"
+                    : "trialing",
+            currentPeriodEnd: periodEnd,
+            trialEndsAt: isTrialing ? periodEnd : undefined,
+          });
+        }
+      }
+    }
+
+    return c.json({ received: true });
   });
 
 // ─── Cron handler for daily Stripe sync ────────────────────────────────────────

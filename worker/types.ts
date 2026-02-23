@@ -13,6 +13,13 @@ export interface AppEnv extends Env {
   /** Comma-separated extra origins for auth (e.g. https://www.unlockaffiliate.com). Optional. */
   TRUSTED_ORIGINS?: string;
   UPLOADS: R2Bucket;
+  /** Optional: per-plan price IDs */
+  STRIPE_PRICE_GROWTH_MONTHLY?: string;
+  STRIPE_PRICE_GROWTH_ANNUAL?: string;
+  STRIPE_PRICE_SCALE_MONTHLY?: string;
+  STRIPE_PRICE_SCALE_ANNUAL?: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
 }
 
 export interface HonoAppContext {
