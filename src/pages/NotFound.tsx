@@ -1,11 +1,26 @@
-import { Link, useLocation } from "react-router-dom";
-import { ArrowLeft, Home, LayoutDashboard } from "lucide-react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useSession } from "@/lib/auth-client";
 
 function NotFound() {
+  const navigate = useNavigate();
   const location = useLocation();
+  const { data: session } = useSession();
+
+  function handleGoBack() {
+    if (session) {
+      if (window.history.length > 1) {
+        navigate(-1);
+      } else {
+        navigate("/app", { replace: true });
+      }
+    } else {
+      navigate("/", { replace: true });
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4">
@@ -20,24 +35,10 @@ function NotFound() {
             .
           </p>
         </CardHeader>
-        <CardContent className="flex flex-col sm:flex-row gap-3">
-          <Button asChild variant="outline" className="flex-1">
-            <Link to="/">
-              <Home className="w-4 h-4 mr-2" />
-              Back to home
-            </Link>
-          </Button>
-          <Button asChild className="flex-1">
-            <Link to="/app">
-              <LayoutDashboard className="w-4 h-4 mr-2" />
-              Go to dashboard
-            </Link>
-          </Button>
-          <Button asChild variant="ghost" className="sm:flex-none">
-            <Link to="/">
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Go back
-            </Link>
+        <CardContent>
+          <Button variant="outline" onClick={handleGoBack} className="gap-2">
+            <ArrowLeft className="w-4 h-4" />
+            Go back
           </Button>
         </CardContent>
       </Card>
