@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { CreditCard, Zap, ExternalLink } from "lucide-react";
+import { CreditCard, Zap, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -50,6 +50,19 @@ function Billing() {
     queryFn: async () => {
       const res = await fetch("/api/billing");
       if (!res.ok) throw new Error("Failed to load billing");
+      return res.json();
+    },
+  });
+
+  const { data: stripeConnection } = useQuery<{
+    connected: boolean;
+    message: string;
+    configured: boolean;
+  }>({
+    queryKey: ["billing", "stripe-connection"],
+    queryFn: async () => {
+      const res = await fetch("/api/billing/stripe-connection");
+      if (!res.ok) throw new Error("Failed to check Stripe");
       return res.json();
     },
   });
@@ -106,6 +119,21 @@ function Billing() {
         <p className="text-muted-foreground">
           {isLoading ? "Loading…" : "Manage your plan and subscription."}
         </p>
+        {stripeConnection && (
+          <div className="mt-2 flex items-center gap-2 text-sm">
+            {stripeConnection.connected ? (
+              <>
+                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                <span className="text-muted-foreground">Stripe: {stripeConnection.message}</span>
+              </>
+            ) : (
+              <>
+                <XCircle className="h-4 w-4 text-amber-600" />
+                <span className="text-muted-foreground">Stripe: {stripeConnection.message}</span>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">

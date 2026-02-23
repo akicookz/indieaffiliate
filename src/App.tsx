@@ -20,6 +20,7 @@ import FraudFlags from "./pages/FraudFlags";
 import Billing from "./pages/Billing";
 import ProjectSettings from "./pages/ProjectSettings";
 import Import from "./pages/Import";
+import Webhooks from "./pages/Webhooks";
 import PartnerPageDesigner from "./pages/PartnerPageDesigner";
 import JoinPartnerProgram from "./pages/JoinPartnerProgram";
 import PortalDashboard from "./pages/PortalDashboard";
@@ -66,6 +67,7 @@ function App() {
         <Route path="billing" element={<Billing />} />
         <Route path="import" element={<Import />} />
         <Route path="projects/:slug/settings" element={<ProjectSettings />} />
+        <Route path="projects/:slug/webhooks" element={<Webhooks />} />
         <Route path="projects/:slug/partner-page" element={<PartnerPageDesigner />} />
         <Route path="*" element={<NotFound />} />
       </Route>

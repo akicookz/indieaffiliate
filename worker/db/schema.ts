@@ -444,6 +444,57 @@ export const userSubscriptions = sqliteTable(
 export type UserSubscriptionRow = typeof userSubscriptions.$inferSelect;
 export type NewUserSubscriptionRow = typeof userSubscriptions.$inferInsert;
 
+// Webhook Endpoints - configured URLs per project for event delivery
+export const webhookEndpoints = sqliteTable(
+  "webhook_endpoints",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    secret: text("secret").notNull(),
+    events: text("events").notNull(), // JSON array of event types
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+  },
+  (table) => [
+    index("idx_webhook_endpoints_project").on(table.projectId),
+    index("idx_webhook_endpoints_active").on(table.projectId, table.isActive),
+  ],
+);
+
+export type WebhookEndpointRow = typeof webhookEndpoints.$inferSelect;
+export type NewWebhookEndpointRow = typeof webhookEndpoints.$inferInsert;
+
+// Webhook Logs - delivery history per endpoint
+export const webhookLogs = sqliteTable(
+  "webhook_logs",
+  {
+    id: text("id").primaryKey(),
+    endpointId: text("endpoint_id")
+      .notNull()
+      .references(() => webhookEndpoints.id, { onDelete: "cascade" }),
+    event: text("event").notNull(),
+    payload: text("payload").notNull(),
+    statusCode: integer("status_code"),
+    responseBody: text("response_body"),
+    attempt: integer("attempt").notNull().default(1),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+  },
+  (table) => [
+    index("idx_webhook_logs_endpoint").on(table.endpointId),
+    index("idx_webhook_logs_endpoint_created").on(table.endpointId, table.createdAt),
+  ],
+);
+
+export type WebhookLogRow = typeof webhookLogs.$inferSelect;
+export type NewWebhookLogRow = typeof webhookLogs.$inferInsert;
+
 export const schema = {
   ...authSchema,
   projects,
@@ -458,4 +509,6 @@ export const schema = {
   fraudFlags,
   payouts,
   userSubscriptions,
+  webhookEndpoints,
+  webhookLogs,
 } as const;
