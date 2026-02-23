@@ -33,9 +33,10 @@ bun install
 
 2. Create local secrets file
 
-Create `.dev.vars` in the project root (this file is gitignored via `.dev.vars*`) and set:
+Copy `.dev.vars.example` to `.dev.vars` in the project root (this file is gitignored) and set:
 
 ```bash
+BETTER_AUTH_URL=http://localhost:5173
 BETTER_AUTH_SECRET=<generate your own token here>
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
@@ -44,12 +45,12 @@ GITHUB_CLIENT_SECRET=
 RESEND_API_KEY=
 ENCRYPTION_KEY=<generate your own token here>
 SALT=<generate your own token here>
-VITE_SITE_URL=http://localhost:5173
 ```
 
 Notes:
 
-- `BETTER_AUTH_URL` is configured in `wrangler.jsonc` for local/prod.
+- **BETTER_AUTH_URL**: Set in `.dev.vars` (local) and in Cloudflare Dashboard → Worker → Settings → Variables (production). Must match the URL users use (e.g. `https://unlockaffiliate.com` in prod).
+- **Frontend URL**: The app URL for the client is set in `vite.config.ts` (dev: `http://localhost:5173`, production: `https://unlockaffiliate.com`). Override with `.env` and `VITE_SITE_URL` if needed.
 - Social login values can be left empty if you are not testing social auth.
 - `ENCRYPTION_KEY` and `SALT` are used for API key/token encryption paths.
 

@@ -1,8 +1,10 @@
 import { type User, type Session } from "better-auth";
 import { type DrizzleD1Database } from "drizzle-orm/d1";
 
-// Extend Env with secrets not in generated wrangler types
-export interface AppEnv extends Env {
+// Extend Env with secrets not in generated wrangler types.
+// BETTER_AUTH_URL: set in .dev.vars (local) and Cloudflare Dashboard (production).
+export interface AppEnv extends Omit<Env, "BETTER_AUTH_URL"> {
+  BETTER_AUTH_URL?: string;
   BETTER_AUTH_SECRET: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;

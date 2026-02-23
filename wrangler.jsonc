@@ -26,17 +26,7 @@
       "bucket_name": "unlockaffiliate-uploads",
     },
   ],
-  "vars": {
-    "BETTER_AUTH_URL": "http://localhost:5173",
-  },
   "triggers": {
     "crons": ["0 6 * * *"],
-  },
-  "env": {
-    "production": {
-      "vars": {
-        "BETTER_AUTH_URL": "https://unlockaffiliate.com",
-      },
-    },
   },
 }
