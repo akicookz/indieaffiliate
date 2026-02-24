@@ -755,6 +755,8 @@ const app = new Hono<HonoAppContext>()
     }
 
     const partner = await partnerService.updatePartner(id, parsed.data);
+    if (!partner) return c.json({ error: "Partner not found" }, 404);
+
     if (parsed.data.status === "active" && existing.status !== "active") {
       const webhookServicePartner = new WebhookService(db);
       await webhookServicePartner.fireEvent(existing.projectId, "partner.approved", {
@@ -2664,7 +2666,7 @@ export default {
     return handleScheduled(env);
   },
 
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+  fetch(request: Request, env: AppEnv, ctx: ExecutionContext) {
     return app.fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<AppEnv>;
