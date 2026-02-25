@@ -559,9 +559,16 @@ const app = new Hono<HonoAppContext>()
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const db = c.get("db");
+    // Bootstrap starter subscription on first use (e.g. first request after login)
+    try {
+      const subscriptionService = new SubscriptionService(db);
+      await subscriptionService.getOrCreateSubscription(user.id);
+    } catch {
+      // Table missing or DB error: continue without subscription; POST /api/projects will still allow first project
+    }
+
     const projectService = new ProjectService(db);
     const projectsList = await projectService.getProjectsByUserId(user.id);
-
     return c.json({ projects: projectsList });
   })
   .post("/api/projects", async (c) => {
@@ -574,15 +581,27 @@ const app = new Hono<HonoAppContext>()
 
     const db = c.get("db");
     const projectService = new ProjectService(db);
-    const subscriptionService = new SubscriptionService(db);
-    const subscription = await subscriptionService.getOrCreateSubscription(user.id);
     const existingProjects = await projectService.getProjectsByUserId(user.id);
-    if (!canCreateProject(subscription.plan as BillingPlan, existingProjects.length)) {
+
+    // Plan limit: use subscription when available; if subscription table is missing/broken, allow first project only (starter default).
+    let subscription: Awaited<
+      ReturnType<SubscriptionService["getOrCreateSubscription"]>
+    > | null = null;
+    try {
+      const subscriptionService = new SubscriptionService(db);
+      subscription = await subscriptionService.getOrCreateSubscription(user.id);
+    } catch (err) {
+      console.error("Subscription lookup failed (project create):", err);
+    }
+
+    const plan = subscription?.plan as BillingPlan | undefined;
+    const maxProjects = plan != null ? getMaxProjects(plan) : 1;
+    if (existingProjects.length >= maxProjects) {
       return c.json(
         {
           error: "Plan limit reached",
           code: "upgrade_required",
-          maxProjects: getMaxProjects(subscription.plan as BillingPlan),
+          maxProjects,
         },
         403,
       );
@@ -593,7 +612,6 @@ const app = new Hono<HonoAppContext>()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "") || "project";
 
-    // Ensure slug is unique per user by appending a numeric suffix when needed.
     let slug = baseSlug;
     let suffix = 2;
     // eslint-disable-next-line no-constant-condition
@@ -603,20 +621,25 @@ const app = new Hono<HonoAppContext>()
         .from(projects)
         .where(and(eq(projects.userId, user.id), eq(projects.slug, slug)))
         .limit(1);
-      if (!existingWithSlug[0]) {
-        break;
-      }
+      if (!existingWithSlug[0]) break;
       slug = `${baseSlug}-${suffix++}`;
     }
 
-    const project = await projectService.createProject({
-      userId: user.id,
-      name: parsed.data.name.trim(),
-      slug,
-      domain: parsed.data.domain?.trim() || null,
-    });
-
-    return c.json({ project }, 201);
+    try {
+      const project = await projectService.createProject({
+        userId: user.id,
+        name: parsed.data.name.trim(),
+        slug,
+        domain: parsed.data.domain?.trim() || null,
+      });
+      return c.json({ project }, 201);
+    } catch (err) {
+      console.error("Create project failed:", err);
+      return c.json(
+        { error: "Failed to create project", code: "create_failed" },
+        500,
+      );
+    }
   })
   .patch("/api/projects/:id", async (c) => {
     const user = c.get("user");
