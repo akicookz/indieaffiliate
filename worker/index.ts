@@ -33,7 +33,7 @@ import {
   type Plan,
 } from "./services/stripe-checkout";
 import { verifyStripeWebhookSignature } from "./services/stripe-webhook";
-import { getMaxProjects, canCreateProject, type Plan as BillingPlan } from "./billing";
+import { getMaxProjects,  type Plan as BillingPlan } from "./billing";
 import {
   createProjectSchema,
   updateProjectSchema,
