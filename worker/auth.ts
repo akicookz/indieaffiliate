@@ -12,14 +12,28 @@ import { type AppEnv } from "./types";
 
 const ENABLE_DEBUG_LOGS = false;
 
-/** Build trusted origins for Better Auth (production social sign-in / CSRF). */
-function getTrustedOrigins(env?: AppEnv): string[] {
+/** Trusted origins from BETTER_AUTH_URL (and optional TRUSTED_ORIGINS). Exported for CORS. */
+export function getTrustedOrigins(env?: AppEnv): string[] {
   const origins: string[] = [];
-  if (env?.BETTER_AUTH_URL) {
+  const base = env?.BETTER_AUTH_URL;
+  if (base) {
     try {
-      origins.push(new URL(env.BETTER_AUTH_URL).origin);
+      const url = new URL(base);
+      const host = url.hostname.toLowerCase();
+      const port = url.port ? `:${url.port}` : "";
+      origins.push(url.origin);
+      const otherProtocol = url.protocol === "https:" ? "http:" : "https:";
+      origins.push(`${otherProtocol}//${host}${port}`);
+      if (!host.startsWith("www.")) {
+        origins.push(`${url.protocol}//www.${host}${port}`);
+        origins.push(`${otherProtocol}//www.${host}${port}`);
+      } else {
+        const bare = host.replace(/^www\./, "");
+        origins.push(`${url.protocol}//${bare}${port}`);
+        origins.push(`${otherProtocol}//${bare}${port}`);
+      }
     } catch {
-      // ignore invalid URL
+      /* ignore */
     }
   }
   if (env?.TRUSTED_ORIGINS) {
@@ -27,7 +41,7 @@ function getTrustedOrigins(env?: AppEnv): string[] {
       ...env.TRUSTED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean),
     );
   }
-  return origins;
+  return [...new Set(origins)];
 }
 
 function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
@@ -114,13 +128,9 @@ function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
         },
         secret: env?.BETTER_AUTH_SECRET,
         baseURL: env?.BETTER_AUTH_URL,
-        // Explicit trusted origins for production: base URL origin + any extra (e.g. www)
         trustedOrigins: getTrustedOrigins(env),
-        // OAuth redirects from Google/GitHub are cross-site navigations; browsers often omit
-        // the Origin header, causing Better Auth to return 403. Disable origin check so
-        // callback GET requests succeed. We still use trustedOrigins for same-origin fetches.
         advanced: {
-          disableOriginCheck: true,
+          trustedProxyHeaders: true,
         },
       },
     ),

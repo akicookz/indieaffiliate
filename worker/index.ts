@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { except } from "hono/combine";
-import { createAuth } from "./auth";
+import { createAuth, getTrustedOrigins } from "./auth";
 import { type HonoAppContext, type AppEnv } from "./types";
-import { partners, userSubscriptions } from "./db";
+import { partners, userSubscriptions, projects } from "./db";
 import { ProjectService } from "./services/project-service";
 import { PartnerService } from "./services/partner-service";
 import { CustomerService } from "./services/customer-service";
@@ -99,12 +99,24 @@ function validate<T>(
   return { success: false, error: message };
 }
 
+// CORS: never use wildcard when credentials are included (browser rejects). Reflect origin or use allow list.
 const app = new Hono<HonoAppContext>()
-  .use("*", cors())
+  .use(
+    "*",
+    cors({
+      origin: (origin) => origin || undefined,
+      credentials: true,
+    }),
+  )
   .use(
     "/api/auth/*",
     cors({
-      origin: (origin) => origin || "*",
+      origin: (origin, c) => {
+        const allowed = getTrustedOrigins(c.env);
+        if (origin && allowed.includes(origin)) return origin;
+        if (!origin && allowed.length) return allowed[0] ?? undefined;
+        return undefined;
+      },
       allowHeaders: ["Content-Type", "Authorization"],
       allowMethods: ["POST", "GET", "OPTIONS"],
       exposeHeaders: ["Content-Length"],
@@ -576,10 +588,26 @@ const app = new Hono<HonoAppContext>()
       );
     }
 
-    const slug = parsed.data.name
+    const baseSlug = parsed.data.name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "");
+      .replace(/^-|-$/g, "") || "project";
+
+    // Ensure slug is unique per user by appending a numeric suffix when needed.
+    let slug = baseSlug;
+    let suffix = 2;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const existingWithSlug = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(and(eq(projects.userId, user.id), eq(projects.slug, slug)))
+        .limit(1);
+      if (!existingWithSlug[0]) {
+        break;
+      }
+      slug = `${baseSlug}-${suffix++}`;
+    }
 
     const project = await projectService.createProject({
       userId: user.id,

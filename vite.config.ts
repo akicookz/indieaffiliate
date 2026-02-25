@@ -5,10 +5,11 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 import path from "path";
 
 // https://vite.dev/config/
+// BETTER_AUTH_URL is the single source of truth for app/auth URL (set in .env / Cloudflare).
 export default defineConfig(({ mode }) => {
-  // Load env from .env, .env.local, .env.[mode], .env.[mode].local
   const env = loadEnv(mode, process.cwd(), "");
   const siteUrl =
+    env.BETTER_AUTH_URL ??
     env.VITE_SITE_URL ??
     (mode === "production" ? "https://unlockaffiliate.com" : "http://localhost:5173");
 
@@ -20,6 +21,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     define: {
+      "import.meta.env.VITE_BETTER_AUTH_URL": JSON.stringify(siteUrl),
       "import.meta.env.VITE_SITE_URL": JSON.stringify(siteUrl),
     },
   };
