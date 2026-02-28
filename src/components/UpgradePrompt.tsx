@@ -12,7 +12,7 @@ import {
 
 interface SubscriptionData {
   subscription: {
-    plan: "starter" | "growth" | "scale";
+    plan: "starter" | "growth" | "scale" | null;
     status: string;
   };
   mrr: number;

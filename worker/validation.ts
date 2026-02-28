@@ -225,6 +225,10 @@ export const createPortalSessionSchema = z.object({
   returnUrl: z.string().url(),
 });
 
+export const selectSubscriptionPlanSchema = z.object({
+  plan: z.enum(["starter", "growth", "scale"]),
+});
+
 // ─── Webhooks ─────────────────────────────────────────────────────────────────
 export const webhookEventSchema = z.enum([
   "partner.created",
