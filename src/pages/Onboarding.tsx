@@ -12,8 +12,11 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  Sparkles,
   Trash2,
   UserPlus,
+  Zap,
+  Building2,
 } from "lucide-react";
 import Papa from "papaparse";
 
@@ -21,6 +24,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { generateTrackingSnippet } from "@/lib/utils";
 import StripeCustomerTable from "@/components/StripeCustomerTable";
 
@@ -46,16 +56,57 @@ interface PartnerForAssign {
   referralCode: string;
 }
 
-type OnboardingStep = "create" | "configure" | "partners" | "sync";
+interface SubscriptionInfo {
+  subscription: {
+    plan: "starter" | "growth" | "scale" | null;
+    status: string;
+  };
+  mrr: number;
+  shouldShowUpgrade?: boolean;
+}
+
+type OnboardingStep = "plan" | "create" | "configure" | "partners" | "sync";
 
 const STEP_LABELS: Record<OnboardingStep, string> = {
+  plan: "Choose Plan",
   create: "Create Project",
   configure: "Configure",
   partners: "Add Partners",
   sync: "Sync Purchases",
 };
 
-const STEP_ORDER: OnboardingStep[] = ["create", "configure", "partners", "sync"];
+const STEP_ORDER: OnboardingStep[] = [
+  "create",
+  "configure",
+  "partners",
+  "sync",
+  "plan",
+];
+
+const STARTER_FEATURES = [
+  "1 project",
+  "Unlimited affiliates & clicks",
+  "Commission tracking",
+  "CSV payout export",
+  "Community support",
+];
+
+const ONBOARDING_GROWTH_FEATURES = [
+  "Up to 5 projects",
+  "Partner dashboard",
+  "Commission tracking",
+  "Email support",
+  "14-day free trial",
+];
+
+const ONBOARDING_SCALE_FEATURES = [
+  "Unlimited projects",
+  "Everything in Growth",
+  "Priority support",
+  "Advanced analytics",
+  "Custom branding",
+  "14-day free trial",
+];
 
 function Onboarding() {
   const navigate = useNavigate();
@@ -80,7 +131,33 @@ function Onboarding() {
   const [partnerCommission, setPartnerCommission] = useState("20");
   const [csvUploading, setCsvUploading] = useState(false);
 
+  const [preselectedPlan] = useState<"starter" | "growth" | "scale" | null>(
+    () => {
+      if (typeof window === "undefined") return null;
+      try {
+        const stored = sessionStorage.getItem("ia.preselectedPlan");
+        if (stored === "starter" || stored === "growth" || stored === "scale") {
+          return stored;
+        }
+      } catch {
+        // ignore storage issues
+      }
+      return null;
+    },
+  );
+
+  const { data: subscriptionData, isLoading: subscriptionLoading } = useQuery<SubscriptionInfo>({
+    queryKey: ["subscription", "onboarding"],
+    queryFn: async () => {
+      const response = await fetch("/api/subscription");
+      if (!response.ok) throw new Error("Failed to fetch subscription");
+      return response.json();
+    },
+  });
+
   const stepIndex = STEP_ORDER.indexOf(step);
+
+  const subscriptionPlan = subscriptionData?.subscription.plan ?? null;
 
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
     queryKey: ["projects"],
@@ -91,6 +168,76 @@ function Onboarding() {
     },
   });
 
+  const selectPlanMutation = useMutation({
+    mutationFn: async (plan: "starter" | "growth" | "scale") => {
+      const response = await fetch("/api/subscription/select-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(
+          (payload as { error?: string }).error ?? "Failed to select plan",
+        );
+      }
+      return response.json() as Promise<SubscriptionInfo>;
+    },
+    onSuccess: () => {
+      try {
+        sessionStorage.removeItem("ia.preselectedPlan");
+      } catch {
+        // ignore storage issues
+      }
+      queryClient.invalidateQueries({ queryKey: ["subscription", "onboarding"] });
+      navigate("/app", { replace: true });
+    },
+  });
+
+  const checkoutMutation = useMutation({
+    mutationFn: async (plan: "growth" | "scale") => {
+      const origin = window.location.origin;
+      const response = await fetch("/api/billing/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plan,
+          interval: "month",
+          successUrl: `${origin}/app?onboarding=success`,
+          cancelUrl: `${origin}/onboarding`,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(
+          (payload as { error?: string }).error ?? "Checkout failed",
+        );
+      }
+      const data = (await response.json()) as { url: string };
+      return data.url;
+    },
+    onSuccess: (url) => {
+      window.location.href = url;
+    },
+  });
+
+  const {
+    mutate: selectPlan,
+    isPending: selectingPlan,
+    isSuccess: planSelected,
+  } = selectPlanMutation;
+
+  const planStepPending = selectingPlan || checkoutMutation.isPending;
+
+  function handleChoosePlan(plan: "starter" | "growth" | "scale") {
+    if (planStepPending) return;
+    if (plan === "starter") {
+      selectPlan("starter");
+    } else {
+      checkoutMutation.mutate(plan);
+    }
+  }
+
   useEffect(() => {
     if (projectsLoading) return;
     if (step !== "create") return;
@@ -99,6 +246,26 @@ function Onboarding() {
       navigate("/app", { replace: true });
     }
   }, [projectsLoading, projectsData, navigate, step]);
+
+  // If user arrived via a plan-specific CTA and has no plan yet, apply it once (plan is last step; they'll see "You're all set" when they get there).
+  useEffect(() => {
+    if (subscriptionLoading) return;
+    if (
+      subscriptionPlan === null &&
+      preselectedPlan &&
+      !selectingPlan &&
+      !planSelected
+    ) {
+      selectPlan(preselectedPlan);
+    }
+  }, [
+    subscriptionLoading,
+    subscriptionPlan,
+    preselectedPlan,
+    selectingPlan,
+    planSelected,
+    selectPlan,
+  ]);
 
   const createProjectMutation = useMutation({
     mutationFn: async (data: { name: string; domain?: string }) => {
@@ -342,6 +509,209 @@ function Onboarding() {
             />
           ))}
         </div>
+
+        {/* ─── Last step: Choose Plan (or "You're all set" if plan already selected) ──────── */}
+        {step === "plan" && subscriptionPlan != null && (
+          <div className="shadow-xs bg-card/50 rounded-2xl p-8 text-center space-y-6">
+            <div className="flex justify-center">
+              <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
+                <Check className="h-7 w-7 text-primary" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-semibold tracking-tight text-foreground">
+                You&apos;re all set
+              </h2>
+              <p className="text-muted-foreground">
+                Your plan is selected. Go to your dashboard to start using your project.
+              </p>
+            </div>
+            <Button onClick={handleFinish} size="lg">
+              Continue to dashboard
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </div>
+        )}
+        {step === "plan" && subscriptionPlan == null && (
+          <div className="space-y-6">
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-semibold tracking-tight text-foreground">
+                Choose your subscription plan
+              </h2>
+              <p className="text-muted-foreground max-w-xl mx-auto">
+                Start free with one project, or unlock more with Growth or Scale. You can change this anytime in Billing.
+              </p>
+            </div>
+
+            {(selectPlanMutation.error || checkoutMutation.error) && (
+              <p className="text-sm text-destructive text-center">
+                {(selectPlanMutation.error || checkoutMutation.error)?.message}
+              </p>
+            )}
+
+            <div className="grid gap-6 md:grid-cols-3">
+              {/* Starter */}
+              <Card
+                role="button"
+                tabIndex={0}
+                className="cursor-pointer transition-all duration-200 hover:border-primary/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 active:scale-[0.99] border-2"
+                onClick={() => handleChoosePlan("starter")}
+                onKeyDown={(e) => {
+                  if ((e.key === "Enter" || e.key === " ") && !planStepPending) {
+                    e.preventDefault();
+                    handleChoosePlan("starter");
+                  }
+                }}
+              >
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <BarChart3 className="h-5 w-5 text-muted-foreground" />
+                    Starter
+                  </CardTitle>
+                  <CardDescription>Perfect for getting started</CardDescription>
+                  <div className="pt-2">
+                    <span className="text-3xl font-bold tracking-tight">Free</span>
+                    <span className="text-muted-foreground text-sm font-normal ml-1">forever</span>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <ul className="space-y-2.5 text-sm">
+                    {STARTER_FEATURES.map((f) => (
+                      <li key={f} className="flex items-center gap-2">
+                        <Check className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    disabled={planStepPending}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleChoosePlan("starter");
+                    }}
+                  >
+                    {planStepPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      "Choose Starter"
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Growth */}
+              <Card
+                role="button"
+                tabIndex={0}
+                className="cursor-pointer transition-all duration-200 hover:border-primary/50 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 active:scale-[0.99] border-2 border-primary/20 bg-gradient-to-b from-primary/5 to-transparent dark:from-primary/10 relative overflow-hidden"
+                onClick={() => handleChoosePlan("growth")}
+                onKeyDown={(e) => {
+                  if ((e.key === "Enter" || e.key === " ") && !planStepPending) {
+                    e.preventDefault();
+                    handleChoosePlan("growth");
+                  }
+                }}
+              >
+                <div className="absolute right-4 top-4">
+                  <Badge variant="secondary" className="gap-1 font-medium">
+                    <Sparkles className="h-3 w-3" />
+                    Recommended
+                  </Badge>
+                </div>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Zap className="h-5 w-5 text-primary" />
+                    Growth
+                  </CardTitle>
+                  <CardDescription>For growing teams and multiple products</CardDescription>
+                  <div className="pt-2">
+                    <span className="text-3xl font-bold tracking-tight">$39</span>
+                    <span className="text-muted-foreground text-sm font-normal">/month</span>
+                    <p className="text-muted-foreground text-xs mt-0.5">14-day free trial</p>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <ul className="space-y-2.5 text-sm">
+                    {ONBOARDING_GROWTH_FEATURES.map((f) => (
+                      <li key={f} className="flex items-center gap-2">
+                        <Check className="h-4 w-4 shrink-0 text-primary" />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                  <Button
+                    className="w-full"
+                    disabled={planStepPending}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleChoosePlan("growth");
+                    }}
+                  >
+                    {planStepPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      "Continue to payment"
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Scale */}
+              <Card
+                role="button"
+                tabIndex={0}
+                className="cursor-pointer transition-all duration-200 hover:border-primary/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 active:scale-[0.99] border-2"
+                onClick={() => handleChoosePlan("scale")}
+                onKeyDown={(e) => {
+                  if ((e.key === "Enter" || e.key === " ") && !planStepPending) {
+                    e.preventDefault();
+                    handleChoosePlan("scale");
+                  }
+                }}
+              >
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Building2 className="h-5 w-5 text-muted-foreground" />
+                    Scale
+                  </CardTitle>
+                  <CardDescription>For scale and priority support</CardDescription>
+                  <div className="pt-2">
+                    <span className="text-3xl font-bold tracking-tight">$99</span>
+                    <span className="text-muted-foreground text-sm font-normal">/month</span>
+                    <p className="text-muted-foreground text-xs mt-0.5">14-day free trial</p>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <ul className="space-y-2.5 text-sm">
+                    {ONBOARDING_SCALE_FEATURES.map((f) => (
+                      <li key={f} className="flex items-center gap-2">
+                        <Check className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                  <Button
+                    variant="outline"
+                    className="w-full border-2"
+                    disabled={planStepPending}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleChoosePlan("scale");
+                    }}
+                  >
+                    {planStepPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      "Continue to payment"
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        )}
 
         {/* ─── Step 1: Create Project ───────────────────────────────────── */}
         {step === "create" && (

@@ -59,6 +59,7 @@ import {
   assignPartnerToCustomersSchema,
   createCheckoutSessionSchema,
   createPortalSessionSchema,
+  selectSubscriptionPlanSchema,
   createWebhookEndpointSchema,
   updateWebhookEndpointSchema,
 } from "./validation";
@@ -583,19 +584,30 @@ const app = new Hono<HonoAppContext>()
     const projectService = new ProjectService(db);
     const existingProjects = await projectService.getProjectsByUserId(user.id);
 
-    // Plan limit: use subscription when available; if subscription table is missing/broken, allow first project only (starter default).
+    // Plan limit: use subscription when available.
+    // - If subscription exists but plan is null -> require plan selection before creating any project.
+    // - If subscription lookup fails (e.g. table missing) -> allow 1 project as a safe fallback.
     let subscription: Awaited<
       ReturnType<SubscriptionService["getOrCreateSubscription"]>
     > | null = null;
+    let subscriptionError = false;
     try {
       const subscriptionService = new SubscriptionService(db);
       subscription = await subscriptionService.getOrCreateSubscription(user.id);
     } catch (err) {
+      subscriptionError = true;
       console.error("Subscription lookup failed (project create):", err);
     }
 
-    const plan = subscription?.plan as BillingPlan | undefined;
-    const maxProjects = plan != null ? getMaxProjects(plan) : 1;
+    // When plan is null (onboarding not finished), allow 1 project so user can complete setup; they choose plan at the end.
+    const effectivePlan: BillingPlan | undefined =
+      !subscriptionError && subscription?.plan
+        ? (subscription.plan as BillingPlan)
+        : undefined;
+
+    const maxProjects =
+      effectivePlan != null ? getMaxProjects(effectivePlan) : 1;
+
     if (existingProjects.length >= maxProjects) {
       return c.json(
         {
@@ -2151,7 +2163,7 @@ const app = new Hono<HonoAppContext>()
     const defaultBilling = () =>
       c.json({
         subscription: {
-          plan: "starter",
+          plan: null,
           status: "active",
           stripeCustomerId: null,
           stripeSubscriptionId: null,
@@ -2166,10 +2178,14 @@ const app = new Hono<HonoAppContext>()
       const db = c.get("db");
       const subscriptionService = new SubscriptionService(db);
       const projectService = new ProjectService(db);
-      const subscription = await subscriptionService.getOrCreateSubscription(user.id);
+      const subscription = await subscriptionService.getOrCreateSubscription(
+        user.id,
+      );
       const mrr = await subscriptionService.calculateMRR(user.id);
       const projectsList = await projectService.getProjectsByUserId(user.id);
-      const maxProjects = getMaxProjects(subscription.plan as BillingPlan);
+      const effectivePlan: BillingPlan =
+        (subscription.plan as BillingPlan | null) ?? "starter";
+      const maxProjects = getMaxProjects(effectivePlan);
 
       return c.json({
         subscription: {
@@ -2271,7 +2287,7 @@ const app = new Hono<HonoAppContext>()
     const defaultSubscription = () =>
       c.json({
         subscription: {
-          plan: "starter",
+          plan: null,
           status: "active",
           stripeCustomerId: null,
           stripeSubscriptionId: null,
@@ -2326,6 +2342,32 @@ const app = new Hono<HonoAppContext>()
       }
       return defaultSubscription();
     }
+  })
+  .post("/api/subscription/select-plan", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+    const parsed = validate(selectSubscriptionPlanSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const db = c.get("db");
+    const subscriptionService = new SubscriptionService(db);
+    const existing = await subscriptionService.getOrCreateSubscription(user.id);
+
+    const nextStatus =
+      parsed.data.plan === "starter"
+        ? existing.status ?? "active"
+        : existing.status ?? "trialing";
+
+    const updated = await subscriptionService.updateSubscription(user.id, {
+      plan: parsed.data.plan,
+      status: nextStatus,
+    });
+
+    return c.json({
+      subscription: updated,
+    });
   })
   .post("/api/subscription/checkout", async (c) => {
     const user = c.get("user");

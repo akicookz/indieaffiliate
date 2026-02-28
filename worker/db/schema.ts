@@ -408,7 +408,7 @@ export const payouts = sqliteTable(
 export type PayoutRow = typeof payouts.$inferSelect;
 export type NewPayoutRow = typeof payouts.$inferInsert;
 
-// User Subscriptions (billing) - plan, Stripe customer/subscription, status, trial
+// User Subscriptions (billing) - selected plan (nullable until onboarding), Stripe customer/subscription, status, trial
 export const userSubscriptions = sqliteTable(
   "user_subscriptions",
   {
@@ -417,9 +417,8 @@ export const userSubscriptions = sqliteTable(
       .notNull()
       .references(() => authSchema.users.id, { onDelete: "cascade" })
       .unique(),
-    plan: text("plan", { enum: ["starter", "growth", "scale"] })
-      .notNull()
-      .default("starter"),
+    // Plan is null until the user explicitly chooses a subscription tier during onboarding or billing.
+    plan: text("plan", { enum: ["starter", "growth", "scale"] }),
     stripeCustomerId: text("stripe_customer_id"),
     stripeSubscriptionId: text("stripe_subscription_id"),
     status: text("status", { enum: ["active", "canceled", "past_due", "trialing"] })

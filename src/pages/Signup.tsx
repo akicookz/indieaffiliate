@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signIn, useSession, getLoginCallbackUrl } from "@/lib/auth-client";
@@ -8,6 +8,22 @@ function Signup() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState<"google" | "github" | null>(null);
   const { data: session, isPending } = useSession();
+  const [searchParams] = useSearchParams();
+
+  // Remember intended plan from pricing CTA (e.g. /signup?plan=growth) for onboarding.
+  useEffect(() => {
+    const raw = searchParams.get("plan");
+    let normalized: "starter" | "growth" | "scale" | null = null;
+    if (raw === "free") normalized = "starter";
+    if (raw === "growth" || raw === "scale") normalized = raw;
+    if (normalized) {
+      try {
+        sessionStorage.setItem("ia.preselectedPlan", normalized);
+      } catch {
+        // Ignore storage errors
+      }
+    }
+  }, [searchParams]);
 
   if (isPending) {
     return (

@@ -12,7 +12,8 @@ export class SubscriptionService {
   constructor(private db: DrizzleD1Database<Record<string, unknown>>) {}
 
   /**
-   * Get user's subscription or create default starter plan.
+   * Get user's subscription or create a record with no selected plan yet.
+   * New users start with `plan = null` and choose a tier during onboarding or billing.
    */
   async getOrCreateSubscription(userId: string): Promise<UserSubscriptionRow> {
     const existing = await this.db
@@ -25,12 +26,12 @@ export class SubscriptionService {
       return existing[0];
     }
 
-    // Create default starter subscription
+    // Create initial subscription with no selected plan.
     const id = crypto.randomUUID();
     const subscription: NewUserSubscriptionRow = {
       id,
       userId,
-      plan: "starter",
+      plan: null,
       status: "active",
     };
     await this.db.insert(userSubscriptions).values(subscription);

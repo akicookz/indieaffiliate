@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 
 interface BillingData {
   subscription: {
-    plan: "starter" | "growth" | "scale";
+    plan: "starter" | "growth" | "scale" | null;
     status: string;
     stripeCustomerId: string | null;
     currentPeriodEnd: string | null;
@@ -35,7 +35,7 @@ const PLAN_LABELS: Record<string, string> = {
 
 const DEFAULT_BILLING: BillingData = {
   subscription: {
-    plan: "starter",
+    plan: null,
     status: "active",
     stripeCustomerId: null,
     currentPeriodEnd: null,
@@ -140,7 +140,8 @@ function Billing() {
 
   const billing = data ?? DEFAULT_BILLING;
   const { subscription, mrr, usage, trialEndsAt } = billing;
-  const planLabel = PLAN_LABELS[subscription.plan] ?? subscription.plan;
+  const planLabel =
+    (subscription.plan && PLAN_LABELS[subscription.plan]) || "Not selected";
   const hasPortal = !!subscription.stripeCustomerId;
   const isTrialing = subscription.status === "trialing";
 
@@ -245,7 +246,9 @@ function Billing() {
         </Card>
       </div>
 
-      {(subscription.plan === "starter" || subscription.plan === "growth") && (
+      {(!subscription.plan ||
+        subscription.plan === "starter" ||
+        subscription.plan === "growth") && (
         <div className="space-y-6">
           <div className="flex flex-col gap-2">
             <h2 className="text-xl font-semibold tracking-tight">Upgrade your plan</h2>
