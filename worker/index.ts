@@ -5,7 +5,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { except } from "hono/combine";
 import { createAuth, getTrustedOrigins } from "./auth";
 import { type HonoAppContext, type AppEnv } from "./types";
-import { partners, userSubscriptions, projects } from "./db";
+import { partners, partnerOtps, userSubscriptions, projects } from "./db";
 import { ProjectService } from "./services/project-service";
 import { PartnerService } from "./services/partner-service";
 import { CustomerService } from "./services/customer-service";
@@ -33,7 +33,15 @@ import {
   type Plan,
 } from "./services/stripe-checkout";
 import { verifyStripeWebhookSignature } from "./services/stripe-webhook";
-import { getMaxProjects,  type Plan as BillingPlan } from "./billing";
+import { getMaxProjects, type Plan as BillingPlan } from "./billing";
+import {
+  generateOtp,
+  hashOtp,
+  verifyOtp,
+  signPartnerSession,
+  verifyPartnerSession,
+  getPartnerSessionExpiry,
+} from "./lib/partner-auth";
 import {
   createProjectSchema,
   updateProjectSchema,
@@ -52,6 +60,8 @@ import {
   updatePayoutSchema,
   updateMetadataMappingsSchema,
   updatePartnerPayoutLinkSchema,
+  partnerSendOtpSchema,
+  partnerVerifyOtpSchema,
   csvImportSchema,
   stripeImportPreviewSchema,
   stripeImportExecuteSchema,
@@ -374,14 +384,19 @@ const app = new Hono<HonoAppContext>()
   .get("/api/join/:slug", async (c) => {
     const slug = c.req.param("slug");
     const db = drizzle(c.env.DB);
+    const projectService = new ProjectService(db);
     const brandingService = new BrandingService(db);
-    const result = await brandingService.getBySlug(slug);
 
+    let result = await brandingService.getBySlug(slug);
     if (!result) {
-      return c.json({ error: "Program not found" }, 404);
+      const project = await projectService.getProjectBySlug(slug);
+      if (!project) {
+        return c.json({ error: "Program not found" }, 404);
+      }
+      const branding = await brandingService.upsert(project.id, {});
+      result = { branding, projectName: project.name };
     }
 
-    // Build public-facing response (don't expose internal IDs)
     const baseUrl = c.req.url.split("/api")[0];
     return c.json({
       projectName: result.projectName,
@@ -401,130 +416,178 @@ const app = new Hono<HonoAppContext>()
   })
   // ─── Public: Partner self-registration ────────────────────────────────────
   .post("/api/join/:slug", async (c) => {
-    const ip =
-      c.req.header("cf-connecting-ip") ??
-      c.req.header("x-forwarded-for") ??
-      "unknown";
-    if (!checkRateLimit(`join:${ip}`, 5, 60_000)) {
+    try {
+      const ip =
+        c.req.header("cf-connecting-ip") ??
+        c.req.header("x-forwarded-for") ??
+        "unknown";
+      if (!checkRateLimit(`join:${ip}`, 5, 60_000)) {
+        return c.json(
+          { error: "Too many requests. Please try again later." },
+          429,
+        );
+      }
+
+      const slug = c.req.param("slug");
+      const body = await c.req.json();
+      const parsed = validate(joinPartnerSchema, body);
+      if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+      const db = drizzle(c.env.DB);
+      const projectService = new ProjectService(db);
+      const brandingService = new BrandingService(db);
+
+      let brandingResult = await brandingService.getBySlug(slug);
+      if (!brandingResult) {
+        const project = await projectService.getProjectBySlug(slug);
+        if (!project) {
+          return c.json({ error: "Program not found" }, 404);
+        }
+        const branding = await brandingService.upsert(project.id, {});
+        brandingResult = { branding, projectName: project.name };
+      }
+
+      const branding = brandingResult.branding;
+
+      // If already a partner: send OTP and tell client to show OTP step → then verify-otp → dashboard
+      const partnerService = new PartnerService(db);
+      const emailLower = parsed.data.email.trim().toLowerCase();
+      const existing = await partnerService.getPartnerByEmail(
+        branding.projectId,
+        emailLower,
+      );
+      if (existing) {
+        try {
+          const otp = generateOtp();
+          const otpHash = await hashOtp(otp);
+          const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+          await db.delete(partnerOtps).where(eq(partnerOtps.email, emailLower));
+          await db.insert(partnerOtps).values({
+            email: emailLower,
+            otpHash,
+            expiresAt,
+          });
+          const apiKey = c.env.RESEND_API_KEY;
+          if (apiKey) {
+            const emailService = new EmailService(apiKey);
+            await emailService.sendPartnerOtp({ partnerEmail: emailLower, otp });
+          }
+          return c.json({ alreadyApplied: true });
+        } catch (otpErr) {
+          console.error("Join OTP send failed (run db:migrate:dev if partner_otps is missing):", otpErr);
+          return c.json(
+            { error: "You've already applied to this program." },
+            409,
+          );
+        }
+      }
+
+      // Hash IP for fraud detection
+      const joinHashedIp = await hashIP(ip);
+
+      const status = branding.autoApprove ? "active" : "pending";
+      const partner = await partnerService.createPartner({
+        projectId: branding.projectId,
+        name: parsed.data.name.trim(),
+        email: parsed.data.email.trim().toLowerCase(),
+        commissionRate: branding.defaultCommissionRate,
+        status,
+        registrationIp: joinHashedIp,
+      });
+
+      const webhookServiceJoin = new WebhookService(db);
+      await webhookServiceJoin.fireEvent(branding.projectId, "partner.created", {
+        partnerId: partner.id,
+        name: partner.name,
+        email: partner.email,
+        status: partner.status,
+        referralCode: partner.referralCode ?? null,
+      });
+
+      // Fraud checks: owner-as-partner + multi-account
+      const joinFraudService = new FraudService(db);
+      const joinOwnerCheck = await joinFraudService.checkOwnerAsPartner(
+        parsed.data.email.trim().toLowerCase(),
+        branding.projectId,
+      );
+      if (joinOwnerCheck) {
+        await joinFraudService.createFlag({
+          projectId: branding.projectId,
+          partnerId: partner.id,
+          type: joinOwnerCheck.type,
+          severity: joinOwnerCheck.severity,
+          details: joinOwnerCheck.details,
+        });
+      }
+
+      const multiAccountCheck = await joinFraudService.checkMultiAccount(
+        joinHashedIp,
+        branding.projectId,
+        partner.id,
+      );
+      if (multiAccountCheck) {
+        await joinFraudService.createFlag({
+          projectId: branding.projectId,
+          partnerId: partner.id,
+          type: multiAccountCheck.type,
+          severity: multiAccountCheck.severity,
+          details: multiAccountCheck.details,
+        });
+      }
+
+      // Send appropriate email (only if Resend is configured)
+      const resendKey = c.env.RESEND_API_KEY;
+      if (resendKey) {
+        const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
+        const emailService = new EmailService(resendKey);
+        if (branding.autoApprove) {
+          emailService
+            .sendPartnerWelcome({
+              partnerName: partner.name,
+              partnerEmail: partner.email,
+              projectName: brandingResult.projectName,
+              referralCode: partner.referralCode,
+              baseUrl,
+            })
+            .catch((err) => console.error("Failed to send partner welcome:", err));
+        } else {
+          emailService
+            .sendPartnerApplicationReceived({
+              partnerName: partner.name,
+              partnerEmail: partner.email,
+              projectName: brandingResult.projectName,
+            })
+            .catch((err) =>
+              console.error("Failed to send application received:", err),
+            );
+        }
+      }
+
       return c.json(
-        { error: "Too many requests. Please try again later." },
-        429,
+        {
+          status,
+          message: branding.autoApprove
+            ? "Welcome! Check your email for your referral link."
+            : "Application submitted! We'll review it and get back to you.",
+        },
+        201,
+      );
+    } catch (err) {
+      console.error("POST /api/join/:slug error:", err);
+      const isLocal =
+        /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(
+          new URL(c.req.url).host,
+        );
+      return c.json(
+        isLocal
+          ? {
+              error: "Something went wrong. Please try again.",
+              detail: err instanceof Error ? err.message : String(err),
+            }
+          : { error: "Something went wrong. Please try again." },
+        500,
       );
     }
-
-    const slug = c.req.param("slug");
-    const body = await c.req.json();
-    const parsed = validate(joinPartnerSchema, body);
-    if (!parsed.success) return c.json({ error: parsed.error }, 400);
-
-    const db = drizzle(c.env.DB);
-    const brandingService = new BrandingService(db);
-
-    const brandingResult = await brandingService.getBySlug(slug);
-    if (!brandingResult) {
-      return c.json({ error: "Program not found" }, 404);
-    }
-
-    const branding = brandingResult.branding;
-
-    // Check for duplicate partner
-    const partnerService = new PartnerService(db);
-    const existing = await partnerService.getPartnerByEmail(
-      branding.projectId,
-      parsed.data.email.trim().toLowerCase(),
-    );
-    if (existing) {
-      return c.json({ error: "You've already applied to this program." }, 409);
-    }
-
-    // Hash IP for fraud detection
-    const joinHashedIp = await hashIP(ip);
-
-    const status = branding.autoApprove ? "active" : "pending";
-    const partner = await partnerService.createPartner({
-      projectId: branding.projectId,
-      name: parsed.data.name.trim(),
-      email: parsed.data.email.trim().toLowerCase(),
-      commissionRate: branding.defaultCommissionRate,
-      status,
-      registrationIp: joinHashedIp,
-    });
-
-    const webhookServiceJoin = new WebhookService(db);
-    await webhookServiceJoin.fireEvent(branding.projectId, "partner.created", {
-      partnerId: partner.id,
-      name: partner.name,
-      email: partner.email,
-      status: partner.status,
-      referralCode: partner.referralCode ?? null,
-    });
-
-    // Fraud checks: owner-as-partner + multi-account
-    const joinFraudService = new FraudService(db);
-    const joinOwnerCheck = await joinFraudService.checkOwnerAsPartner(
-      parsed.data.email.trim().toLowerCase(),
-      branding.projectId,
-    );
-    if (joinOwnerCheck) {
-      await joinFraudService.createFlag({
-        projectId: branding.projectId,
-        partnerId: partner.id,
-        type: joinOwnerCheck.type,
-        severity: joinOwnerCheck.severity,
-        details: joinOwnerCheck.details,
-      });
-    }
-
-    const multiAccountCheck = await joinFraudService.checkMultiAccount(
-      joinHashedIp,
-      branding.projectId,
-      partner.id,
-    );
-    if (multiAccountCheck) {
-      await joinFraudService.createFlag({
-        projectId: branding.projectId,
-        partnerId: partner.id,
-        type: multiAccountCheck.type,
-        severity: multiAccountCheck.severity,
-        details: multiAccountCheck.details,
-      });
-    }
-
-    // Send appropriate email
-    const emailService = new EmailService(c.env.RESEND_API_KEY);
-    const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
-
-    if (branding.autoApprove) {
-      emailService
-        .sendPartnerWelcome({
-          partnerName: partner.name,
-          partnerEmail: partner.email,
-          projectName: brandingResult.projectName,
-          referralCode: partner.referralCode,
-          baseUrl,
-        })
-        .catch((err) => console.error("Failed to send partner welcome:", err));
-    } else {
-      emailService
-        .sendPartnerApplicationReceived({
-          partnerName: partner.name,
-          partnerEmail: partner.email,
-          projectName: brandingResult.projectName,
-        })
-        .catch((err) =>
-          console.error("Failed to send application received:", err),
-        );
-    }
-
-    return c.json(
-      {
-        status,
-        message: branding.autoApprove
-          ? "Welcome! Check your email for your referral link."
-          : "Application submitted! We'll review it and get back to you.",
-      },
-      201,
-    );
   })
   // ─── Auth middleware ────────────────────────────────────────────────────────
   .use("/api/*", async (c, next) => {
@@ -533,6 +596,7 @@ const app = new Hono<HonoAppContext>()
       headers: c.req.raw.headers,
     });
     c.set("db", drizzle(c.env.DB));
+    c.set("partnerSession", null);
     if (!session) {
       c.set("user", null);
       c.set("session", null);
@@ -540,6 +604,26 @@ const app = new Hono<HonoAppContext>()
     }
     c.set("user", session.user);
     c.set("session", session.session);
+    return next();
+  })
+  .use("/api/*", async (c, next) => {
+    const path = new URL(c.req.url).pathname;
+    if (
+      path.startsWith("/api/partner/") &&
+      path !== "/api/partner/send-otp" &&
+      path !== "/api/partner/verify-otp" &&
+      !c.get("user")
+    ) {
+      const cookieHeader = c.req.header("Cookie");
+      const match = cookieHeader?.match(/partner_session=([^;]+)/);
+      if (match) {
+        const payload = await verifyPartnerSession(
+          decodeURIComponent(match[1].trim()),
+          c.env.BETTER_AUTH_SECRET,
+        );
+        if (payload) c.set("partnerSession", payload);
+      }
+    }
     return next();
   })
   // ─── Dashboard ──────────────────────────────────────────────────────────────
@@ -1903,18 +1987,145 @@ const app = new Hono<HonoAppContext>()
     );
     return c.json({ payout });
   })
-  // ─── Partner Portal API (partner-facing, auth via session) ──────────────────
+  // ─── Partner OTP Login (public) ─────────────────────────────────────────────
+  .post("/api/partner/send-otp", async (c) => {
+    const ip =
+      c.req.header("cf-connecting-ip") ??
+      c.req.header("x-forwarded-for") ??
+      "unknown";
+    if (!checkRateLimit(`partner-otp:${ip}`, 10, 60_000)) {
+      return c.json(
+        { error: "Too many attempts. Please try again in a minute." },
+        429,
+      );
+    }
+    const body = await c.req.json();
+    const parsed = validate(partnerSendOtpSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const email = parsed.data.email.trim().toLowerCase();
+    const db = drizzle(c.env.DB);
+    const partnerService = new PartnerService(db);
+    const existingPartners = await partnerService.getPartnersByEmail(email);
+    // Don't leak whether email is registered; always return success
+    if (existingPartners.length === 0) {
+      return c.json({ ok: true });
+    }
+
+    const otp = generateOtp();
+    const otpHash = await hashOtp(otp);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min
+    await db.delete(partnerOtps).where(eq(partnerOtps.email, email));
+    await db.insert(partnerOtps).values({
+      email,
+      otpHash,
+      expiresAt,
+    });
+    const emailService = new EmailService(c.env.RESEND_API_KEY);
+    await emailService.sendPartnerOtp({ partnerEmail: email, otp });
+    return c.json({ ok: true });
+  })
+  .post("/api/partner/logout", async (c) => {
+    const cookie =
+      "partner_session=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly";
+    c.header("Set-Cookie", cookie);
+    return c.json({ ok: true }, 200);
+  })
+  .post("/api/partner/verify-otp", async (c) => {
+    const body = await c.req.json();
+    const parsed = validate(partnerVerifyOtpSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+    const email = parsed.data.email.trim().toLowerCase();
+    const db = drizzle(c.env.DB);
+    const rows = await db
+      .select()
+      .from(partnerOtps)
+      .where(eq(partnerOtps.email, email))
+      .limit(1);
+    const row = rows[0];
+    if (!row || new Date() > row.expiresAt) {
+      return c.json(
+        { error: "Invalid or expired code. Request a new one." },
+        400,
+      );
+    }
+    const valid = await verifyOtp(parsed.data.otp, row.otpHash);
+    if (!valid) {
+      return c.json({ error: "Invalid code. Please try again." }, 400);
+    }
+    await db.delete(partnerOtps).where(eq(partnerOtps.email, email));
+    const partnerService = new PartnerService(db);
+    const partnerRecords = await partnerService.getPartnersByEmail(email);
+    const partnerIds = partnerRecords.map((p) => p.id);
+    const secret = c.env.BETTER_AUTH_SECRET;
+    const token = await signPartnerSession(
+      { email, partnerIds, exp: getPartnerSessionExpiry() },
+      secret,
+    );
+    const isProd = c.req.url.startsWith("https://");
+    const maxAge = 7 * 24 * 60 * 60; // 7 days
+    const cookie = `partner_session=${token}; Path=/; Max-Age=${maxAge}; SameSite=Lax${isProd ? "; Secure" : ""}; HttpOnly`;
+    c.header("Set-Cookie", cookie);
+    return c.json({ ok: true }, 200);
+  })
+  // ─── Partner Portal API (partner-facing, auth via session or OTP cookie) ─────
+  .get("/api/partner/me", async (c) => {
+    const user = c.get("user");
+    const partnerSession = c.get("partnerSession");
+    const db = c.get("db");
+    const dashboardService = new PartnerDashboardService(db);
+    const partnerService = new PartnerService(db);
+    let partnerRecords: Awaited<ReturnType<PartnerDashboardService["getPartnersByUserId"]>>;
+    if (user) {
+      await dashboardService.linkUserToPartners(user.id, user.email);
+      partnerRecords = await dashboardService.getPartnersByUserId(user.id);
+    } else if (partnerSession) {
+      partnerRecords = await partnerService.getPartnersByIds(partnerSession.partnerIds);
+    } else {
+      partnerRecords = [];
+    }
+    if (partnerRecords.length === 0) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    // const partnerIds = partnerRecords.map((p) => p.id);
+    const primary = partnerRecords[0]!;
+    return c.json({
+      partner: {
+        name: primary.name,
+        email: primary.email,
+        referralCode: primary.referralCode,
+        commissionRate: primary.commissionRate,
+        status: primary.status,
+        payoutLink: primary.payoutLink,
+      },
+      programs: partnerRecords.map((p) => ({
+        id: p.id,
+        projectId: p.projectId,
+        referralCode: p.referralCode,
+        commissionRate: p.commissionRate,
+        status: p.status,
+      })),
+    });
+  })
   .get("/api/partner/dashboard", async (c) => {
     const user = c.get("user");
-    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const partnerSession = c.get("partnerSession");
 
     const db = c.get("db");
     const dashboardService = new PartnerDashboardService(db);
+    let partnerRecords: Awaited<ReturnType<PartnerDashboardService["getPartnersByUserId"]>>;
 
-    // Link user to partner records if not already linked
-    await dashboardService.linkUserToPartners(user.id, user.email);
+    if (user) {
+      await dashboardService.linkUserToPartners(user.id, user.email);
+      partnerRecords = await dashboardService.getPartnersByUserId(user.id);
+    } else if (partnerSession) {
+      const partnerService = new PartnerService(db);
+      partnerRecords = await partnerService.getPartnersByIds(partnerSession.partnerIds);
+    } else {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
 
-    const partnerRecords = await dashboardService.getPartnersByUserId(user.id);
     if (partnerRecords.length === 0) {
       return c.json({ error: "No partner account found for this email" }, 404);
     }
@@ -1945,14 +2156,22 @@ const app = new Hono<HonoAppContext>()
   })
   .get("/api/partner/referrals", async (c) => {
     const user = c.get("user");
-    if (!user) return c.json({ error: "Unauthorized" }, 401);
-
+    const partnerSession = c.get("partnerSession") as
+      | { email: string; partnerIds: string[] }
+      | undefined;
     const db = c.get("db");
     const dashboardService = new PartnerDashboardService(db);
-    const partnerRecords = await dashboardService.getPartnersByUserId(user.id);
+    const partnerService = new PartnerService(db);
+    const partnerRecords = user
+      ? await dashboardService.getPartnersByUserId(user.id)
+      : partnerSession
+        ? await partnerService.getPartnersByIds(partnerSession.partnerIds)
+        : [];
+    if (!user && !partnerSession) return c.json({ error: "Unauthorized" }, 401);
     if (partnerRecords.length === 0) {
       return c.json({ error: "No partner account found" }, 404);
     }
+    if (user) await dashboardService.linkUserToPartners(user.id, user.email);
 
     const partnerIds = partnerRecords.map((p) => p.id);
     let referrals = await dashboardService.getReferredCustomers(partnerIds);
@@ -1972,14 +2191,22 @@ const app = new Hono<HonoAppContext>()
   })
   .get("/api/partner/commissions", async (c) => {
     const user = c.get("user");
-    if (!user) return c.json({ error: "Unauthorized" }, 401);
-
+    const partnerSession = c.get("partnerSession") as
+      | { email: string; partnerIds: string[] }
+      | undefined;
     const db = c.get("db");
     const dashboardService = new PartnerDashboardService(db);
-    const partnerRecords = await dashboardService.getPartnersByUserId(user.id);
+    const partnerService = new PartnerService(db);
+    const partnerRecords = user
+      ? await dashboardService.getPartnersByUserId(user.id)
+      : partnerSession
+        ? await partnerService.getPartnersByIds(partnerSession.partnerIds)
+        : [];
+    if (!user && !partnerSession) return c.json({ error: "Unauthorized" }, 401);
     if (partnerRecords.length === 0) {
       return c.json({ error: "No partner account found" }, 404);
     }
+    if (user) await dashboardService.linkUserToPartners(user.id, user.email);
 
     const partnerIds = partnerRecords.map((p) => p.id);
     const commissionsList = await dashboardService.getCommissions(partnerIds);
@@ -1988,14 +2215,22 @@ const app = new Hono<HonoAppContext>()
   })
   .get("/api/partner/payouts", async (c) => {
     const user = c.get("user");
-    if (!user) return c.json({ error: "Unauthorized" }, 401);
-
+    const partnerSession = c.get("partnerSession") as
+      | { email: string; partnerIds: string[] }
+      | undefined;
     const db = c.get("db");
     const dashboardService = new PartnerDashboardService(db);
-    const partnerRecords = await dashboardService.getPartnersByUserId(user.id);
+    const partnerService = new PartnerService(db);
+    const partnerRecords = user
+      ? await dashboardService.getPartnersByUserId(user.id)
+      : partnerSession
+        ? await partnerService.getPartnersByIds(partnerSession.partnerIds)
+        : [];
+    if (!user && !partnerSession) return c.json({ error: "Unauthorized" }, 401);
     if (partnerRecords.length === 0) {
       return c.json({ error: "No partner account found" }, 404);
     }
+    if (user) await dashboardService.linkUserToPartners(user.id, user.email);
 
     const partnerIds = partnerRecords.map((p) => p.id);
     const payoutsList = await dashboardService.getPayouts(partnerIds);
@@ -2004,21 +2239,28 @@ const app = new Hono<HonoAppContext>()
   })
   .patch("/api/partner/payout-link", async (c) => {
     const user = c.get("user");
-    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const partnerSession = c.get("partnerSession") as
+      | { email: string; partnerIds: string[] }
+      | undefined;
+    const db = c.get("db");
+    const dashboardService = new PartnerDashboardService(db);
+    const partnerService = new PartnerService(db);
+    const partnerRecords = user
+      ? await dashboardService.getPartnersByUserId(user.id)
+      : partnerSession
+        ? await partnerService.getPartnersByIds(partnerSession.partnerIds)
+        : [];
+    if (!user && !partnerSession) return c.json({ error: "Unauthorized" }, 401);
+    if (partnerRecords.length === 0) {
+      return c.json({ error: "No partner account found" }, 404);
+    }
+    if (user) await dashboardService.linkUserToPartners(user.id, user.email);
 
     const body = await c.req.json();
     const parsed = validate(updatePartnerPayoutLinkSchema, body);
     if (!parsed.success) return c.json({ error: parsed.error }, 400);
 
-    const db = c.get("db");
-    const dashboardService = new PartnerDashboardService(db);
-    const partnerRecords = await dashboardService.getPartnersByUserId(user.id);
-    if (partnerRecords.length === 0) {
-      return c.json({ error: "No partner account found" }, 404);
-    }
-
-    // Update payout link on all partner records for this user
-    const partnerService = new PartnerService(db);
+    // Update payout link on all partner records
     for (const record of partnerRecords) {
       await partnerService.updatePartner(record.id, {
         payoutLink: parsed.data.payoutLink,

@@ -1,5 +1,5 @@
 import { type DrizzleD1Database } from "drizzle-orm/d1";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   projects,
   type ProjectRow,
@@ -21,6 +21,16 @@ export class ProjectService {
       .select()
       .from(projects)
       .where(eq(projects.id, id))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** Find a project by slug (case-insensitive). For public join page. */
+  async getProjectBySlug(slug: string): Promise<ProjectRow | null> {
+    const rows = await this.db
+      .select()
+      .from(projects)
+      .where(sql`lower(${projects.slug}) = lower(${slug})`)
       .limit(1);
     return rows[0] ?? null;
   }

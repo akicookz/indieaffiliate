@@ -24,11 +24,17 @@ export interface AppEnv extends Omit<Env, "BETTER_AUTH_URL"> {
   STRIPE_WEBHOOK_SECRET?: string;
 }
 
+export interface PartnerSessionVariable {
+  email: string;
+  partnerIds: string[];
+}
+
 export interface HonoAppContext {
   Bindings: AppEnv;
   Variables: {
     user: User | null;
     session: Session | null;
     db: DrizzleD1Database<Record<string, unknown>>;
+    partnerSession: PartnerSessionVariable | null;
   };
 }

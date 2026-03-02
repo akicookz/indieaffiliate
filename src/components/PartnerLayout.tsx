@@ -23,6 +23,10 @@ function PartnerLayout() {
 
   async function handleSignOut() {
     await signOut();
+    await fetch("/api/partner/logout", {
+      method: "POST",
+      credentials: "include",
+    });
     navigate("/partner-login");
   }
 

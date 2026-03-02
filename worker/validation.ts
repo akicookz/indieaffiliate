@@ -134,6 +134,16 @@ export const partnerMagicLinkSchema = z.object({
   email: z.string().email("Invalid email address"),
 });
 
+// ─── Partner OTP Login ────────────────────────────────────────────────────────
+export const partnerSendOtpSchema = z.object({
+  email: z.string().email("Invalid email address"),
+});
+
+export const partnerVerifyOtpSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  otp: z.string().min(6, "Code must be 6 characters").max(8).regex(/^[A-Za-z0-9]+$/, "Code must be letters and numbers only"),
+});
+
 // ─── Stripe ───────────────────────────────────────────────────────────────────
 export const connectStripeSchema = z.object({
   apiKey: z.string().min(1, "Stripe API key is required").startsWith("rk_", "Use a Stripe restricted API key (starts with rk_)"),

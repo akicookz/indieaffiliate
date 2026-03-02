@@ -110,6 +110,23 @@ export class PartnerService {
     return rows[0] ?? null;
   }
 
+  /** All partner records for an email (any project). Used for OTP login. */
+  async getPartnersByEmail(email: string): Promise<PartnerRow[]> {
+    return this.db
+      .select()
+      .from(partners)
+      .where(eq(partners.email, email.toLowerCase()));
+  }
+
+  /** Get partner rows by ids (for partner_session cookie). */
+  async getPartnersByIds(ids: string[]): Promise<PartnerRow[]> {
+    if (ids.length === 0) return [];
+    return this.db
+      .select()
+      .from(partners)
+      .where(inArray(partners.id, ids));
+  }
+
   async getPartnerStats(userId: string, projectId?: string) {
     const userProjects = await this.db
       .select({ id: projects.id })

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { CheckCircle2, Loader2 } from "lucide-react";
+import { CheckCircle2, KeyRound, Loader2 } from "lucide-react";
 
 interface JoinPageData {
   projectName: string;
@@ -30,10 +30,17 @@ function getGoogleFontUrl(font: string): string {
   return `https://fonts.googleapis.com/css2?family=${family}:wght@400;500;600;700&display=swap`;
 }
 
+const OTP_LENGTH = 6;
+
 function JoinPartnerProgram() {
   const { slug } = useParams<{ slug: string }>();
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [step, setStep] = useState<"form" | "otp" | "success">("form");
+  const [otp, setOtp] = useState("");
+  const [otpError, setOtpError] = useState("");
+  const [verifyLoading, setVerifyLoading] = useState(false);
 
   const {
     data: pageData,
@@ -53,19 +60,29 @@ function JoinPartnerProgram() {
   });
 
   const joinMutation = useMutation({
-    mutationFn: async (): Promise<{ status: string; message: string }> => {
+    mutationFn: async (): Promise<{
+      status?: string;
+      message?: string;
+      alreadyApplied?: boolean;
+    }> => {
       const response = await fetch(`/api/join/${slug}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name.trim(), email: email.trim() }),
       });
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(
-          (err as { error: string }).error ?? "Something went wrong",
-        );
+        const err = (await response.json()) as {
+          error?: string;
+          detail?: string;
+        };
+        const message =
+          err.detail ?? err.error ?? "Something went wrong";
+        throw new Error(message);
       }
       return response.json();
+    },
+    onSuccess(data) {
+      if (data?.alreadyApplied) setStep("otp");
     },
   });
 
@@ -89,7 +106,36 @@ function JoinPartnerProgram() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !email.trim()) return;
+    setOtpError("");
     joinMutation.mutate();
+  }
+
+  async function handleVerifyOtp(e: React.FormEvent) {
+    e.preventDefault();
+    setOtpError("");
+    setVerifyLoading(true);
+    try {
+      const res = await fetch("/api/partner/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          otp: otp.trim().toUpperCase(),
+        }),
+        credentials: "include",
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok) {
+        setOtpError(data.error ?? "Invalid code");
+        setVerifyLoading(false);
+        return;
+      }
+      navigate("/portal", { replace: true });
+    } catch {
+      setOtpError("Something went wrong. Please try again.");
+    } finally {
+      setVerifyLoading(false);
+    }
   }
 
   // ─── Loading state ────────────────────────────────────────────────────────
@@ -104,8 +150,8 @@ function JoinPartnerProgram() {
   // ─── 404 state ────────────────────────────────────────────────────────────
   if (error || !pageData) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center space-y-3">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+        <div className="text-center space-y-5 max-w-sm">
           <h1 className="text-2xl font-semibold text-gray-900">
             Program not found
           </h1>
@@ -113,13 +159,152 @@ function JoinPartnerProgram() {
             This affiliate program doesn't exist or is no longer accepting
             applications.
           </p>
+          <Link
+            to="/"
+            className="inline-block text-sm font-medium text-primary hover:underline"
+          >
+            ← Back to UnlockAffiliate
+          </Link>
         </div>
       </div>
     );
   }
 
-  // ─── Success state ────────────────────────────────────────────────────────
-  if (joinMutation.isSuccess) {
+  // ─── OTP step (already applied: sent OTP, waiting for verification) ───────
+  if (step === "otp") {
+    return (
+      <div
+        className="min-h-screen grid grid-cols-1 lg:grid-cols-2"
+        style={{ fontFamily: `"${fontFamily}", sans-serif` }}
+      >
+        <div
+          className="relative hidden lg:flex flex-col justify-end p-12"
+          style={{ backgroundColor: brandColor }}
+        >
+          {pageData.backgroundImage && (
+            <img
+              src={pageData.backgroundImage}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          )}
+          <div
+            className="absolute inset-0"
+            style={{
+              background: `linear-gradient(to top, ${brandColor}ee, ${brandColor}44)`,
+            }}
+          />
+          <div className="relative z-10 space-y-4">
+            {pageData.logo && (
+              <img src={pageData.logo} alt="" className="h-10 object-contain" />
+            )}
+            <h1 className="text-3xl font-bold text-white leading-tight">
+              {pageData.headline}
+            </h1>
+            {pageData.description && (
+              <p className="text-base text-white/80 leading-relaxed max-w-md">
+                {pageData.description}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-center p-8 lg:p-16 bg-gray-50">
+          <div className="w-full max-w-md space-y-6">
+            <div className="lg:hidden space-y-3">
+              {pageData.logo && (
+                <img
+                  src={pageData.logo}
+                  alt=""
+                  className="h-10 object-contain"
+                />
+              )}
+              <h1
+                className="text-2xl font-bold leading-tight"
+                style={{ color: brandColor }}
+              >
+                {pageData.headline}
+              </h1>
+            </div>
+            <div className="flex justify-center">
+              <div
+                className="w-14 h-14 rounded-2xl flex items-center justify-center"
+                style={{ backgroundColor: `${brandColor}18` }}
+              >
+                <KeyRound className="w-7 h-7" style={{ color: brandColor }} />
+              </div>
+            </div>
+            <div className="text-center space-y-1">
+              <h2 className="text-xl font-semibold text-gray-900">
+                You're already a partner
+              </h2>
+              <p className="text-sm text-gray-500">
+                We sent a login code to <strong className="text-gray-700">{email}</strong>. Enter it below to go to your dashboard.
+              </p>
+            </div>
+            <form onSubmit={handleVerifyOtp} className="space-y-4">
+              {otpError && (
+                <p className="text-sm text-red-600">{otpError}</p>
+              )}
+              <div>
+                <label
+                  htmlFor="join-otp"
+                  className="block text-sm font-medium text-gray-700 mb-1.5"
+                >
+                  Verification code
+                </label>
+                <input
+                  id="join-otp"
+                  type="text"
+                  inputMode="text"
+                  autoComplete="one-time-code"
+                  maxLength={8}
+                  placeholder="e.g. AB3X9K"
+                  value={otp}
+                  onChange={(e) => {
+                    const v = e.target.value
+                      .replace(/[^A-Za-z0-9]/g, "")
+                      .toUpperCase();
+                    setOtp(v.slice(0, OTP_LENGTH));
+                  }}
+                  className="w-full h-11 text-center text-lg tracking-[0.35em] font-mono uppercase border border-gray-200 rounded-lg px-4 focus:outline-none focus:ring-2 focus:ring-offset-0"
+                  style={{
+                    borderRadius: radiusPx,
+                    ["--tw-ring-color" as string]: brandColor,
+                  }}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={verifyLoading || otp.length < OTP_LENGTH}
+                className="w-full h-11 text-white text-sm font-medium rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
+                style={{ backgroundColor: brandColor, borderRadius: radiusPx }}
+              >
+                {verifyLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  "Go to dashboard"
+                )}
+              </button>
+            </form>
+            <p className="text-center">
+              <button
+                type="button"
+                onClick={() => setStep("form")}
+                className="text-sm font-medium hover:underline"
+                style={{ color: brandColor }}
+              >
+                Use a different email
+              </button>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Success state (new application submitted) ─────────────────────────────
+  if (joinMutation.isSuccess && !joinMutation.data?.alreadyApplied) {
     return (
       <div
         className="min-h-screen grid grid-cols-1 lg:grid-cols-2"
@@ -147,7 +332,7 @@ function JoinPartnerProgram() {
             {pageData.logo && (
               <img src={pageData.logo} alt="" className="h-10 object-contain" />
             )}
-            <h1 className="text-3xl font-bold text-white leading-tight font-heading">
+            <h1 className="text-3xl font-bold text-white leading-tight">
               {pageData.headline}
             </h1>
             {pageData.description && (
@@ -210,7 +395,7 @@ function JoinPartnerProgram() {
           {pageData.logo && (
             <img src={pageData.logo} alt="" className="h-10 object-contain" />
           )}
-          <h1 className="text-3xl font-bold text-white leading-tight font-heading">
+          <h1 className="text-3xl font-bold text-white leading-tight">
             {pageData.headline}
           </h1>
           {pageData.description && (
@@ -234,7 +419,7 @@ function JoinPartnerProgram() {
               />
             )}
             <h1
-              className="text-2xl font-bold leading-tight font-heading"
+              className="text-2xl font-bold leading-tight"
               style={{ color: brandColor }}
             >
               {pageData.headline}

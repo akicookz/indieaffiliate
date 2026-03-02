@@ -1,8 +1,17 @@
 import { Navigate } from "react-router-dom";
-import { useSession } from "@/lib/auth-client";
+import { useQuery } from "@tanstack/react-query";
 
 function PartnerAuthGuard({ children }: { children: React.ReactNode }) {
-  const { data: session, isPending } = useSession();
+  const { data, isPending, isError } = useQuery({
+    queryKey: ["partner-me"],
+    queryFn: async () => {
+      const res = await fetch("/api/partner/me", { credentials: "include" });
+      if (!res.ok) throw new Error("Unauthorized");
+      return res.json() as Promise<{ partner: unknown; programs: unknown[] }>;
+    },
+    retry: false,
+    staleTime: 60_000,
+  });
 
   if (isPending) {
     return (
@@ -12,7 +21,7 @@ function PartnerAuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!session) {
+  if (isError || !data) {
     return <Navigate to="/partner-login" replace />;
   }
 

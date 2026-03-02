@@ -127,6 +127,39 @@ export class EmailService {
   }
 
   /**
+   * Send OTP email for partner dashboard login.
+   */
+  async sendPartnerOtp(params: {
+    partnerEmail: string;
+    otp: string;
+  }): Promise<boolean> {
+    const result = await this.sendEmail({
+      to: params.partnerEmail,
+      subject: "Your partner login code — UnlockAffiliate",
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto;">
+          <h2 style="color: #1a1a1a;">Your login code</h2>
+          <p style="color: #555; line-height: 1.6;">
+            Use this code to sign in to your partner dashboard. It expires in 10 minutes.
+          </p>
+          <div style="background: #f5f5f5; border-radius: 8px; padding: 20px; margin: 24px 0; text-align: center;">
+            <p style="margin: 0; font-size: 28px; font-weight: 700; letter-spacing: 0.2em; color: #1a1a1a; font-family: monospace;">
+              ${params.otp}
+            </p>
+          </div>
+          <p style="color: #888; font-size: 13px;">
+            If you didn't request this code, you can safely ignore this email.
+          </p>
+          <p style="color: #888; font-size: 13px; margin-top: 32px;">
+            — UnlockAffiliate
+          </p>
+        </div>
+      `,
+    });
+    return result !== null;
+  }
+
+  /**
    * Send a notification when a partner applies and needs approval.
    */
   async sendPartnerApplicationReceived(params: {

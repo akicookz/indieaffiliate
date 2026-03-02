@@ -80,6 +80,23 @@ export const partners = sqliteTable(
 export type PartnerRow = typeof partners.$inferSelect;
 export type NewPartnerRow = typeof partners.$inferInsert;
 
+// Partner OTPs - one-time codes for partner dashboard login (no Better Auth)
+export const partnerOtps = sqliteTable(
+  "partner_otps",
+  {
+    email: text("email").notNull(),
+    otpHash: text("otp_hash").notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+  },
+  (table) => [index("idx_partner_otps_email").on(table.email)],
+);
+
+export type PartnerOtpRow = typeof partnerOtps.$inferSelect;
+export type NewPartnerOtpRow = typeof partnerOtps.$inferInsert;
+
 // Customers - people referred by partners
 export const customers = sqliteTable(
   "customers",

@@ -1,5 +1,5 @@
 import { type DrizzleD1Database } from "drizzle-orm/d1";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   projectBranding,
   projects,
@@ -29,7 +29,7 @@ export class BrandingService {
       })
       .from(projects)
       .innerJoin(projectBranding, eq(projects.id, projectBranding.projectId))
-      .where(eq(projects.slug, slug))
+      .where(sql`lower(${projects.slug}) = lower(${slug})`)
       .limit(1);
 
     if (rows.length === 0) return null;

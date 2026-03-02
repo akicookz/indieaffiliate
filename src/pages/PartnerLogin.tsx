@@ -1,69 +1,182 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { BarChart3, Mail, ArrowLeft } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { BarChart3, Mail, ArrowLeft, KeyRound, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { authClient } from "@/lib/auth-client";
+import { Input } from "@/components/ui/input";
+
+const OTP_LENGTH = 6;
 
 function PartnerLogin() {
+  const navigate = useNavigate();
+  const [step, setStep] = useState<"email" | "otp">("email");
   const [email, setEmail] = useState("");
+  const [otp, setOtp] = useState("");
   const [error, setError] = useState("");
-  const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function sendOtp() {
     setError("");
     setLoading(true);
-
     try {
-      const { error: authError } = await authClient.signIn.magicLink({
-        email: email.trim().toLowerCase(),
-        callbackURL: "/portal",
+      const res = await fetch("/api/partner/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim().toLowerCase() }),
       });
-
-      if (authError) {
-        setError(authError.message ?? "Failed to send login link");
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "Something went wrong");
         setLoading(false);
         return;
       }
-
-      setSent(true);
+      setStep("otp");
+      setOtp("");
+      setResendCooldown(60);
+      const interval = setInterval(() => {
+        setResendCooldown((prev) => {
+          if (prev <= 1) clearInterval(interval);
+          return Math.max(0, prev - 1);
+        });
+      }, 1000);
     } catch {
-      setError("An unexpected error occurred");
+      setError("Could not send code. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
   }
 
-  if (sent) {
+  function handleSendOtp(e: React.FormEvent) {
+    e.preventDefault();
+    sendOtp();
+  }
+
+  async function handleVerifyOtp(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/partner/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          otp: otp.trim().toUpperCase(),
+        }),
+        credentials: "include",
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "Invalid code");
+        setLoading(false);
+        return;
+      }
+      navigate("/portal", { replace: true });
+      return;
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleBackToEmail() {
+    setStep("email");
+    setOtp("");
+    setError("");
+  }
+
+  if (step === "otp") {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center px-4">
-        <div className="w-full max-w-sm space-y-8 text-center">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-primary/10 rounded-2xl mx-auto">
-            <Mail className="w-8 h-8 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-semibold">Check your email</h1>
-            <p className="text-muted-foreground mt-2">
-              We sent a sign-in link to{" "}
+        <div className="w-full max-w-sm space-y-8">
+          <div className="text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-primary/10 rounded-2xl mx-auto mb-6">
+              <KeyRound className="w-8 h-8 text-primary" />
+            </div>
+            <h1 className="text-2xl font-semibold">Enter your code</h1>
+            <p className="text-sm text-muted-foreground mt-2">
+              We sent a 6-character code to{" "}
               <strong className="text-foreground">{email}</strong>
             </p>
-            <p className="text-sm text-muted-foreground mt-4">
-              Click the link in the email to access your partner dashboard.
-              The link expires in 5 minutes.
+            <p className="text-xs text-muted-foreground mt-1">
+              Code expires in 10 minutes. Letters are uppercase.
             </p>
           </div>
-          <Button
-            variant="ghost"
-            className="text-muted-foreground"
-            onClick={() => {
-              setSent(false);
-              setEmail("");
-            }}
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Use a different email
-          </Button>
+
+          <form onSubmit={handleVerifyOtp} className="space-y-4">
+            {error && (
+              <div className="bg-destructive/10 text-destructive text-sm rounded-lg p-3">
+                {error}
+              </div>
+            )}
+
+            <div>
+              <label
+                htmlFor="otp"
+                className="block text-sm font-medium text-foreground mb-1.5"
+              >
+                Verification code
+              </label>
+              <Input
+                id="otp"
+                type="text"
+                inputMode="text"
+                autoComplete="one-time-code"
+                maxLength={8}
+                placeholder="e.g. AB3X9K"
+                value={otp}
+                onChange={(e) => {
+                  const v = e.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+                  setOtp(v.slice(0, OTP_LENGTH));
+                }}
+                className="w-full text-center text-lg tracking-[0.4em] font-mono uppercase"
+              />
+            </div>
+
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={loading || otp.length < OTP_LENGTH}
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Verifying…
+                </>
+              ) : (
+                "Sign in to dashboard"
+              )}
+            </Button>
+          </form>
+
+          <div className="flex flex-col items-center gap-2 text-sm">
+            {resendCooldown > 0 ? (
+              <span className="text-muted-foreground">
+                Resend code in {resendCooldown}s
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setResendCooldown(60);
+                  sendOtp();
+                }}
+                className="text-primary font-medium hover:underline"
+              >
+                Resend code
+              </button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={handleBackToEmail}
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Use a different email
+            </Button>
+          </div>
         </div>
       </div>
     );
@@ -83,11 +196,11 @@ function PartnerLogin() {
           </Link>
           <h1 className="text-2xl font-semibold">Partner Dashboard</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Enter your email to receive a sign-in link
+            Enter your email to receive a one-time login code
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSendOtp} className="space-y-4">
           {error && (
             <div className="bg-destructive/10 text-destructive text-sm rounded-lg p-3">
               {error}
@@ -114,7 +227,17 @@ function PartnerLogin() {
           </div>
 
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Sending..." : "Send sign-in link"}
+            {loading ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Sending code…
+              </>
+            ) : (
+              <>
+                <Mail className="w-4 h-4 mr-2" />
+                Send login code
+              </>
+            )}
           </Button>
         </form>
 
