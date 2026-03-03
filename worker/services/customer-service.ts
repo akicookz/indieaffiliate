@@ -12,7 +12,7 @@ export class CustomerService {
 
   async getCustomersByUser(
     userId: string,
-    filters?: { projectId?: string; status?: string },
+    filters?: { projectId?: string; status?: "all" | "trialing" | "paid" | "cancelled" | "past_due" | "refunded" | "cancels_on"; partnerId?: string },
   ): Promise<(CustomerRow & { projectName: string; partnerName: string })[]> {
     const userProjects = await this.db
       .select({ id: projects.id, name: projects.name })
@@ -30,9 +30,10 @@ export class CustomerService {
       conditions.push(eq(customers.projectId, filters.projectId));
     }
     if (filters?.status && filters.status !== "all") {
-      conditions.push(
-        eq(customers.status, filters.status as "trialing" | "paid" | "cancelled"),
-      );
+      conditions.push(eq(customers.status, filters.status));
+    }
+    if (filters?.partnerId && filters.partnerId !== "all") {
+      conditions.push(eq(customers.partnerId, filters.partnerId));
     }
 
     const rows = await this.db

@@ -44,6 +44,7 @@ interface BrandingData {
   borderRadius: string;
   autoApprove: boolean;
   defaultCommissionRate: number;
+  portalName: string | null;
 }
 
 const FONT_OPTIONS = [
@@ -108,6 +109,7 @@ function PartnerPageDesigner() {
   const [commissionRate, setCommissionRate] = useState(
     DEFAULTS.defaultCommissionRate * 100,
   );
+  const [portalName, setPortalName] = useState("");
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [logoKey, setLogoKey] = useState<string | null>(null);
   const [bgUrl, setBgUrl] = useState<string | null>(null);
@@ -164,6 +166,7 @@ function PartnerPageDesigner() {
     setBorderRadius(b.borderRadius ?? DEFAULTS.borderRadius);
     setAutoApprove(b.autoApprove);
     setCommissionRate(b.defaultCommissionRate * 100);
+    setPortalName(b.portalName ?? "");
     setLogoUrl(b.logo);
     setBgUrl(b.backgroundImage);
     // Extract keys from URLs if they exist
@@ -211,6 +214,7 @@ function PartnerPageDesigner() {
           defaultCommissionRate: commissionRate / 100,
           logo: logoKey,
           backgroundImage: bgKey,
+          portalName: portalName.trim() || null,
         }),
       });
       if (!response.ok) throw new Error("Failed to save branding");
@@ -529,6 +533,22 @@ function PartnerPageDesigner() {
               />
               <span className="text-sm text-muted-foreground">%</span>
             </div>
+          </div>
+
+          {/* Partner portal customization */}
+          <div className="space-y-2 rounded-xl bg-muted/30 border border-border px-4 py-3">
+            <Label htmlFor="portalName">Partner portal title</Label>
+            <p className="text-sm text-muted-foreground">
+              Custom name shown in the header when partners log in (e.g. &quot;Acme Partner Hub&quot;). Leave blank for &quot;Partner Portal&quot;.
+            </p>
+            <Input
+              id="portalName"
+              value={portalName}
+              onChange={(e) => setPortalName(e.target.value)}
+              placeholder="Partner Portal"
+              maxLength={80}
+              className="max-w-xs"
+            />
           </div>
 
           {/* Auto-approve */}
