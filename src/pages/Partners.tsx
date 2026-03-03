@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { HandHeart, Users, TrendingUp, UserPlus, Copy, Check, ExternalLink, Pencil, Upload, CheckCircle, XCircle } from "lucide-react";
+import { HandHeart, Users, TrendingUp, UserPlus, Copy, Check, ExternalLink, Pencil, Upload, CheckCircle, XCircle, Search } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -284,6 +284,7 @@ function Partners() {
   const queryClient = useQueryClient();
   const [selectedProject, setSelectedProject] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [editingPartner, setEditingPartner] = useState<Partner | null>(null);
 
   const statusMutation = useMutation({
@@ -315,11 +316,12 @@ function Partners() {
   });
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["partners", selectedProject, statusFilter],
+    queryKey: ["partners", selectedProject, statusFilter, searchQuery],
     queryFn: async (): Promise<PartnersResponse> => {
       const params = new URLSearchParams();
       if (selectedProject !== "all") params.set("project", selectedProject);
       if (statusFilter !== "all") params.set("status", statusFilter);
+      if (searchQuery.trim()) params.set("search", searchQuery.trim());
       const response = await fetch(`/api/partners?${params}`);
       if (!response.ok) {
         throw new Error("Failed to fetch partners data");
@@ -389,7 +391,7 @@ function Partners() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-4 items-center">
+      <div className="flex flex-wrap gap-4 items-center">
         <div className="w-48">
           <Select value={selectedProject} onValueChange={setSelectedProject}>
             <SelectTrigger className="bg-card">
@@ -427,6 +429,17 @@ function Partners() {
               <SelectItem value="inactive">Inactive</SelectItem>
             </SelectContent>
           </Select>
+        </div>
+        <div className="relative w-56">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Search by name, email, code..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9 bg-card"
+            aria-label="Search partners"
+          />
         </div>
       </div>
 
@@ -478,7 +491,10 @@ function Partners() {
           </TableHeader>
           <TableBody>
             {data?.partners.map((partner) => (
-              <TableRow key={partner.id}>
+              <TableRow
+                key={partner.id}
+                className={partner.status === "pending" ? "bg-amber-50/30 dark:bg-amber-950/10" : undefined}
+              >
                 <TableCell>
                   <div>
                     <div className="font-medium">{partner.name}</div>
@@ -523,13 +539,13 @@ function Partners() {
                   </span>
                 </TableCell>
                 <TableCell>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1.5">
                     {partner.status === "pending" && (
                       <>
                         <Button
-                          variant="ghost"
+                          variant="outline"
                           size="sm"
-                          className="h-7 w-7 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+                          className="h-7 px-2 text-green-600 border-green-200 hover:bg-green-50 dark:border-green-800 dark:hover:bg-green-950/30"
                           onClick={() => statusMutation.mutate({ id: partner.id, status: "active" })}
                           disabled={statusMutation.isPending}
                           aria-label="Approve partner"
@@ -537,9 +553,9 @@ function Partners() {
                           <CheckCircle className="w-3.5 h-3.5" />
                         </Button>
                         <Button
-                          variant="ghost"
+                          variant="outline"
                           size="sm"
-                          className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          className="h-7 px-2 text-red-600 border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950/30"
                           onClick={() => statusMutation.mutate({ id: partner.id, status: "inactive" })}
                           disabled={statusMutation.isPending}
                           aria-label="Reject partner"

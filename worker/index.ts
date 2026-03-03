@@ -64,6 +64,53 @@ import {
   updateWebhookEndpointSchema,
 } from "./validation";
 
+// ─── Shared status filter helpers ────────────────────────────────────────────
+type CustomerStatusFilter =
+  | "trialing"
+  | "paid"
+  | "cancelled"
+  | "past_due"
+  | "refunded"
+  | "cancels_on"
+  | "all";
+
+const CUSTOMER_STATUS_VALUES: readonly CustomerStatusFilter[] = [
+  "trialing",
+  "paid",
+  "cancelled",
+  "past_due",
+  "refunded",
+  "cancels_on",
+  "all",
+];
+
+function parseCustomerStatusFilter(
+  value: string | null | undefined,
+): CustomerStatusFilter | undefined {
+  if (!value) return undefined;
+  return (CUSTOMER_STATUS_VALUES as readonly string[]).includes(value)
+    ? (value as CustomerStatusFilter)
+    : undefined;
+}
+
+type PartnerStatusFilter = "active" | "pending" | "inactive" | "all";
+
+const PARTNER_STATUS_VALUES: readonly PartnerStatusFilter[] = [
+  "active",
+  "pending",
+  "inactive",
+  "all",
+];
+
+function parsePartnerStatusFilter(
+  value: string | null | undefined,
+): PartnerStatusFilter | undefined {
+  if (!value) return undefined;
+  return (PARTNER_STATUS_VALUES as readonly string[]).includes(value)
+    ? (value as PartnerStatusFilter)
+    : undefined;
+}
+
 // ─── Simple IP-based rate limiter (in-memory, per-isolate) ───────────────────
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
@@ -690,13 +737,16 @@ const app = new Hono<HonoAppContext>()
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const projectId = c.req.query("project");
-    const status = c.req.query("status");
+    const statusQuery = c.req.query("status");
+    const search = c.req.query("search");
+    const status = parsePartnerStatusFilter(statusQuery);
 
     const db = c.get("db");
     const partnerService = new PartnerService(db);
     const partnersList = await partnerService.getPartnersByUser(user.id, {
       projectId,
       status,
+      search: search ?? undefined,
     });
     const stats = await partnerService.getPartnerStats(user.id, projectId);
 
@@ -837,13 +887,16 @@ const app = new Hono<HonoAppContext>()
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const projectId = c.req.query("project");
-    const status = c.req.query("status");
+    const statusQuery = c.req.query("status");
+    const partnerId = c.req.query("partnerId");
+    const status = parseCustomerStatusFilter(statusQuery);
 
     const db = c.get("db");
     const customerService = new CustomerService(db);
     const customersList = await customerService.getCustomersByUser(user.id, {
       projectId,
       status,
+      partnerId: partnerId ?? undefined,
     });
     const stats = await customerService.getCustomerStats(user.id, projectId);
 
@@ -1680,12 +1733,14 @@ const app = new Hono<HonoAppContext>()
     const brandingService = new BrandingService(db);
     const branding = await brandingService.getByProjectId(projectId);
 
-    // Return defaults if no branding exists yet
+    // Return defaults if no branding exists yet (portalName from column when migration 0015 applied, else null)
     const baseUrl = c.req.url.split("/api")[0];
+    const brandingRow = branding as Record<string, unknown> | null;
     return c.json({
       branding: branding
         ? {
             ...branding,
+            portalName: brandingRow?.portalName ?? null,
             logo: branding.logo
               ? `${baseUrl}/api/uploads/${branding.logo}`
               : null,
@@ -1713,8 +1768,10 @@ const app = new Hono<HonoAppContext>()
     const parsed = validate(updateBrandingSchema, body);
     if (!parsed.success) return c.json({ error: parsed.error }, 400);
 
+    // Omit portalName so DB layer does not require portal_name column (optional until migration 0015)
+    const { portalName: _pn, ...brandingData } = parsed.data;
     const brandingService = new BrandingService(db);
-    const branding = await brandingService.upsert(projectId, parsed.data);
+    const branding = await brandingService.upsert(projectId, brandingData);
 
     const baseUrl = c.req.url.split("/api")[0];
     return c.json({
@@ -1941,6 +1998,29 @@ const app = new Hono<HonoAppContext>()
         status: p.status,
       })),
       stats,
+    });
+  })
+  .get("/api/partner/portal-branding", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const db = c.get("db");
+    const dashboardService = new PartnerDashboardService(db);
+    const partnerRecords = await dashboardService.getPartnersByUserId(user.id);
+    if (partnerRecords.length === 0) {
+      return c.json({ portalName: null, logo: null, brandColor: "#7c3aed" });
+    }
+
+    const firstProjectId = partnerRecords[0].projectId;
+    const brandingService = new BrandingService(db);
+    const branding = await brandingService.getByProjectId(firstProjectId);
+    const baseUrl = c.req.url.split("/api")[0];
+
+    const brandingObj = branding as Record<string, unknown> | null;
+    return c.json({
+      portalName: brandingObj?.portalName ?? null,
+      logo: branding?.logo ? `${baseUrl}/api/uploads/${branding.logo}` : null,
+      brandColor: branding?.brandColor ?? "#7c3aed",
     });
   })
   .get("/api/partner/referrals", async (c) => {
@@ -2601,17 +2681,19 @@ const app = new Hono<HonoAppContext>()
             ? new Date(sub.current_period_end * 1000)
             : undefined;
           const isTrialing = sub.status === "trialing";
+          const normalizedStatus = (
+            sub.status === "active"
+              ? "active"
+              : sub.status === "canceled"
+                ? "canceled"
+                : sub.status === "past_due"
+                  ? "past_due"
+                  : "trialing"
+          ) as "active" | "canceled" | "past_due" | "trialing";
 
           await subscriptionService.updateSubscription(rows[0].userId, {
             plan,
-            status:
-              sub.status === "active"
-                ? "active"
-                : sub.status === "canceled"
-                  ? "canceled"
-                  : sub.status === "past_due"
-                    ? "past_due"
-                    : "trialing",
+            status: normalizedStatus,
             currentPeriodEnd: periodEnd,
             trialEndsAt: isTrialing ? periodEnd : undefined,
           });

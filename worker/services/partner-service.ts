@@ -12,7 +12,7 @@ export class PartnerService {
 
   async getPartnersByUser(
     userId: string,
-    filters?: { projectId?: string; status?: string },
+    filters?: { projectId?: string; status?: string; search?: string },
   ): Promise<(PartnerRow & { projectName: string })[]> {
     // First get user's project IDs
     const userProjects = await this.db
@@ -33,6 +33,12 @@ export class PartnerService {
     if (filters?.status && filters.status !== "all") {
       conditions.push(
         eq(partners.status, filters.status as "active" | "pending" | "inactive"),
+      );
+    }
+    if (filters?.search && filters.search.trim()) {
+      const term = `%${filters.search.trim().toLowerCase()}%`;
+      conditions.push(
+        sql`(lower(${partners.name}) like ${term} OR lower(${partners.email}) like ${term} OR lower(${partners.referralCode}) like ${term})`,
       );
     }
 

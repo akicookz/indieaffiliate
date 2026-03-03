@@ -96,6 +96,7 @@ export const updateBrandingSchema = z.object({
   borderRadius: z.enum(["rectangle", "soft", "pill"]).optional(),
   autoApprove: z.boolean().optional(),
   defaultCommissionRate: z.number().min(0.01).max(1).optional(),
+  portalName: z.string().max(80).nullable().optional(), // accepted but only persisted when portal_name column exists (run migration 0015)
 });
 
 // ─── Partner Self-Registration ────────────────────────────────────────────────

@@ -37,7 +37,7 @@ interface Customer {
   email: string;
   isSelfReferral: boolean;
   flagReason: string | null;
-  status: "trialing" | "paid" | "cancelled";
+  status: "trialing" | "paid" | "cancelled" | "past_due" | "refunded" | "cancels_on";
   revenue: number;
   projectName: string;
   partnerName: string;
@@ -62,10 +62,17 @@ interface Project {
   slug: string;
 }
 
+interface PartnerOption {
+  id: string;
+  name: string;
+  email: string;
+}
+
 function Customers() {
   const queryClient = useQueryClient();
   const [selectedProject, setSelectedProject] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [partnerFilter, setPartnerFilter] = useState("all");
 
   const flagMutation = useMutation({
     mutationFn: async ({ customerId, reason }: { customerId: string; reason: string | null }) => {
@@ -95,12 +102,24 @@ function Customers() {
     },
   });
 
+  const { data: partnersData } = useQuery({
+    queryKey: ["partners", selectedProject],
+    queryFn: async (): Promise<{ partners: PartnerOption[] }> => {
+      const params = new URLSearchParams();
+      if (selectedProject !== "all") params.set("project", selectedProject);
+      const response = await fetch(`/api/partners?${params}`);
+      if (!response.ok) throw new Error("Failed to fetch partners");
+      return response.json();
+    },
+  });
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ["customers", selectedProject, statusFilter],
+    queryKey: ["customers", selectedProject, statusFilter, partnerFilter],
     queryFn: async (): Promise<CustomersResponse> => {
       const params = new URLSearchParams();
       if (selectedProject !== "all") params.set("project", selectedProject);
       if (statusFilter !== "all") params.set("status", statusFilter);
+      if (partnerFilter !== "all") params.set("partnerId", partnerFilter);
       const response = await fetch(`/api/customers?${params}`);
       if (!response.ok) {
         throw new Error("Failed to fetch customers data");
@@ -128,25 +147,30 @@ function Customers() {
   }
 
   function getStatusBadge(status: string) {
-    const styles = {
+    const styles: Record<string, string> = {
       paid: "bg-green-100 text-green-800",
       trialing: "bg-yellow-100 text-yellow-800",
       cancelled: "bg-red-100 text-red-800 border border-red-300",
+      past_due: "bg-orange-100 text-orange-800",
+      refunded: "bg-slate-100 text-slate-700",
+      cancels_on: "bg-amber-100 text-amber-800",
     };
+    const label = status === "cancels_on" ? "Cancels on" : status.replace("_", " ");
 
     return (
       <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border ${
-          styles[status as keyof typeof styles]
+        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border capitalize ${
+          styles[status] ?? "bg-muted text-muted-foreground"
         }`}
       >
-        {status}
+        {label}
       </span>
     );
   }
 
   const totalRevenue = data?.customers.reduce((sum, c) => sum + c.revenue, 0) ?? 0;
   const projects = projectsData?.projects ?? [];
+  const partnerOptions = partnersData?.partners ?? [];
 
   return (
     <div className="space-y-6 bg-background">
@@ -169,9 +193,9 @@ function Customers() {
       </div>
 
       {/* Filters */}
-      <div className="flex gap-4 items-center">
+      <div className="flex flex-wrap gap-4 items-center">
         <div className="w-48">
-          <Select value={selectedProject} onValueChange={setSelectedProject}>
+          <Select value={selectedProject} onValueChange={(v) => { setSelectedProject(v); setPartnerFilter("all"); }}>
             <SelectTrigger className="bg-card">
               <span>
                 {selectedProject === "all"
@@ -191,13 +215,30 @@ function Customers() {
           </Select>
         </div>
         <div className="w-48">
+          <Select value={partnerFilter} onValueChange={setPartnerFilter}>
+            <SelectTrigger className="bg-card">
+              <span>
+                {partnerFilter === "all"
+                  ? "All Partners"
+                  : partnerOptions.find((p) => p.id === partnerFilter)?.name ?? "Select"}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Partners</SelectItem>
+              {partnerOptions.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="w-48">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="bg-card">
               <span>
                 {statusFilter === "all" && "All Statuses"}
-                {statusFilter === "paid" && "Paid"}
-                {statusFilter === "trialing" && "Trialing"}
-                {statusFilter === "cancelled" && "Cancelled"}
+                {statusFilter !== "all" && statusFilter.replace("_", " ")}
               </span>
             </SelectTrigger>
             <SelectContent>
@@ -205,6 +246,9 @@ function Customers() {
               <SelectItem value="paid">Paid</SelectItem>
               <SelectItem value="trialing">Trialing</SelectItem>
               <SelectItem value="cancelled">Cancelled</SelectItem>
+              <SelectItem value="past_due">Past due</SelectItem>
+              <SelectItem value="refunded">Refunded</SelectItem>
+              <SelectItem value="cancels_on">Cancels on</SelectItem>
             </SelectContent>
           </Select>
         </div>
