@@ -151,3 +151,74 @@ export async function createBillingPortalSession(
   const session = (await response.json()) as { url?: string };
   return session.url ? { url: session.url } : null;
 }
+
+/**
+ * Set a Stripe subscription to cancel at period end.
+ * Returns true on success, false on error.
+ */
+export async function cancelSubscriptionAtPeriodEnd(
+  env: AppEnv,
+  subscriptionId: string,
+): Promise<boolean> {
+  const secret = env.STRIPE_SECRET_KEY;
+  if (!secret) return false;
+
+  const body = new URLSearchParams({
+    cancel_at_period_end: "true",
+  });
+
+  const response = await fetch(
+    `https://api.stripe.com/v1/subscriptions/${subscriptionId}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+    },
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    console.error(
+      "Stripe cancel at period end failed:",
+      response.status,
+      text,
+    );
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Cancel a Stripe subscription immediately.
+ * Returns true on success, false on error.
+ */
+export async function cancelSubscriptionImmediately(
+  env: AppEnv,
+  subscriptionId: string,
+): Promise<boolean> {
+  const secret = env.STRIPE_SECRET_KEY;
+  if (!secret) return false;
+
+  const response = await fetch(
+    `https://api.stripe.com/v1/subscriptions/${subscriptionId}`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${secret}`,
+      },
+    },
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    console.error("Stripe immediate cancel failed:", response.status, text);
+    return false;
+  }
+
+  return true;
+}
+

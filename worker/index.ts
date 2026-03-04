@@ -31,6 +31,8 @@ import {
   createBillingPortalSession,
   getPlanFromPriceId,
   type Plan,
+  cancelSubscriptionAtPeriodEnd,
+  cancelSubscriptionImmediately,
 } from "./services/stripe-checkout";
 import { verifyStripeWebhookSignature } from "./services/stripe-webhook";
 import { getMaxProjects,  type Plan as BillingPlan } from "./billing";
@@ -2517,6 +2519,73 @@ const app = new Hono<HonoAppContext>()
     }
 
     return c.json({ url: session.url });
+  })
+  .post("/api/subscription/cancel-at-period-end", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const db = c.get("db");
+    const subscriptionService = new SubscriptionService(db);
+    const subscription = await subscriptionService.getOrCreateSubscription(
+      user.id,
+    );
+
+    if (!subscription.stripeSubscriptionId) {
+      return c.json({ error: "no_stripe_subscription" }, 400);
+    }
+
+    const ok = await cancelSubscriptionAtPeriodEnd(
+      c.env,
+      subscription.stripeSubscriptionId,
+    );
+    if (!ok) {
+      return c.json({ error: "stripe_cancel_failed" }, 500);
+    }
+
+    // Rely on Stripe webhooks to update local subscription status and period end.
+    return c.json({ success: true, mode: "at_period_end" });
+  })
+  .post("/api/subscription/cancel-now", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const db = c.get("db");
+    const subscriptionService = new SubscriptionService(db);
+    const subscription = await subscriptionService.getOrCreateSubscription(
+      user.id,
+    );
+
+    if (!subscription.stripeSubscriptionId) {
+      return c.json({ error: "no_stripe_subscription" }, 400);
+    }
+
+    const ok = await cancelSubscriptionImmediately(
+      c.env,
+      subscription.stripeSubscriptionId,
+    );
+    if (!ok) {
+      return c.json({ error: "stripe_cancel_failed" }, 500);
+    }
+
+    // Rely on Stripe webhooks to update local subscription record.
+    return c.json({ success: true, mode: "immediate" });
+  })
+  .post("/api/subscription/downgrade-to-starter", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const db = c.get("db");
+    const subscriptionService = new SubscriptionService(db);
+    const existing = await subscriptionService.getOrCreateSubscription(user.id);
+
+    const updated = await subscriptionService.updateSubscription(user.id, {
+      plan: "starter",
+      status: existing.status ?? "active",
+    });
+
+    return c.json({
+      subscription: updated,
+    });
   })
   .get("/api/billing/stripe-connection", async (c) => {
     const user = c.get("user");
