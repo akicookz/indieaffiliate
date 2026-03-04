@@ -20,6 +20,7 @@ interface BillingData {
     plan: "starter" | "growth" | "scale" | null;
     status: string;
     stripeCustomerId: string | null;
+    stripeSubscriptionId: string | null;
     currentPeriodEnd: string | null;
   };
   mrr: number;
@@ -38,6 +39,7 @@ const DEFAULT_BILLING: BillingData = {
     plan: null,
     status: "active",
     stripeCustomerId: null,
+    stripeSubscriptionId: null,
     currentPeriodEnd: null,
   },
   mrr: 0,
@@ -210,15 +212,23 @@ function Billing() {
               </p>
             )}
             {hasPortal && (
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={() => portalMutation.mutate()}
-                disabled={portalMutation.isPending}
-              >
-                {portalMutation.isPending ? "Opening…" : "Manage subscription"}
-                <ExternalLink className="ml-2 h-4 w-4" />
-              </Button>
+              <div className="space-y-2">
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => portalMutation.mutate()}
+                  disabled={portalMutation.isPending}
+                >
+                  {portalMutation.isPending
+                    ? "Opening Stripe…"
+                    : "Cancel or manage in Stripe"}
+                  <ExternalLink className="ml-2 h-4 w-4" />
+                </Button>
+                <p className="text-[11px] text-muted-foreground text-center">
+                  Use the Stripe billing portal to cancel your subscription or change
+                  plans. Stripe remains the source of truth for billing.
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>
