@@ -493,6 +493,10 @@ function Payouts() {
   const queryClient = useQueryClient();
   const [selectedProject, setSelectedProject] = useState("all");
   const [expandedPartners, setExpandedPartners] = useState<Set<string>>(new Set());
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "pending" | "approved" | "paid" | "rejected"
+  >("all");
+  const [fraudOnly, setFraudOnly] = useState(false);
 
   const { data: projectsData } = useQuery({
     queryKey: ["projects"],
@@ -632,6 +636,37 @@ function Payouts() {
   const totals = data?.totals ?? { pendingAmount: 0, approvedAmount: 0, paidAmount: 0 };
   const partnerGroups = data?.partners ?? [];
 
+  const filteredPartnerGroups: PartnerGroup[] = partnerGroups
+    .map((partner) => {
+      const filteredCommissions = partner.commissions.filter((c) => {
+        if (fraudOnly && !c.fraudFlag) return false;
+        if (statusFilter !== "all" && c.status !== statusFilter) return false;
+        return true;
+      });
+
+      const pending = filteredCommissions.filter((c) => c.status === "pending");
+      const approved = filteredCommissions.filter((c) => c.status === "approved");
+      const paid = filteredCommissions.filter((c) => c.status === "paid");
+      const rejected = filteredCommissions.filter((c) => c.status === "rejected");
+
+      const sum = (items: CommissionDetail[]) =>
+        items.reduce((total, c) => total + c.amount, 0);
+
+      return {
+        ...partner,
+        pendingCount: pending.length,
+        pendingAmount: sum(pending),
+        approvedCount: approved.length,
+        approvedAmount: sum(approved),
+        paidCount: paid.length,
+        paidAmount: sum(paid),
+        rejectedCount: rejected.length,
+        rejectedAmount: sum(rejected),
+        commissions: filteredCommissions,
+      };
+    })
+    .filter((partner) => partner.commissions.length > 0);
+
   return (
     <div className="space-y-6 bg-background">
       {/* Header */}
@@ -640,10 +675,13 @@ function Payouts() {
         <p className="text-muted-foreground">
           Review commissions by partner, approve, and track payments
         </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Flow: <span className="font-semibold">pending → approved → paid</span>. Use fraud flags to block and reject suspicious commissions.
+        </p>
       </div>
 
       {/* Filters */}
-      <div className="flex gap-4 items-center">
+      <div className="flex flex-wrap gap-4 items-center">
         <div className="w-48">
           <Select value={selectedProject} onValueChange={setSelectedProject}>
             <SelectTrigger className="bg-card">
@@ -664,6 +702,39 @@ function Payouts() {
             </SelectContent>
           </Select>
         </div>
+        <div className="w-40">
+          <Select
+            value={statusFilter}
+            onValueChange={(value) =>
+              setStatusFilter(value as typeof statusFilter)
+            }
+          >
+            <SelectTrigger className="bg-card">
+              <span className="capitalize">
+                {statusFilter === "all" ? "All statuses" : statusFilter}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="approved">Approved</SelectItem>
+              <SelectItem value="paid">Paid</SelectItem>
+              <SelectItem value="rejected">Rejected</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <button
+          type="button"
+          onClick={() => setFraudOnly((v) => !v)}
+          className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors ${
+            fraudOnly
+              ? "border-red-300 bg-red-50 text-red-700"
+              : "border-border bg-background text-muted-foreground hover:bg-muted"
+          }`}
+        >
+          <AlertTriangle className="w-3 h-3" />
+          {fraudOnly ? "Showing fraud-only" : "Show only fraud-flagged"}
+        </button>
       </div>
 
       {/* Stat Cards */}
@@ -703,7 +774,7 @@ function Payouts() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {partnerGroups.map((partner) => (
+            {filteredPartnerGroups.map((partner) => (
               <PartnerRow
                 key={partner.partnerId}
                 partner={partner}
@@ -715,7 +786,7 @@ function Payouts() {
                 isMutating={isMutating}
               />
             ))}
-            {partnerGroups.length === 0 && (
+            {filteredPartnerGroups.length === 0 && (
               <TableRow>
                 <TableCell
                   colSpan={7}

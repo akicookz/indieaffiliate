@@ -127,6 +127,30 @@ export const customers = sqliteTable(
 export type CustomerRow = typeof customers.$inferSelect;
 export type NewCustomerRow = typeof customers.$inferInsert;
 
+// Partner OTPs - one-time codes for partner login via join page
+export const partnerOtps = sqliteTable(
+  "partner_otps",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    codeHash: text("code_hash").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    consumedAt: integer("consumed_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    index("idx_partner_otps_project_email").on(table.projectId, table.email),
+  ],
+);
+
+export type PartnerOtpRow = typeof partnerOtps.$inferSelect;
+export type NewPartnerOtpRow = typeof partnerOtps.$inferInsert;
+
 // Clicks - tracked referral link clicks
 export const clicks = sqliteTable(
   "clicks",
