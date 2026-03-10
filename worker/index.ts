@@ -1,12 +1,43 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { except } from "hono/combine";
 import { createAuth, getTrustedOrigins } from "./auth";
 import { type HonoAppContext, type AppEnv } from "./types";
-import { partners, userSubscriptions, projects } from "./db";
+import type { Session } from "better-auth";
+import {
+  partners,
+  userSubscriptions,
+  projects,
+  partnerOtps,
+  users,
+  schema,
+} from "./db";
 import { ProjectService } from "./services/project-service";
+
+/** Sign session token with HMAC-SHA256, base64url no padding (Better Auth compatible). Uses Worker crypto.subtle. */
+async function signSessionToken(secret: string, token: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(token),
+  );
+  const bytes = new Uint8Array(sig);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64 = btoa(binary);
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
 import { PartnerService } from "./services/partner-service";
 import { CustomerService } from "./services/customer-service";
 import { DashboardService } from "./services/dashboard-service";
@@ -49,6 +80,7 @@ import {
   connectStripeSchema,
   updateBrandingSchema,
   joinPartnerSchema,
+  verifyPartnerOtpSchema,
   updateFraudFlagSchema,
   createPayoutSchema,
   updatePayoutSchema,
@@ -450,130 +482,416 @@ const app = new Hono<HonoAppContext>()
   })
   // ─── Public: Partner self-registration ────────────────────────────────────
   .post("/api/join/:slug", async (c) => {
-    const ip =
-      c.req.header("cf-connecting-ip") ??
-      c.req.header("x-forwarded-for") ??
-      "unknown";
-    if (!checkRateLimit(`join:${ip}`, 5, 60_000)) {
+    try {
+      const ip =
+        c.req.header("cf-connecting-ip") ??
+        c.req.header("x-forwarded-for") ??
+        "unknown";
+      if (!checkRateLimit(`join:${ip}`, 5, 60_000)) {
+        return c.json(
+          { error: "Too many requests. Please try again later." },
+          429,
+        );
+      }
+
+      const slug = c.req.param("slug");
+      const body = await c.req.json();
+      const parsed = validate(joinPartnerSchema, body);
+      if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+      const db = drizzle(c.env.DB);
+      const brandingService = new BrandingService(db);
+
+      const brandingResult = await brandingService.getBySlug(slug);
+      if (!brandingResult) {
+        return c.json({ error: "Program not found" }, 404);
+      }
+
+      const branding = brandingResult.branding;
+
+      // Check for duplicate partner
+      const partnerService = new PartnerService(db);
+      const existing = await partnerService.getPartnerByEmail(
+        branding.projectId,
+        parsed.data.email.trim().toLowerCase(),
+      );
+      if (existing) {
+        // Existing partner: send OTP instead of duplicate error
+        const encoder = new TextEncoder();
+        const code = Array.from(crypto.getRandomValues(new Uint8Array(6)))
+          .map((n) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[n % 32])
+          .join("");
+        const data = encoder.encode(code);
+        const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const codeHash = hashArray
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("")
+          .slice(0, 32);
+
+        const now = Date.now();
+        const expiresAt = new Date(now + 10 * 60 * 1000);
+
+        await db.insert(partnerOtps).values({
+          id: crypto.randomUUID(),
+          projectId: branding.projectId,
+          email: parsed.data.email.trim().toLowerCase(),
+          codeHash,
+          expiresAt,
+        });
+
+        const emailService = new EmailService(c.env.RESEND_API_KEY);
+        await emailService
+          .sendPartnerOtp({
+            partnerEmail: parsed.data.email.trim().toLowerCase(),
+            projectName: brandingResult.projectName,
+            code,
+          })
+          .catch((err) =>
+            console.error("Failed to send partner OTP email:", err),
+          );
+
+        return c.json(
+          {
+            status: "otp_required",
+            message:
+              "We found an existing partner account for this email. Enter the code we just emailed you to continue.",
+          },
+          200,
+        );
+      }
+
+      // Hash IP for fraud detection
+      const joinHashedIp = await hashIP(ip);
+
+      const status = branding.autoApprove ? "active" : "pending";
+      const partner = await partnerService.createPartner({
+        projectId: branding.projectId,
+        name: parsed.data.name.trim(),
+        email: parsed.data.email.trim().toLowerCase(),
+        commissionRate: branding.defaultCommissionRate,
+        status,
+        registrationIp: joinHashedIp,
+      });
+
+      const webhookServiceJoin = new WebhookService(db);
+      await webhookServiceJoin.fireEvent(branding.projectId, "partner.created", {
+        partnerId: partner.id,
+        name: partner.name,
+        email: partner.email,
+        status: partner.status,
+        referralCode: partner.referralCode ?? null,
+      });
+
+      // Fraud checks: owner-as-partner + multi-account
+      const joinFraudService = new FraudService(db);
+      const joinOwnerCheck = await joinFraudService.checkOwnerAsPartner(
+        parsed.data.email.trim().toLowerCase(),
+        branding.projectId,
+      );
+      if (joinOwnerCheck) {
+        await joinFraudService.createFlag({
+          projectId: branding.projectId,
+          partnerId: partner.id,
+          type: joinOwnerCheck.type,
+          severity: joinOwnerCheck.severity,
+          details: joinOwnerCheck.details,
+        });
+      }
+
+      const multiAccountCheck = await joinFraudService.checkMultiAccount(
+        joinHashedIp,
+        branding.projectId,
+        partner.id,
+      );
+      if (multiAccountCheck) {
+        await joinFraudService.createFlag({
+          projectId: branding.projectId,
+          partnerId: partner.id,
+          type: multiAccountCheck.type,
+          severity: multiAccountCheck.severity,
+          details: multiAccountCheck.details,
+        });
+      }
+
+      // Send appropriate email
+      const emailService = new EmailService(c.env.RESEND_API_KEY);
+      const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
+
+      if (branding.autoApprove) {
+        emailService
+          .sendPartnerWelcome({
+            partnerName: partner.name,
+            partnerEmail: partner.email,
+            projectName: brandingResult.projectName,
+            referralCode: partner.referralCode,
+            baseUrl,
+          })
+          .catch((err) =>
+            console.error("Failed to send partner welcome:", err),
+          );
+      } else {
+        emailService
+          .sendPartnerApplicationReceived({
+            partnerName: partner.name,
+            partnerEmail: partner.email,
+            projectName: brandingResult.projectName,
+          })
+          .catch((err) =>
+            console.error("Failed to send application received:", err),
+          );
+      }
+
       return c.json(
-        { error: "Too many requests. Please try again later." },
-        429,
+        {
+          status,
+          message: branding.autoApprove
+            ? "Welcome! Check your email for your referral link."
+            : "Application submitted! We'll review it and get back to you.",
+        },
+        201,
+      );
+    } catch (err) {
+      console.error("POST /api/join error:", err);
+      return c.json(
+        { error: "Internal server error. Please try again later." },
+        500,
       );
     }
+  })
+  .post("/api/partner/verify-otp", async (c) => {
+    try {
+      const body = await c.req.json();
+      const parsed = validate(verifyPartnerOtpSchema, body);
+      if (!parsed.success) return c.json({ error: parsed.error }, 400);
 
-    const slug = c.req.param("slug");
-    const body = await c.req.json();
-    const parsed = validate(joinPartnerSchema, body);
-    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+      const slug = parsed.data.slug;
+      const email = parsed.data.email.trim().toLowerCase();
+      const code = parsed.data.code.trim().toUpperCase();
 
-    const db = drizzle(c.env.DB);
-    const brandingService = new BrandingService(db);
+      const db = drizzle(c.env.DB, { schema });
+      const brandingService = new BrandingService(db);
+      const brandingResult = await brandingService.getBySlug(slug);
+      if (!brandingResult) {
+        return c.json({ error: "Program not found" }, 404);
+      }
 
-    const brandingResult = await brandingService.getBySlug(slug);
-    if (!brandingResult) {
-      return c.json({ error: "Program not found" }, 404);
-    }
+      const projectId = brandingResult.branding.projectId;
 
-    const branding = brandingResult.branding;
+      // Hash provided code
+      const encoder = new TextEncoder();
+      const data = encoder.encode(code);
+      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const codeHash = hashArray
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("")
+        .slice(0, 32);
 
-    // Check for duplicate partner
-    const partnerService = new PartnerService(db);
-    const existing = await partnerService.getPartnerByEmail(
-      branding.projectId,
-      parsed.data.email.trim().toLowerCase(),
-    );
-    if (existing) {
-      return c.json({ error: "You've already applied to this program." }, 409);
-    }
+      const now = Date.now();
 
-    // Hash IP for fraud detection
-    const joinHashedIp = await hashIP(ip);
+      // Find latest matching OTP
+      const rows = await db
+        .select()
+        .from(partnerOtps)
+        .where(
+          and(
+            eq(partnerOtps.projectId, projectId),
+            eq(partnerOtps.email, email),
+            eq(partnerOtps.codeHash, codeHash),
+          ),
+        )
+        .orderBy(desc(partnerOtps.createdAt))
+        .limit(1);
 
-    const status = branding.autoApprove ? "active" : "pending";
-    const partner = await partnerService.createPartner({
-      projectId: branding.projectId,
-      name: parsed.data.name.trim(),
-      email: parsed.data.email.trim().toLowerCase(),
-      commissionRate: branding.defaultCommissionRate,
-      status,
-      registrationIp: joinHashedIp,
-    });
+      const otp = rows[0];
 
-    const webhookServiceJoin = new WebhookService(db);
-    await webhookServiceJoin.fireEvent(branding.projectId, "partner.created", {
-      partnerId: partner.id,
-      name: partner.name,
-      email: partner.email,
-      status: partner.status,
-      referralCode: partner.referralCode ?? null,
-    });
-
-    // Fraud checks: owner-as-partner + multi-account
-    const joinFraudService = new FraudService(db);
-    const joinOwnerCheck = await joinFraudService.checkOwnerAsPartner(
-      parsed.data.email.trim().toLowerCase(),
-      branding.projectId,
-    );
-    if (joinOwnerCheck) {
-      await joinFraudService.createFlag({
-        projectId: branding.projectId,
-        partnerId: partner.id,
-        type: joinOwnerCheck.type,
-        severity: joinOwnerCheck.severity,
-        details: joinOwnerCheck.details,
-      });
-    }
-
-    const multiAccountCheck = await joinFraudService.checkMultiAccount(
-      joinHashedIp,
-      branding.projectId,
-      partner.id,
-    );
-    if (multiAccountCheck) {
-      await joinFraudService.createFlag({
-        projectId: branding.projectId,
-        partnerId: partner.id,
-        type: multiAccountCheck.type,
-        severity: multiAccountCheck.severity,
-        details: multiAccountCheck.details,
-      });
-    }
-
-    // Send appropriate email
-    const emailService = new EmailService(c.env.RESEND_API_KEY);
-    const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
-
-    if (branding.autoApprove) {
-      emailService
-        .sendPartnerWelcome({
-          partnerName: partner.name,
-          partnerEmail: partner.email,
-          projectName: brandingResult.projectName,
-          referralCode: partner.referralCode,
-          baseUrl,
-        })
-        .catch((err) => console.error("Failed to send partner welcome:", err));
-    } else {
-      emailService
-        .sendPartnerApplicationReceived({
-          partnerName: partner.name,
-          partnerEmail: partner.email,
-          projectName: brandingResult.projectName,
-        })
-        .catch((err) =>
-          console.error("Failed to send application received:", err),
+      if (
+        !otp ||
+        (otp.consumedAt instanceof Date
+          ? otp.consumedAt.getTime() <= now
+          : otp.consumedAt != null) ||
+        (otp.expiresAt instanceof Date
+          ? otp.expiresAt.getTime() < now
+          : otp.expiresAt < now)
+      ) {
+        return c.json(
+          { error: "Invalid or expired code. Please request a new one." },
+          400,
         );
-    }
+      }
 
-    return c.json(
-      {
-        status,
-        message: branding.autoApprove
-          ? "Welcome! Check your email for your referral link."
-          : "Application submitted! We'll review it and get back to you.",
-      },
-      201,
-    );
+      // Dev fallback: If there is no Better Auth secret and we're on localhost,
+      // create or reuse a dev user and set a dev-partner-user cookie so partner
+      // APIs can treat the user as authenticated.
+      const isLocalhost =
+        (c.env.BETTER_AUTH_URL ?? "").startsWith("http://localhost");
+      if (!c.env.BETTER_AUTH_SECRET && isLocalhost) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        let devUserId: string;
+        try {
+          const existing = await c.env.DB.prepare(
+            "SELECT id FROM users WHERE email = ? LIMIT 1",
+          )
+            .bind(email)
+            .first<{ id: string }>();
+          if (existing?.id) {
+            devUserId = existing.id;
+          } else {
+            devUserId = crypto.randomUUID();
+            await c.env.DB.prepare(
+              "INSERT INTO users (id, name, email, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+              .bind(devUserId, "", email, 1, nowSec, nowSec)
+              .run();
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(
+            "POST /api/partner/verify-otp dev fallback user error:",
+            msg,
+          );
+          return c.json(
+            { error: "Internal server error. Please try again later.", debug: msg },
+            500,
+          );
+        }
+
+        await db
+          .update(partnerOtps)
+          .set({ consumedAt: new Date() })
+          .where(eq(partnerOtps.id, otp.id));
+
+        const devCookieParts = [
+          `dev-partner-user=${devUserId}`,
+          "Path=/",
+          "SameSite=Lax",
+        ];
+        c.header("Set-Cookie", devCookieParts.join("; "));
+
+        const now = new Date();
+        const expiresAtSession = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+        c.set("session", {
+          id: crypto.randomUUID(),
+          createdAt: now,
+          updatedAt: now,
+          userId: devUserId,
+          expiresAt: expiresAtSession,
+          token: "",
+        });
+
+        return c.json({ status: "ok", redirect: "/portal?dev_otp=1" });
+      }
+
+      if (!c.env.BETTER_AUTH_SECRET) {
+        console.error("POST /api/partner/verify-otp: BETTER_AUTH_SECRET not set");
+        return c.json(
+          { error: "Internal server error. Please try again later.", debug: "BETTER_AUTH_SECRET not set" },
+          500,
+        );
+      }
+
+      // Use raw D1 to avoid Drizzle/schema issues in dev; SQLite timestamps in seconds
+      const nowSec = Math.floor(Date.now() / 1000);
+      const sessionExpiresIn = 60 * 60 * 24 * 7; // 7 days
+      const expiresAtSec = nowSec + sessionExpiresIn;
+
+      let userId: string;
+      try {
+        const userRow = await c.env.DB.prepare(
+          "SELECT id FROM users WHERE email = ? LIMIT 1",
+        )
+          .bind(email)
+          .first<{ id: string }>();
+        if (userRow?.id) {
+          userId = userRow.id;
+        } else {
+          userId = crypto.randomUUID();
+          await c.env.DB.prepare(
+            "INSERT INTO users (id, name, email, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+          )
+            .bind(userId, "", email, 1, nowSec, nowSec)
+            .run();
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("POST /api/partner/verify-otp error at get/create user:", msg);
+        return c.json(
+          { error: "Internal server error. Please try again later.", debug: msg },
+          500,
+        );
+      }
+
+      const sessionId = crypto.randomUUID();
+      const sessionToken = Array.from(
+        crypto.getRandomValues(new Uint8Array(48)),
+        (b) => b.toString(16).padStart(2, "0"),
+      ).join("");
+      try {
+        await c.env.DB.prepare(
+          "INSERT INTO sessions (id, token, user_id, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+          .bind(sessionId, sessionToken, userId, expiresAtSec, nowSec, nowSec)
+          .run();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("POST /api/partner/verify-otp error at insert session:", msg);
+        return c.json(
+          { error: "Internal server error. Please try again later.", debug: msg },
+          500,
+        );
+      }
+
+      // Sign session token (Worker-native crypto, Better Auth compatible)
+      let signedToken: string;
+      try {
+        signedToken = await signSessionToken(
+          c.env.BETTER_AUTH_SECRET,
+          sessionToken,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("POST /api/partner/verify-otp error at sign:", msg);
+        return c.json(
+          {
+            error: "Internal server error. Please try again later.",
+            debug: msg,
+          },
+          500,
+        );
+      }
+
+      const isSecure =
+        (c.env.BETTER_AUTH_URL ?? "").startsWith("https");
+      const cookieParts = [
+        `better-auth.session_token=${signedToken}`,
+        "Path=/",
+        "HttpOnly",
+        "SameSite=Lax",
+        `Max-Age=${sessionExpiresIn}`,
+      ];
+      if (isSecure) cookieParts.push("Secure");
+      c.header("Set-Cookie", cookieParts.join("; "));
+
+      // Consume OTP only after session/cookie are set successfully
+      await db
+        .update(partnerOtps)
+        .set({ consumedAt: new Date() })
+        .where(eq(partnerOtps.id, otp.id));
+
+      return c.json({ status: "ok", redirect: "/portal" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      console.error("POST /api/partner/verify-otp error:", message, stack ?? "");
+      return c.json(
+        {
+          error: "Internal server error. Please try again later.",
+          debug: message,
+        },
+        500,
+      );
+    }
   })
   // ─── Auth middleware ────────────────────────────────────────────────────────
   .use("/api/*", async (c, next) => {
@@ -581,12 +899,43 @@ const app = new Hono<HonoAppContext>()
     const session = await auth.api.getSession({
       headers: c.req.raw.headers,
     });
-    c.set("db", drizzle(c.env.DB));
+    const db = drizzle(c.env.DB, { schema });
+    c.set("db", db);
+
     if (!session) {
+      // Dev fallback: if Better Auth session is missing but we have a dev-partner-user
+      // cookie on localhost, treat that user as authenticated for partner APIs.
+      const isLocalhost =
+        (c.env.BETTER_AUTH_URL ?? "").startsWith("http://localhost");
+      const cookieHeader = c.req.raw.headers.get("cookie") ?? "";
+      const match = cookieHeader.match(/dev-partner-user=([^;]+)/);
+      if (isLocalhost && match) {
+        const devUserId = match[1];
+        try {
+          const userRows = await db
+            .select()
+            .from(users)
+            .where(eq(users.id, devUserId))
+            .limit(1);
+          const devUser = userRows[0];
+          if (devUser) {
+            c.set("user", devUser);
+            c.set("session", { userId: devUser.id } as Session);
+            return next();
+          }
+        } catch (err) {
+          console.error(
+            "/api/* dev auth fallback error:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+
       c.set("user", null);
       c.set("session", null);
       return next();
     }
+
     c.set("user", session.user);
     c.set("session", session.session);
     return next();

@@ -105,6 +105,12 @@ export const joinPartnerSchema = z.object({
   email: z.string().email("Invalid email address"),
 });
 
+export const verifyPartnerOtpSchema = z.object({
+  slug: z.string().min(1, "Program slug is required"),
+  email: z.string().email("Invalid email address"),
+  code: z.string().min(4, "Code is required").max(10, "Code is too long"),
+});
+
 // ─── Fraud Flags ──────────────────────────────────────────────────────────────
 export const updateFraudFlagSchema = z.object({
   status: z.enum(["dismissed", "confirmed"]),

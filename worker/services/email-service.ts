@@ -156,4 +156,42 @@ export class EmailService {
 
     return result !== null;
   }
+
+  /**
+   * Send a one-time code (OTP) for partner login via the join page.
+   */
+  async sendPartnerOtp(params: {
+    partnerEmail: string;
+    projectName: string;
+    code: string;
+  }): Promise<boolean> {
+    const result = await this.sendEmail({
+      to: params.partnerEmail,
+      subject: `Your sign-in code for ${params.projectName}`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto;">
+          <h2 style="color: #1a1a1a;">Your one-time sign-in code</h2>
+          <p style="color: #555; line-height: 1.6;">
+            Use the code below to continue signing in to the <strong>${params.projectName}</strong> partner program.
+          </p>
+          <div style="background: #f5f5f5; border-radius: 8px; padding: 16px; margin: 24px 0; text-align: center;">
+            <div style="font-size: 28px; font-weight: 600; letter-spacing: 6px; color: #1a1a1a;">
+              ${params.code}
+            </div>
+            <p style="margin-top: 8px; font-size: 13px; color: #888;">
+              This code expires in 10 minutes.
+            </p>
+          </div>
+          <p style="color: #888; font-size: 13px; margin-top: 32px;">
+            If you didn't try to sign in, you can safely ignore this email.
+          </p>
+          <p style="color: #888; font-size: 13px; margin-top: 12px;">
+            — The ${params.projectName} team via UnlockAffiliate
+          </p>
+        </div>
+      `,
+    });
+
+    return result !== null;
+  }
 }
