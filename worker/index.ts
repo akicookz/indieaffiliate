@@ -5,11 +5,13 @@ import { drizzle } from "drizzle-orm/d1";
 import { except } from "hono/combine";
 import { createAuth, getTrustedOrigins } from "./auth";
 import { type HonoAppContext, type AppEnv } from "./types";
+import type { Session } from "better-auth";
 import {
   partners,
   userSubscriptions,
   projects,
   partnerOtps,
+  users,
   schema,
 } from "./db";
 import { ProjectService } from "./services/project-service";
@@ -767,6 +769,17 @@ const app = new Hono<HonoAppContext>()
         ];
         c.header("Set-Cookie", devCookieParts.join("; "));
 
+        const now = new Date();
+        const expiresAtSession = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+        c.set("session", {
+          id: crypto.randomUUID(),
+          createdAt: now,
+          updatedAt: now,
+          userId: devUserId,
+          expiresAt: expiresAtSession,
+          token: "",
+        });
+
         return c.json({ status: "ok", redirect: "/portal?dev_otp=1" });
       }
 
@@ -907,7 +920,7 @@ const app = new Hono<HonoAppContext>()
           const devUser = userRows[0];
           if (devUser) {
             c.set("user", devUser);
-            c.set("session", { userId: devUser.id } as unknown);
+            c.set("session", { userId: devUser.id } as Session);
             return next();
           }
         } catch (err) {
