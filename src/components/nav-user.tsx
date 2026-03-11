@@ -102,14 +102,14 @@ export function NavUser({
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem onClick={() => navigate("/app/billing")}>
+              <DropdownMenuItem onClick={() => navigate("/app/billing/upgrade")}>
                 <Sparkles />
                 Upgrade plan
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/app/account")}>
                 <BadgeCheck />
                 Account
               </DropdownMenuItem>
@@ -117,7 +117,7 @@ export function NavUser({
                 <CreditCard />
                 Billing
               </DropdownMenuItem>
-              <DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/app/notifications")}>
                 <Bell />
                 Notifications
               </DropdownMenuItem>

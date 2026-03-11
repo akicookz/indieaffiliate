@@ -18,8 +18,11 @@ import Partners from "./pages/Partners";
 import Payouts from "./pages/Payouts";
 import FraudFlags from "./pages/FraudFlags";
 import Billing from "./pages/Billing";
+import BillingUpgrade from "./pages/BillingUpgrade";
+import Account from "./pages/Account";
 import ProjectSettings from "./pages/ProjectSettings";
 import Import from "./pages/Import";
+import Notifications from "./pages/Notifications";
 import Webhooks from "./pages/Webhooks";
 import PartnerPageDesigner from "./pages/PartnerPageDesigner";
 import JoinPartnerProgram from "./pages/JoinPartnerProgram";
@@ -64,8 +67,11 @@ function App() {
         <Route path="partners" element={<Partners />} />
         <Route path="payouts" element={<Payouts />} />
         <Route path="fraud-flags" element={<FraudFlags />} />
+        <Route path="account" element={<Account />} />
         <Route path="billing" element={<Billing />} />
+        <Route path="billing/upgrade" element={<BillingUpgrade />} />
         <Route path="import" element={<Import />} />
+        <Route path="notifications" element={<Notifications />} />
         <Route path="projects/:slug/settings" element={<ProjectSettings />} />
         <Route path="projects/:slug/webhooks" element={<Webhooks />} />
         <Route path="projects/:slug/partner-page" element={<PartnerPageDesigner />} />
