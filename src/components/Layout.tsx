@@ -17,8 +17,8 @@ function Layout() {
             <SidebarTrigger className="-ml-1" />
           </div>
         </header>
-        <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-          <main className="min-h-screen">
+        <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 pt-0">
+          <main className="min-h-screen min-w-0">
             <Outlet />
           </main>
         </div>

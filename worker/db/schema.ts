@@ -467,6 +467,37 @@ export const userSubscriptions = sqliteTable(
 export type UserSubscriptionRow = typeof userSubscriptions.$inferSelect;
 export type NewUserSubscriptionRow = typeof userSubscriptions.$inferInsert;
 
+// Notifications - in-app notifications for account and billing events
+export const notifications = sqliteTable(
+  "notifications",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authSchema.users.id, { onDelete: "cascade" }),
+    type: text("type", {
+      enum: ["system", "billing", "account"],
+    })
+      .notNull()
+      .default("system"),
+    title: text("title").notNull(),
+    message: text("message").notNull(),
+    href: text("href"),
+    isRead: integer("is_read", { mode: "boolean" }).notNull().default(false),
+    readAt: integer("read_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+  },
+  (table) => [
+    index("idx_notifications_user_created").on(table.userId, table.createdAt),
+    index("idx_notifications_user_read").on(table.userId, table.isRead),
+  ],
+);
+
+export type NotificationRow = typeof notifications.$inferSelect;
+export type NewNotificationRow = typeof notifications.$inferInsert;
+
 // Webhook Endpoints - configured URLs per project for event delivery
 export const webhookEndpoints = sqliteTable(
   "webhook_endpoints",
@@ -532,6 +563,7 @@ export const schema = {
   fraudFlags,
   payouts,
   userSubscriptions,
+  notifications,
   webhookEndpoints,
   webhookLogs,
 } as const;

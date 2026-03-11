@@ -11,6 +11,7 @@ import {
   userSubscriptions,
   projects,
   partnerOtps,
+  notifications,
   users,
   schema,
 } from "./db";
@@ -540,7 +541,9 @@ const app = new Hono<HonoAppContext>()
           expiresAt,
         });
 
-        const emailService = new EmailService(c.env.RESEND_API_KEY);
+        const emailService = new EmailService(
+          c.env.RESEND_API_KEY,
+        );
         await emailService
           .sendPartnerOtp({
             partnerEmail: parsed.data.email.trim().toLowerCase(),
@@ -615,7 +618,9 @@ const app = new Hono<HonoAppContext>()
       }
 
       // Send appropriate email
-      const emailService = new EmailService(c.env.RESEND_API_KEY);
+      const emailService = new EmailService(
+        c.env.RESEND_API_KEY,
+      );
       const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
 
       if (branding.autoApprove) {
@@ -970,6 +975,80 @@ const app = new Hono<HonoAppContext>()
     const projectsList = await projectService.getProjectsByUserId(user.id);
     return c.json({ projects: projectsList });
   })
+  .get("/api/notifications", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const db = c.get("db");
+    const existing = await db
+      .select({ id: notifications.id })
+      .from(notifications)
+      .where(eq(notifications.userId, user.id))
+      .limit(1);
+
+    if (existing.length === 0) {
+      await db.insert(notifications).values({
+        id: crypto.randomUUID(),
+        userId: user.id,
+        type: "system",
+        title: "Welcome to UnlockAffiliate",
+        message:
+          "Your notifications center is ready. Important account and billing updates will appear here.",
+        href: "/app/account",
+      });
+    }
+
+    const rows = await db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.userId, user.id))
+      .orderBy(desc(notifications.createdAt));
+
+    return c.json({
+      notifications: rows,
+      unreadCount: rows.filter((item) => !item.isRead).length,
+    });
+  })
+  .post("/api/notifications/read-all", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const db = c.get("db");
+    await db
+      .update(notifications)
+      .set({ isRead: true, readAt: new Date() })
+      .where(eq(notifications.userId, user.id));
+
+    return c.json({ success: true });
+  })
+  .post("/api/notifications/:id/read", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const notificationId = c.req.param("id");
+    const db = c.get("db");
+    const rows = await db
+      .select({ id: notifications.id })
+      .from(notifications)
+      .where(
+        and(
+          eq(notifications.id, notificationId),
+          eq(notifications.userId, user.id),
+        ),
+      )
+      .limit(1);
+
+    if (!rows[0]) {
+      return c.json({ error: "Notification not found" }, 404);
+    }
+
+    await db
+      .update(notifications)
+      .set({ isRead: true, readAt: new Date() })
+      .where(eq(notifications.id, notificationId));
+
+    return c.json({ success: true });
+  })
   .post("/api/projects", async (c) => {
     const user = c.get("user");
     if (!user) return c.json({ error: "Unauthorized" }, 401);
@@ -1127,27 +1206,15 @@ const app = new Hono<HonoAppContext>()
     const hashedPartnerIp = await hashIP(partnerIp);
 
     const partnerService = new PartnerService(db);
-    let partner;
-    try {
-      partner = await partnerService.createPartner({
-        projectId: parsed.data.projectId,
-        name: parsed.data.name.trim(),
-        email: parsed.data.email.trim().toLowerCase(),
-        commissionRate: parsed.data.commissionRate ?? 0.2,
-        referralCode: parsed.data.referralCode,
-        status: "active",
-        registrationIp: hashedPartnerIp,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "";
-      if (msg.includes("UNIQUE constraint failed")) {
-        return c.json(
-          { error: "A partner with this email or referral code already exists in this project" },
-          409,
-        );
-      }
-      throw err;
-    }
+    const partner = await partnerService.createPartner({
+      projectId: parsed.data.projectId,
+      name: parsed.data.name.trim(),
+      email: parsed.data.email.trim().toLowerCase(),
+      commissionRate: parsed.data.commissionRate ?? 0.2,
+      referralCode: parsed.data.referralCode,
+      status: "active",
+      registrationIp: hashedPartnerIp,
+    });
 
     const webhookServicePartners = new WebhookService(db);
     await webhookServicePartners.fireEvent(parsed.data.projectId, "partner.created", {
