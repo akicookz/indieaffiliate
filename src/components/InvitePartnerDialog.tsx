@@ -42,6 +42,7 @@ function InvitePartnerDialog({ projects }: InvitePartnerDialogProps) {
       const response = await fetch("/api/partners", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           projectId,
           name: name.trim(),

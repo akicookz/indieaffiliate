@@ -14,6 +14,8 @@ function NotFound() {
     if (session) {
       if (window.history.length > 1) {
         navigate(-1);
+      } else if (location.pathname.startsWith("/portal")) {
+        navigate("/portal", { replace: true });
       } else {
         navigate("/app", { replace: true });
       }
@@ -35,11 +37,18 @@ function NotFound() {
             .
           </p>
         </CardHeader>
-        <CardContent>
-          <Button variant="outline" onClick={handleGoBack} className="gap-2">
+        <CardContent className="space-y-2">
+          <Button variant="outline" onClick={handleGoBack} className="gap-2 w-full sm:w-auto">
             <ArrowLeft className="w-4 h-4" />
             Go back
           </Button>
+          {location.pathname.startsWith("/api/auth") && (
+            <p className="text-xs text-muted-foreground pt-2">
+              If you clicked a sign-in link, ensure the dev server is running and the API proxy is active, then try{" "}
+              <a href="/partner-login" className="underline text-primary">partner login</a> or{" "}
+              <a href="/login" className="underline text-primary">owner login</a> again.
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>

@@ -207,8 +207,24 @@ const app = new Hono<HonoAppContext>()
       credentials: true,
     }),
   )
-  .on(["POST", "GET"], "/api/auth/*", (c) => {
-    const auth = createAuth(c.env, c.req.raw.cf as IncomingRequestCfProperties);
+  // Auth: every path under /api/auth is handled by better-auth (verify, sign-in, session, etc.).
+  // Use path prefix check so /api/auth/magic-link/verify and all subpaths match regardless of router.
+  .use("*", async (c, next) => {
+    const path = new URL(c.req.url).pathname;
+    if (!path.startsWith("/api/auth")) return next();
+    const requestOrigin =
+      c.env.BETTER_AUTH_URL ?? (() => {
+        try {
+          return new URL(c.req.url).origin;
+        } catch {
+          return undefined;
+        }
+      })();
+    const auth = createAuth(
+      c.env,
+      c.req.raw.cf as IncomingRequestCfProperties,
+      requestOrigin,
+    );
     return auth.handler(c.req.raw);
   })
   .use(
@@ -459,12 +475,38 @@ const app = new Hono<HonoAppContext>()
     const brandingService = new BrandingService(db);
     const result = await brandingService.getBySlug(slug);
 
+    const baseUrl = c.req.url.split("/api")[0];
+
     if (!result) {
-      return c.json({ error: "Program not found" }, 404);
+      // Fallback: allow join pages to work even if branding hasn't been created yet.
+      console.warn("[join] branding missing for slug, falling back to project lookup", { slug });
+      const rows = await db
+        .select({ name: projects.name })
+        .from(projects)
+        .where(eq(projects.slug, slug))
+        .limit(1);
+
+      const projectRow = rows[0];
+      if (!projectRow) {
+        console.warn("[join] project not found for slug", { slug });
+        return c.json({ error: "Program not found" }, 404);
+      }
+
+      return c.json({
+        projectName: projectRow.name,
+        // Mirror defaults used in PartnerPageDesigner / JoinPartnerProgram and DB defaults.
+        brandColor: "#7c3aed",
+        headline: "Join our affiliate program",
+        description: null,
+        ctaText: "Become a Partner",
+        fontFamily: "Inter",
+        borderRadius: "soft",
+        logo: null,
+        backgroundImage: null,
+      });
     }
 
     // Build public-facing response (don't expose internal IDs)
-    const baseUrl = c.req.url.split("/api")[0];
     return c.json({
       projectName: result.projectName,
       brandColor: result.branding.brandColor,
@@ -1186,11 +1228,15 @@ const app = new Hono<HonoAppContext>()
     const user = c.get("user");
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
-    const body = await c.req.json();
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
     const parsed = validate(createPartnerSchema, body);
     if (!parsed.success) return c.json({ error: parsed.error }, 400);
 
-    // Verify user owns the project
     const db = c.get("db");
     const projectService = new ProjectService(db);
     const project = await projectService.getProjectById(parsed.data.projectId);
@@ -1198,23 +1244,43 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Project not found" }, 404);
     }
 
-    // Hash IP for fraud detection
+    const partnerService = new PartnerService(db);
+    const existingPartner = await partnerService.getPartnerByEmail(
+      parsed.data.projectId,
+      parsed.data.email.trim().toLowerCase(),
+    );
+    if (existingPartner) {
+      return c.json(
+        { error: "A partner with this email already exists in this project." },
+        409,
+      );
+    }
+
     const partnerIp =
       c.req.header("cf-connecting-ip") ??
       c.req.header("x-forwarded-for") ??
       "unknown";
     const hashedPartnerIp = await hashIP(partnerIp);
 
-    const partnerService = new PartnerService(db);
-    const partner = await partnerService.createPartner({
-      projectId: parsed.data.projectId,
-      name: parsed.data.name.trim(),
-      email: parsed.data.email.trim().toLowerCase(),
-      commissionRate: parsed.data.commissionRate ?? 0.2,
-      referralCode: parsed.data.referralCode,
-      status: "active",
-      registrationIp: hashedPartnerIp,
-    });
+    let partner;
+    try {
+      partner = await partnerService.createPartner({
+        projectId: parsed.data.projectId,
+        name: parsed.data.name.trim(),
+        email: parsed.data.email.trim().toLowerCase(),
+        commissionRate: parsed.data.commissionRate ?? 0.2,
+        referralCode: parsed.data.referralCode,
+        status: "active",
+        registrationIp: hashedPartnerIp,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("POST /api/partners createPartner error:", msg);
+      return c.json(
+        { error: "Failed to create partner. Please try again." },
+        500,
+      );
+    }
 
     const webhookServicePartners = new WebhookService(db);
     await webhookServicePartners.fireEvent(parsed.data.projectId, "partner.created", {
@@ -1225,7 +1291,6 @@ const app = new Hono<HonoAppContext>()
       referralCode: partner.referralCode ?? null,
     });
 
-    // Fraud checks: owner-as-partner
     const fraudService = new FraudService(db);
     const ownerCheck = await fraudService.checkOwnerAsPartner(
       parsed.data.email.trim().toLowerCase(),
@@ -1241,9 +1306,8 @@ const app = new Hono<HonoAppContext>()
       });
     }
 
-    // Send invitation email only if requested
     const sendInvite = (body as { sendInvite?: boolean }).sendInvite !== false;
-    if (sendInvite) {
+    if (sendInvite && c.env.RESEND_API_KEY) {
       try {
         const emailService = new EmailService(c.env.RESEND_API_KEY);
         const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
@@ -2167,6 +2231,8 @@ const app = new Hono<HonoAppContext>()
               : null,
           }
         : null,
+      // Use the same origin as the current request for joinUrl; APP_BASE_URL can
+      // still be used by other parts of the system if needed.
       joinUrl: `${baseUrl}/join/${project.slug}`,
     });
   })
