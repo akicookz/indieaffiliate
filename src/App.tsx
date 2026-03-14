@@ -9,6 +9,7 @@ import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import PartnerLogin from "./pages/PartnerLogin";
+import VerifyMagicLink from "./pages/VerifyMagicLink";
 import AuthCallback from "./pages/AuthCallback";
 import Onboarding from "./pages/Onboarding";
 import Dashboard from "./pages/Dashboard";
@@ -39,6 +40,7 @@ function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
       <Route path="/partner-login" element={<PartnerLogin />} />
+      <Route path="/verify-login" element={<VerifyMagicLink />} />
       <Route path="/join/:slug" element={<JoinPartnerProgram />} />
       <Route path="/api/auth/callback/:provider" element={<AuthCallback />} />
       <Route

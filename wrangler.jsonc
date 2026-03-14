@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "account_id": "35bc7a4522237728214ba9d54c36002e",
   "vars": {
-   "STRIPE_PRICE_GROWTH_MONTHLY": "price_1SzvXBR8lpKvtDuLtYpOzWEQ",
+    "STRIPE_PRICE_GROWTH_MONTHLY": "price_1SzvXBR8lpKvtDuLtYpOzWEQ",
     "STRIPE_PRICE_GROWTH_ANNUAL": "price_1T9ixBR8lpKvtDuL7Kj845YN",
     "STRIPE_PRICE_SCALE_MONTHLY": "price_1SzvYjR8lpKvtDuL9ObPOIrk",
     "STRIPE_PRICE_SCALE_ANNUAL": "price_1T396ZR8lpKvtDuLC6aUmJgt"

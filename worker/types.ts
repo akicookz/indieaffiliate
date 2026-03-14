@@ -14,6 +14,8 @@ export interface AppEnv extends Omit<Env, "BETTER_AUTH_URL"> {
   ENCRYPTION_KEY?: string;
   /** Comma-separated extra origins for auth (e.g. https://www.unlockaffiliate.com). Optional. */
   TRUSTED_ORIGINS?: string;
+  /** Public app base URL used for join links, e.g. https://app.example.com */
+  APP_BASE_URL?: string;
   UPLOADS: R2Bucket;
   /** Optional: per-plan price IDs */
   STRIPE_PRICE_GROWTH_MONTHLY?: string;

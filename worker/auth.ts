@@ -44,7 +44,19 @@ export function getTrustedOrigins(env?: AppEnv): string[] {
   return [...new Set(origins)];
 }
 
-function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
+/** Normalize base URL (no trailing slash) so magic link URLs are built correctly. */
+function normalizeBaseURL(url: string | undefined): string | undefined {
+  if (!url?.trim()) return undefined;
+  const trimmed = url.trim().replace(/\/+$/, "");
+  return trimmed || undefined;
+}
+
+function createAuth(
+  env?: AppEnv,
+  cf?: IncomingRequestCfProperties,
+  /** Fallback when BETTER_AUTH_URL is not set (e.g. derive from request origin). */
+  requestOrigin?: string,
+) {
   const db = env
     ? drizzle(env.DB, { schema, logger: ENABLE_DEBUG_LOGS })
     : ({} as DrizzleD1Database<Record<string, unknown>> & {
@@ -83,9 +95,14 @@ function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
         },
         plugins: [
           magicLink({
-            sendMagicLink: async ({ email, url }) => {
-              // Send magic link email via Resend SDK
-              const resend = new Resend(env?.RESEND_API_KEY);
+            sendMagicLink: async ({ email, token }) => {
+              if (!env?.RESEND_API_KEY) {
+                console.error("RESEND_API_KEY not set; cannot send magic link");
+                throw new Error("Email is not configured. Please try again later.");
+              }
+              const base = normalizeBaseURL(env.BETTER_AUTH_URL) ?? "";
+              const verifyLoginUrl = `${base}/verify-login?token=${encodeURIComponent(token)}`;
+              const resend = new Resend(env.RESEND_API_KEY);
               const { error } = await resend.emails.send({
                 from: "UnlockAffiliate <hello@updates.unlockaffiliate.com>",
                 to: [email],
@@ -98,7 +115,7 @@ function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
                       This link expires in 5 minutes.
                     </p>
                     <div style="margin: 24px 0;">
-                      <a href="${url}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 500;">
+                      <a href="${verifyLoginUrl}" style="display: inline-block; background: #7c3aed; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 500;">
                         Sign in to Dashboard
                       </a>
                     </div>
@@ -116,6 +133,9 @@ function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
                   "Failed to send magic link email:",
                   error.message,
                 );
+                throw new Error(
+                  error.message ?? "Failed to send login email. Please try again.",
+                );
               }
             },
             expiresIn: 300, // 5 minutes
@@ -127,7 +147,10 @@ function createAuth(env?: AppEnv, cf?: IncomingRequestCfProperties) {
           max: 200,
         },
         secret: env?.BETTER_AUTH_SECRET,
-        baseURL: env?.BETTER_AUTH_URL,
+        basePath: "/api/auth",
+        baseURL:
+          normalizeBaseURL(env?.BETTER_AUTH_URL) ??
+          (requestOrigin ? normalizeBaseURL(requestOrigin) : undefined),
         trustedOrigins: getTrustedOrigins(env),
         advanced: {
           trustedProxyHeaders: true,

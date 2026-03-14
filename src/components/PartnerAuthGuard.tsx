@@ -19,8 +19,9 @@ function PartnerAuthGuard({ children }: { children: React.ReactNode }) {
 
   if (isPending) {
     return (
-      <div className="flex items-center justify-center h-screen bg-background">
-        <div className="text-muted-foreground">Loading...</div>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background gap-4">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
+        <p className="text-sm text-muted-foreground">Checking sign-in…</p>
       </div>
     );
   }
