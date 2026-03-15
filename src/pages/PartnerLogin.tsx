@@ -22,14 +22,16 @@ function PartnerLogin() {
       });
 
       if (authError) {
-        setError(authError.message ?? "Failed to send login link");
+        const msg = authError.message ?? "Failed to send login link";
+        setError(msg);
         setLoading(false);
         return;
       }
 
       setSent(true);
-    } catch {
-      setError("An unexpected error occurred");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "An unexpected error occurred";
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -89,8 +91,13 @@ function PartnerLogin() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
-            <div className="bg-destructive/10 text-destructive text-sm rounded-lg p-3">
-              {error}
+            <div className="space-y-1">
+              <div className="bg-destructive/10 text-destructive text-sm rounded-lg p-3">
+                {error}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                If this keeps happening, the sign-in email may be misconfigured. Try again in a few minutes or contact the project owner.
+              </p>
             </div>
           )}
 

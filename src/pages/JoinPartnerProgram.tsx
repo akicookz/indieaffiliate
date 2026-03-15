@@ -44,7 +44,7 @@ function JoinPartnerProgram() {
   } = useQuery({
     queryKey: ["join", slug],
     queryFn: async (): Promise<JoinPageData> => {
-      const response = await fetch(`/api/join/${slug}`);
+      const response = await fetch(`/api/join/${slug}`, { credentials: "include" });
       if (!response.ok) {
         if (response.status === 404) throw new Error("not_found");
         throw new Error("Failed to load");
@@ -59,6 +59,7 @@ function JoinPartnerProgram() {
       const response = await fetch(`/api/join/${slug}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ name: name.trim(), email: email.trim() }),
       });
       if (!response.ok) {
@@ -87,6 +88,7 @@ function JoinPartnerProgram() {
       const response = await fetch(`/api/join/${slug}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ name: name.trim(), email: email.trim() }),
       });
       if (!response.ok) {
