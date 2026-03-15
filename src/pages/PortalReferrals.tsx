@@ -21,42 +21,42 @@ interface Referral {
 function getDisplayStatus(referral: Referral): { label: string; style: string } {
   const stripe = referral.stripeStatus;
   if (stripe) {
-    // Handle "cancels_on:2025-03-15" format
     if (stripe.startsWith("cancels_on:")) {
       const date = stripe.split(":").slice(1).join(":");
       return {
         label: `Cancels ${new Date(date).toLocaleDateString()}`,
-        style: "bg-orange-100 text-orange-800",
+        style: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
       };
     }
     const stripeStyles: Record<string, { label: string; style: string }> = {
-      active: { label: "Active", style: "bg-green-100 text-green-800" },
-      trialing: { label: "Trialing", style: "bg-blue-100 text-blue-800" },
-      past_due: { label: "Past Due", style: "bg-red-100 text-red-800" },
-      cancelled: { label: "Cancelled", style: "bg-gray-100 text-gray-800" },
-      refunded: { label: "Refunded", style: "bg-purple-100 text-purple-800" },
-      paid: { label: "Paid", style: "bg-green-100 text-green-800" },
+      active: { label: "Active", style: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
+      trialing: { label: "Trialing", style: "bg-blue-500/15 text-blue-700 dark:text-blue-400" },
+      past_due: { label: "Past Due", style: "bg-destructive/15 text-destructive" },
+      cancelled: { label: "Cancelled", style: "bg-muted text-muted-foreground" },
+      refunded: { label: "Refunded", style: "bg-violet-500/15 text-violet-700 dark:text-violet-400" },
+      paid: { label: "Paid", style: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
     };
-    return stripeStyles[stripe] ?? { label: stripe, style: "bg-gray-100 text-gray-800" };
+    return stripeStyles[stripe] ?? { label: stripe, style: "bg-muted text-muted-foreground" };
   }
 
-  // Fall back to local status
   const localStyles: Record<string, { label: string; style: string }> = {
-    trialing: { label: "Trialing", style: "bg-blue-100 text-blue-800" },
-    paid: { label: "Paid", style: "bg-green-100 text-green-800" },
-    cancelled: { label: "Cancelled", style: "bg-gray-100 text-gray-800" },
-    past_due: { label: "Past Due", style: "bg-red-100 text-red-800" },
-    refunded: { label: "Refunded", style: "bg-purple-100 text-purple-800" },
-    cancels_on: { label: "Cancelling", style: "bg-orange-100 text-orange-800" },
+    trialing: { label: "Trialing", style: "bg-blue-500/15 text-blue-700 dark:text-blue-400" },
+    paid: { label: "Paid", style: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
+    cancelled: { label: "Cancelled", style: "bg-muted text-muted-foreground" },
+    past_due: { label: "Past Due", style: "bg-destructive/15 text-destructive" },
+    refunded: { label: "Refunded", style: "bg-violet-500/15 text-violet-700 dark:text-violet-400" },
+    cancels_on: { label: "Cancelling", style: "bg-amber-500/15 text-amber-700 dark:text-amber-400" },
   };
-  return localStyles[referral.status] ?? { label: referral.status, style: "bg-gray-100 text-gray-800" };
+  return localStyles[referral.status] ?? { label: referral.status, style: "bg-muted text-muted-foreground" };
 }
 
 function PortalReferrals() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["partner-referrals"],
     queryFn: async (): Promise<{ referrals: Referral[] }> => {
-      const response = await fetch("/api/partner/referrals");
+      const response = await fetch("/api/partner/referrals", {
+        credentials: "include",
+      });
       if (!response.ok) {
         const err = await response.json() as { error: string };
         throw new Error(err.error || "Failed to load referrals");
@@ -67,16 +67,17 @@ function PortalReferrals() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-foreground/70">Loading referrals...</div>
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
+        <p className="text-sm text-muted-foreground">Loading referrals…</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-destructive">{error.message}</div>
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-2xl border border-border bg-card/50 p-8">
+        <p className="text-sm text-destructive">{error.message}</p>
       </div>
     );
   }

@@ -24,7 +24,9 @@ function PortalPayouts() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["partner-payouts-full"],
     queryFn: async (): Promise<{ payouts: Payout[] }> => {
-      const response = await fetch("/api/partner/payouts");
+      const response = await fetch("/api/partner/payouts", {
+        credentials: "include",
+      });
       if (!response.ok) {
         const err = await response.json() as { error: string };
         throw new Error(err.error || "Failed to load payouts");
@@ -35,30 +37,31 @@ function PortalPayouts() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-foreground/70">Loading payouts...</div>
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
+        <p className="text-sm text-muted-foreground">Loading payouts…</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-destructive">{error.message}</div>
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-2xl border border-border bg-card/50 p-8">
+        <p className="text-sm text-destructive">{error.message}</p>
       </div>
     );
   }
 
   function getStatusBadge(status: string) {
     const styles: Record<string, string> = {
-      scheduled: "bg-yellow-100 text-yellow-800",
-      paid: "bg-green-100 text-green-800",
-      failed: "bg-red-100 text-red-800",
+      scheduled: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+      paid: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+      failed: "bg-destructive/15 text-destructive",
     };
     return (
       <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border ${
-          styles[status] ?? ""
+        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border capitalize ${
+          styles[status] ?? "bg-muted text-muted-foreground"
         }`}
       >
         {status}
@@ -89,15 +92,15 @@ function PortalPayouts() {
 
       {/* Summary */}
       <div className="grid grid-cols-2 gap-4">
-        <div className="bg-card border border-border rounded-2xl p-4 shadow-xs">
+        <div className="bg-card/50 border border-border rounded-2xl p-4 shadow-xs">
           <p className="text-sm text-muted-foreground">Total Paid</p>
-          <p className="text-2xl font-medium mt-1 text-green-700">
+          <p className="text-2xl font-medium mt-1 text-emerald-700 dark:text-emerald-400">
             ${totals.paid.toFixed(2)}
           </p>
         </div>
-        <div className="bg-card border border-border rounded-2xl p-4 shadow-xs">
+        <div className="bg-card/50 border border-border rounded-2xl p-4 shadow-xs">
           <p className="text-sm text-muted-foreground">Upcoming</p>
-          <p className="text-2xl font-medium mt-1 text-yellow-700">
+          <p className="text-2xl font-medium mt-1 text-amber-700 dark:text-amber-400">
             ${totals.scheduled.toFixed(2)}
           </p>
         </div>

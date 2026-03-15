@@ -21,7 +21,9 @@ function PortalCommissions() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["partner-commissions"],
     queryFn: async (): Promise<{ commissions: Commission[] }> => {
-      const response = await fetch("/api/partner/commissions");
+      const response = await fetch("/api/partner/commissions", {
+        credentials: "include",
+      });
       if (!response.ok) {
         const err = await response.json() as { error: string };
         throw new Error(err.error || "Failed to load commissions");
@@ -32,31 +34,32 @@ function PortalCommissions() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-foreground/70">Loading commissions...</div>
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
+        <p className="text-sm text-muted-foreground">Loading commissions…</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-destructive">{error.message}</div>
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-2xl border border-border bg-card/50 p-8">
+        <p className="text-sm text-destructive">{error.message}</p>
       </div>
     );
   }
 
   function getStatusBadge(status: string) {
     const styles: Record<string, string> = {
-      pending: "bg-yellow-100 text-yellow-800",
-      approved: "bg-blue-100 text-blue-800",
-      paid: "bg-green-100 text-green-800",
-      rejected: "bg-red-100 text-red-800",
+      pending: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+      approved: "bg-blue-500/15 text-blue-700 dark:text-blue-400",
+      paid: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+      rejected: "bg-destructive/15 text-destructive",
     };
     return (
       <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border ${
-          styles[status] ?? ""
+        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border capitalize ${
+          styles[status] ?? "bg-muted text-muted-foreground"
         }`}
       >
         {status}
@@ -89,21 +92,21 @@ function PortalCommissions() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-card border border-border rounded-2xl p-4 shadow-xs">
+        <div className="bg-card/50 border border-border rounded-2xl p-4 shadow-xs">
           <p className="text-sm text-muted-foreground">Total</p>
-          <p className="text-2xl font-medium mt-1">${totals.total.toFixed(2)}</p>
+          <p className="text-2xl font-medium mt-1 text-foreground">${totals.total.toFixed(2)}</p>
         </div>
-        <div className="bg-card border border-border rounded-2xl p-4 shadow-xs">
+        <div className="bg-card/50 border border-border rounded-2xl p-4 shadow-xs">
           <p className="text-sm text-muted-foreground">Pending</p>
-          <p className="text-2xl font-medium mt-1 text-yellow-700">${totals.pending.toFixed(2)}</p>
+          <p className="text-2xl font-medium mt-1 text-amber-700 dark:text-amber-400">${totals.pending.toFixed(2)}</p>
         </div>
-        <div className="bg-card border border-border rounded-2xl p-4 shadow-xs">
+        <div className="bg-card/50 border border-border rounded-2xl p-4 shadow-xs">
           <p className="text-sm text-muted-foreground">Approved</p>
-          <p className="text-2xl font-medium mt-1 text-blue-700">${totals.approved.toFixed(2)}</p>
+          <p className="text-2xl font-medium mt-1 text-blue-700 dark:text-blue-400">${totals.approved.toFixed(2)}</p>
         </div>
-        <div className="bg-card border border-border rounded-2xl p-4 shadow-xs">
+        <div className="bg-card/50 border border-border rounded-2xl p-4 shadow-xs">
           <p className="text-sm text-muted-foreground">Paid</p>
-          <p className="text-2xl font-medium mt-1 text-green-700">${totals.paid.toFixed(2)}</p>
+          <p className="text-2xl font-medium mt-1 text-emerald-700 dark:text-emerald-400">${totals.paid.toFixed(2)}</p>
         </div>
       </div>
 
