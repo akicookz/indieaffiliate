@@ -545,9 +545,25 @@ const app = new Hono<HonoAppContext>()
       const db = drizzle(c.env.DB);
       const brandingService = new BrandingService(db);
 
-      const brandingResult = await brandingService.getBySlug(slug);
+      let brandingResult = await brandingService.getBySlug(slug);
       if (!brandingResult) {
-        return c.json({ error: "Program not found" }, 404);
+        const projectRows = await db
+          .select({ id: projects.id, name: projects.name })
+          .from(projects)
+          .where(eq(projects.slug, slug))
+          .limit(1);
+        const projectRow = projectRows[0];
+        if (!projectRow) {
+          return c.json({ error: "Program not found" }, 404);
+        }
+        brandingResult = {
+          projectName: projectRow.name,
+          branding: {
+            projectId: projectRow.id,
+            autoApprove: false,
+            defaultCommissionRate: 0.2,
+          },
+        } as NonNullable<Awaited<ReturnType<BrandingService["getBySlug"]>>>;
       }
 
       const branding = brandingResult.branding;
@@ -718,12 +734,22 @@ const app = new Hono<HonoAppContext>()
 
       const db = drizzle(c.env.DB, { schema });
       const brandingService = new BrandingService(db);
-      const brandingResult = await brandingService.getBySlug(slug);
+      let brandingResult = await brandingService.getBySlug(slug);
+      let projectId: string;
       if (!brandingResult) {
-        return c.json({ error: "Program not found" }, 404);
+        const projectRows = await db
+          .select({ id: projects.id })
+          .from(projects)
+          .where(eq(projects.slug, slug))
+          .limit(1);
+        const projectRow = projectRows[0];
+        if (!projectRow) {
+          return c.json({ error: "Program not found" }, 404);
+        }
+        projectId = projectRow.id;
+      } else {
+        projectId = brandingResult.branding.projectId;
       }
-
-      const projectId = brandingResult.branding.projectId;
 
       // Hash provided code
       const encoder = new TextEncoder();

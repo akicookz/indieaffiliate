@@ -113,17 +113,25 @@ function createAuth(
         plugins: [
           magicLink({
             sendMagicLink: async ({ email, token }) => {
-              if (!env?.RESEND_API_KEY) {
-                console.error("RESEND_API_KEY not set; cannot send magic link");
-                throw new Error("Email is not configured. Please try again later.");
-              }
-              const verifyLoginUrl = buildVerifyLoginUrl(env.BETTER_AUTH_URL, token);
-              const resend = new Resend(env.RESEND_API_KEY);
-              const { error } = await resend.emails.send({
-                from: "UnlockAffiliate <hello@updates.unlockaffiliate.com>",
-                to: [email],
-                subject: "Your partner dashboard login link",
-                html: `
+              try {
+                if (!env?.RESEND_API_KEY) {
+                  console.error("RESEND_API_KEY not set; cannot send magic link");
+                  throw new Error("Email is not configured. Please try again later.");
+                }
+                const base = normalizeBaseURL(env.BETTER_AUTH_URL);
+                if (!base || (!base.startsWith("http://") && !base.startsWith("https://"))) {
+                  console.error("BETTER_AUTH_URL missing or invalid; set it in Worker env to your app URL (e.g. https://yoursite.com)");
+                  throw new Error(
+                    "BETTER_AUTH_URL is not set. Set it in Cloudflare Worker env to your app URL (e.g. https://yoursite.com) for magic links to work.",
+                  );
+                }
+                const verifyLoginUrl = buildVerifyLoginUrl(env.BETTER_AUTH_URL, token);
+                const resend = new Resend(env.RESEND_API_KEY);
+                const { error } = await resend.emails.send({
+                  from: "UnlockAffiliate <hello@updates.unlockaffiliate.com>",
+                  to: [email],
+                  subject: "Your partner dashboard login link",
+                  html: `
                   <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto;">
                     <h2 style="color: #1a1a1a;">Sign in to your partner dashboard</h2>
                     <p style="color: #555; line-height: 1.6;">
@@ -143,15 +151,24 @@ function createAuth(
                     </p>
                   </div>
                 `,
-              });
-              if (error) {
-                console.error(
-                  "Failed to send magic link email:",
-                  error.message,
-                );
-                throw new Error(
-                  error.message ?? "Failed to send login email. Please try again.",
-                );
+                });
+                if (error) {
+                  console.error("[magic-link] Resend error:", error.message);
+                  throw new Error(
+                    error.message ?? "Failed to send login email. Please try again.",
+                  );
+                }
+              } catch (err) {
+                const message = err instanceof Error ? err.message : "";
+                const known =
+                  message.includes("BETTER_AUTH_URL") ||
+                  message.includes("Email is not configured") ||
+                  message.includes("send login email");
+                if (!known) {
+                  console.error("[magic-link] sendMagicLink failed:", message, err instanceof Error ? err.stack : "");
+                }
+                if (err instanceof Error && known) throw err;
+                throw new Error("Failed to send login link. Please try again later.");
               }
             },
             expiresIn: 300, // 5 minutes
