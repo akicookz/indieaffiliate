@@ -73,6 +73,7 @@ function PayoutLinkCard({ currentLink }: { currentLink: string | null }) {
       const response = await fetch("/api/partner/payout-link", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ payoutLink }),
       });
       if (!response.ok) {
@@ -174,7 +175,9 @@ function PortalDashboard() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["partner-dashboard"],
     queryFn: async (): Promise<PartnerDashboardData> => {
-      const response = await fetch("/api/partner/dashboard");
+      const response = await fetch("/api/partner/dashboard", {
+        credentials: "include",
+      });
       if (!response.ok) {
         const err = await response.json() as { error: string };
         throw new Error(err.error || "Failed to load dashboard");
@@ -186,7 +189,9 @@ function PortalDashboard() {
   const { data: payoutsData } = useQuery({
     queryKey: ["partner-payouts"],
     queryFn: async (): Promise<{ payouts: Payout[] }> => {
-      const response = await fetch("/api/partner/payouts");
+      const response = await fetch("/api/partner/payouts", {
+        credentials: "include",
+      });
       if (!response.ok) throw new Error("Failed to load payouts");
       return response.json();
     },
@@ -194,18 +199,17 @@ function PortalDashboard() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-foreground/70">Loading dashboard...</div>
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
+        <p className="text-sm text-muted-foreground">Loading dashboard…</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-destructive">
-          {error.message}
-        </div>
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-2xl border border-border bg-card/50 p-8">
+        <p className="text-sm text-destructive">{error.message}</p>
       </div>
     );
   }
@@ -220,14 +224,14 @@ function PortalDashboard() {
 
   function getPayoutStatusBadge(status: string) {
     const styles: Record<string, string> = {
-      scheduled: "bg-yellow-100 text-yellow-800",
-      paid: "bg-green-100 text-green-800",
-      failed: "bg-red-100 text-red-800",
+      scheduled: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+      paid: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+      failed: "bg-destructive/15 text-destructive",
     };
     return (
       <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border ${
-          styles[status] ?? ""
+        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border capitalize ${
+          styles[status] ?? "bg-muted text-muted-foreground"
         }`}
       >
         {status}
@@ -242,7 +246,7 @@ function PortalDashboard() {
       {/* Welcome + Referral Link */}
       <div>
         <h1 className="text-2xl font-semibold text-foreground">
-          Welcome back, {data?.partner.name}
+          Welcome back{data?.partner?.name?.trim() ? `, ${data.partner.name}` : ""}
         </h1>
         <p className="text-muted-foreground mt-1">
           Commission rate: {Math.round((data?.partner.commissionRate ?? 0) * 100)}%

@@ -51,6 +51,23 @@ function normalizeBaseURL(url: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
+/** Build absolute verify-login URL for magic link email. Requires a valid origin; uses https in production. */
+function buildVerifyLoginUrl(base: string | undefined, token: string): string {
+  const normalized = normalizeBaseURL(base);
+  if (!normalized || (!normalized.startsWith("http://") && !normalized.startsWith("https://"))) {
+    throw new Error(
+      "BETTER_AUTH_URL must be set to a full app URL (e.g. https://yourdomain.com) for magic links to work.",
+    );
+  }
+  let origin = normalized;
+  const isLocalhost =
+    normalized.includes("localhost") || normalized.startsWith("http://127.0.0.1");
+  if (!isLocalhost && normalized.startsWith("http://")) {
+    origin = normalized.replace(/^http:\/\//, "https://");
+  }
+  return `${origin}/verify-login?token=${encodeURIComponent(token)}`;
+}
+
 function createAuth(
   env?: AppEnv,
   cf?: IncomingRequestCfProperties,
@@ -100,8 +117,7 @@ function createAuth(
                 console.error("RESEND_API_KEY not set; cannot send magic link");
                 throw new Error("Email is not configured. Please try again later.");
               }
-              const base = normalizeBaseURL(env.BETTER_AUTH_URL) ?? "";
-              const verifyLoginUrl = `${base}/verify-login?token=${encodeURIComponent(token)}`;
+              const verifyLoginUrl = buildVerifyLoginUrl(env.BETTER_AUTH_URL, token);
               const resend = new Resend(env.RESEND_API_KEY);
               const { error } = await resend.emails.send({
                 from: "UnlockAffiliate <hello@updates.unlockaffiliate.com>",

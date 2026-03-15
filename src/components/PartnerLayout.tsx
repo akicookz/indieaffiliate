@@ -31,7 +31,9 @@ function PartnerLayout() {
   const { data: branding } = useQuery({
     queryKey: ["partner-portal-branding"],
     queryFn: async (): Promise<PortalBranding> => {
-      const response = await fetch("/api/partner/portal-branding");
+      const response = await fetch("/api/partner/portal-branding", {
+        credentials: "include",
+      });
       if (!response.ok) return { portalName: null, logo: null, brandColor: "#7c3aed" };
       return response.json();
     },
@@ -100,7 +102,8 @@ function PartnerLayout() {
               variant="ghost"
               size="sm"
               onClick={handleSignOut}
-              className="text-muted-foreground hover:text-foreground"
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+              aria-label="Sign out"
             >
               <LogOut className="w-4 h-4 mr-2" />
               Sign out
