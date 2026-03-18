@@ -254,6 +254,36 @@ const app = new Hono<HonoAppContext>()
       return c.text("Invalid referral link", 404);
     }
 
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(partner.projectId);
+
+    // Resolve the public app origin for hosted redirects (Option 2: merchant domain or join page):
+    // - Prefer BETTER_AUTH_URL (explicit app URL)
+    // - Fall back to the current request origin
+    // - In dev, if origin is the worker (e.g. :8787), redirect to the SPA (e.g. :5173) so /join lands correctly
+    let appOrigin: string | undefined;
+    const authBase = c.env.BETTER_AUTH_URL;
+    if (authBase) {
+      try {
+        appOrigin = new URL(authBase).origin;
+      } catch {
+        appOrigin = undefined;
+      }
+    }
+    if (!appOrigin) {
+      try {
+        appOrigin = new URL(c.req.url).origin;
+      } catch {
+        appOrigin = undefined;
+      }
+    }
+    const isWorkerDevOrigin =
+      appOrigin === "http://localhost:8787" ||
+      appOrigin === "http://127.0.0.1:8787";
+    if (isWorkerDevOrigin) {
+      appOrigin = "http://localhost:5173";
+    }
+
     // Extract Cloudflare metadata for fraud detection
     const cf = c.req.raw.cf as IncomingRequestCfProperties | undefined;
     const country = cf?.country as string | undefined;
@@ -301,8 +331,6 @@ const app = new Hono<HonoAppContext>()
           return c.text("Invalid redirect URL", 400);
         }
         // If the project has a domain configured, enforce it
-        const projectService = new ProjectService(db);
-        const project = await projectService.getProjectById(partner.projectId);
         if (project?.domain) {
           const allowedHost = project.domain
             .toLowerCase()
@@ -319,6 +347,22 @@ const app = new Hono<HonoAppContext>()
       }
       return c.redirect(redirectUrl, 302);
     }
+
+    if (project?.domain) {
+      const bareDomain = project.domain.replace(/^https?:\/\//, "");
+      const landing = `https://${bareDomain}/?ref=${encodeURIComponent(
+        partner.referralCode,
+      )}`;
+      return c.redirect(landing, 302);
+    }
+
+    if (project?.slug && appOrigin) {
+      const hostedLanding = `${appOrigin}/join/${encodeURIComponent(
+        project.slug,
+      )}?ref=${encodeURIComponent(partner.referralCode)}`;
+      return c.redirect(hostedLanding, 302);
+    }
+
     const pixel = new Uint8Array([
       0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00,
       0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x00,
