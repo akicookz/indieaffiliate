@@ -14,10 +14,11 @@ export const updateProjectSchema = z.object({
 // ─── Partners ─────────────────────────────────────────────────────────────────
 export const createPartnerSchema = z.object({
   projectId: z.string().min(1, "projectId is required"),
-  name: z.string().min(1, "Name is required").max(100),
-  email: z.string().email("Invalid email address"),
+  name: z.string().max(100).optional(),
+  email: z.string().email("Invalid email address").optional(),
   commissionRate: z.number().min(0.01).max(1).optional(),
   referralCode: z.string().min(1).max(50).optional(),
+  payoutLink: z.string().max(500).optional(),
 });
 
 export const updatePartnerSchema = z.object({
@@ -154,11 +155,12 @@ export const updateMetadataMappingsSchema = z.object({
 // ─── Import ───────────────────────────────────────────────────────────────────
 
 export const csvImportPartnerSchema = z.object({
-  name: z.string().min(1).max(100),
-  email: z.string().email(),
+  name: z.string().max(100).optional(),
+  email: z.string().email().optional(),
   referralCode: z.string().max(50).optional(),
   commissionRate: z.number().min(0.01).max(1).optional(),
   status: z.enum(["active", "pending", "inactive"]).optional(),
+  payoutLink: z.string().max(500).optional(),
 });
 
 export const csvImportCustomerSchema = z.object({

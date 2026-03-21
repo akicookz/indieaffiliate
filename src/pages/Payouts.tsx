@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   DollarSign,
@@ -138,16 +139,6 @@ function getCustomerStatusBadge(status: string | null) {
   );
 }
 
-function deriveDescription(commission: CommissionDetail) {
-  const revenue = commission.rate > 0 ? commission.amount / commission.rate : 0;
-  const dateSource = commission.eventDate ?? commission.createdAt;
-  const month = new Date(dateSource).toLocaleDateString("en-US", {
-    month: "short",
-    year: "numeric",
-  });
-  return `${formatCurrency(revenue)} revenue from ${commission.customerEmail} for ${month}`;
-}
-
 function buildPaymentNote(partner: PartnerGroup) {
   const approved = partner.commissions.filter((c) => c.status === "approved");
   if (approved.length === 0) return "";
@@ -249,7 +240,13 @@ function PartnerRow({
         </TableCell>
         <TableCell>
           <div>
-            <div className="font-medium">{partner.partnerName}</div>
+            <Link
+              to={`/app/customers?partner=${partner.partnerId}`}
+              className="font-medium text-primary hover:underline"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {partner.partnerName}
+            </Link>
             <div className="text-sm text-muted-foreground">
               {partner.partnerEmail}
             </div>
@@ -375,34 +372,22 @@ function PartnerRow({
                 )}
               </div>
             </TableCell>
-            {/* Event date + Stripe reference */}
+            {/* Event date */}
             <TableCell>
-              <div className="space-y-1">
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Calendar className="w-3 h-3" />
-                  {eventDate ? (
-                    <span>{eventDate}</span>
-                  ) : (
-                    <span className="italic">{createdDate}</span>
-                  )}
-                </div>
-                {commission.externalEventId && (
-                  <div className="text-[10px] font-mono text-muted-foreground/60 truncate max-w-[160px]" title={commission.externalEventId}>
-                    {commission.externalEventId}
-                  </div>
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Calendar className="w-3 h-3" />
+                {eventDate ? (
+                  <span>{eventDate}</span>
+                ) : (
+                  <span className="italic">{createdDate}</span>
                 )}
               </div>
             </TableCell>
-            {/* Commission amount */}
+            {/* Commission amount @ rate */}
             <TableCell>
-              <div className="space-y-0.5">
-                <div className="text-sm font-medium">{formatCurrency(commission.amount)}</div>
-                <div className="text-[11px] text-muted-foreground">{Math.round(commission.rate * 100)}% rate</div>
-              </div>
-            </TableCell>
-            {/* Description */}
-            <TableCell className="text-xs text-muted-foreground">
-              {deriveDescription(commission)}
+              <span className="text-sm font-medium">
+                {formatCurrency(commission.amount)} <span className="text-muted-foreground font-normal">@ {Math.round(commission.rate * 100)}%</span>
+              </span>
             </TableCell>
             {/* Status + fraud flag */}
             <TableCell>

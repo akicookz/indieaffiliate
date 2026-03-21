@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { HandHeart, Users, TrendingUp, UserPlus, Copy, Check, ExternalLink, Pencil, Upload, CheckCircle, XCircle, Search } from "lucide-react";
+import { HandHeart, Users, TrendingUp, UserPlus, Copy, Check, Pencil, Upload, CheckCircle, XCircle, Search } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -191,7 +191,6 @@ function EditPartnerSheet({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Partner name"
-              required
             />
           </div>
 
@@ -203,7 +202,6 @@ function EditPartnerSheet({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="partner@example.com"
-              required
             />
           </div>
 
@@ -368,6 +366,7 @@ function Partners() {
 
   const totalRevenue = data?.partners.reduce((sum, p) => sum + p.totalRevenue, 0) ?? 0;
   const projects = projectsData?.projects ?? [];
+  const showProjectColumn = projects.length > 1;
 
   return (
     <div className="space-y-6 bg-background">
@@ -479,13 +478,12 @@ function Partners() {
           <TableHeader>
             <TableRow>
               <TableHead>Partner</TableHead>
-              <TableHead>Project</TableHead>
+              {showProjectColumn && <TableHead>Project</TableHead>}
               <TableHead>Status</TableHead>
               <TableHead>Referral Link</TableHead>
-              <TableHead>Payout Link</TableHead>
               <TableHead>Customers</TableHead>
               <TableHead>Revenue</TableHead>
-              <TableHead>Commission</TableHead>
+              <TableHead>Owed</TableHead>
               <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
@@ -497,35 +495,27 @@ function Partners() {
               >
                 <TableCell>
                   <div>
-                    <div className="font-medium">{partner.name}</div>
+                    <Link
+                      to={`/app/customers?partner=${partner.id}`}
+                      className="font-medium text-primary hover:underline"
+                    >
+                      {partner.name || "Unnamed"}
+                    </Link>
                     <div className="text-sm text-muted-foreground">
                       {partner.email}
                     </div>
                   </div>
                 </TableCell>
-                <TableCell>
-                  <span className="text-sm text-muted-foreground">
-                    {partner.projectName}
-                  </span>
-                </TableCell>
+                {showProjectColumn && (
+                  <TableCell>
+                    <span className="text-sm text-muted-foreground">
+                      {partner.projectName}
+                    </span>
+                  </TableCell>
+                )}
                 <TableCell>{getStatusBadge(partner.status)}</TableCell>
                 <TableCell>
                   <CopyReferralLink referralCode={partner.referralCode} />
-                </TableCell>
-                <TableCell>
-                  {partner.payoutLink ? (
-                    <a
-                      href={partner.payoutLink.startsWith("http") ? partner.payoutLink : `https://${partner.payoutLink}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline truncate max-w-[140px]"
-                    >
-                      {partner.payoutLink}
-                      <ExternalLink className="w-3 h-3 shrink-0" />
-                    </a>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">-</span>
-                  )}
                 </TableCell>
                 <TableCell className="font-medium">
                   {partner.referredCustomers}
@@ -534,9 +524,14 @@ function Partners() {
                   ${partner.totalRevenue.toFixed(2)}
                 </TableCell>
                 <TableCell>
-                  <span className="text-sm text-muted-foreground">
-                    {Math.round(partner.commissionRate * 100)}%
-                  </span>
+                  <div>
+                    <span className="font-medium">
+                      ${(partner.totalRevenue * partner.commissionRate).toFixed(2)}
+                    </span>
+                    <div className="text-xs text-muted-foreground">
+                      ({Math.round(partner.commissionRate * 100)}%)
+                    </div>
+                  </div>
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-1.5">
@@ -580,7 +575,7 @@ function Partners() {
             {(!data?.partners || data.partners.length === 0) && (
               <TableRow>
                 <TableCell
-                  colSpan={9}
+                  colSpan={showProjectColumn ? 8 : 7}
                   className="text-center text-muted-foreground py-8"
                 >
                   No partners yet. Create a project first, then invite partners.

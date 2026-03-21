@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts";
-import { TrendingUp, MousePointer, Users, DollarSign, Upload } from "lucide-react";
+import { TrendingUp, MousePointer, Users, Clock, Upload, BarChart3 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -17,14 +16,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  type ChartConfig,
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  ChartLegend,
-  ChartLegendContent,
-} from "@/components/ui/chart";
 import { Button } from "@/components/ui/button";
 import StatCard from "@/components/StatCard";
 
@@ -55,23 +46,12 @@ interface DashboardData {
   }>;
 }
 
-interface AnalyticsData {
-  clicksByDay: Array<{ date: string; count: number }>;
-  conversionsByDay: Array<{ date: string; count: number }>;
-  revenueByDay: Array<{ date: string; revenue: number; commissions: number }>;
-  topPartners: Array<{
-    id: string;
-    name: string;
-    email: string;
-    clicks: number;
-    customers: number;
-    revenue: number;
-  }>;
+interface CommissionsTotals {
+  partners: unknown[];
   totals: {
-    clicks: number;
-    conversions: number;
-    revenue: number;
-    commissions: number;
+    pendingAmount: number;
+    approvedAmount: number;
+    paidAmount: number;
   };
 }
 
@@ -81,26 +61,7 @@ interface Project {
   slug: string;
 }
 
-const clicksChartConfig = {
-  count: {
-    label: "Clicks",
-    color: "var(--color-chart-1)",
-  },
-} satisfies ChartConfig;
-
-const revenueChartConfig = {
-  revenue: {
-    label: "Revenue",
-    color: "var(--color-chart-2)",
-  },
-  commissions: {
-    label: "Commissions",
-    color: "var(--color-chart-3)",
-  },
-} satisfies ChartConfig;
-
 function Dashboard() {
-  const [days, setDays] = useState("30");
   const [selectedProject, setSelectedProject] = useState("all");
 
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
@@ -114,6 +75,7 @@ function Dashboard() {
 
   const projects = projectsData?.projects ?? [];
   const shouldRedirectToOnboarding = !projectsLoading && projects.length === 0;
+  const showProjectColumn = projects.length > 1;
 
   const { data: dashData, isLoading: dashLoading, error: dashError } = useQuery({
     queryKey: ["dashboard", selectedProject],
@@ -127,14 +89,13 @@ function Dashboard() {
     enabled: !projectsLoading && projects.length > 0,
   });
 
-  const { data: analyticsData, isLoading: analyticsLoading, error: analyticsError } = useQuery({
-    queryKey: ["analytics", selectedProject, days],
-    queryFn: async (): Promise<AnalyticsData> => {
+  const { data: commissionsData } = useQuery({
+    queryKey: ["commissions-by-partner", selectedProject],
+    queryFn: async (): Promise<CommissionsTotals> => {
       const params = new URLSearchParams();
       if (selectedProject !== "all") params.set("project", selectedProject);
-      params.set("days", days);
-      const response = await fetch(`/api/analytics?${params}`);
-      if (!response.ok) throw new Error("Failed to fetch analytics");
+      const response = await fetch(`/api/commissions/by-partner?${params}`);
+      if (!response.ok) throw new Error("Failed to fetch commissions");
       return response.json();
     },
     enabled: !projectsLoading && projects.length > 0,
@@ -144,7 +105,7 @@ function Dashboard() {
     return <Navigate to="/onboarding" replace />;
   }
 
-  if (projectsLoading || (dashLoading && analyticsLoading)) {
+  if (projectsLoading || dashLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-lg text-foreground/70">Loading dashboard...</div>
@@ -152,12 +113,11 @@ function Dashboard() {
     );
   }
 
-  const error = dashError ?? analyticsError;
-  if (error) {
+  if (dashError) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-lg text-destructive">
-          Error loading dashboard: {error.message}
+          Error loading dashboard: {dashError.message}
         </div>
       </div>
     );
@@ -179,6 +139,8 @@ function Dashboard() {
       </span>
     );
   }
+
+  const pendingAmount = commissionsData?.totals.pendingAmount ?? 0;
 
   return (
     <div className="space-y-6 bg-background">
@@ -210,23 +172,13 @@ function Dashboard() {
             </SelectContent>
           </Select>
         </div>
-        <div className="w-48">
-          <Select value={days} onValueChange={setDays}>
-            <SelectTrigger className="bg-card">
-              <span>
-                {days === "7" && "Last 7 days"}
-                {days === "30" && "Last 30 days"}
-                {days === "90" && "Last 90 days"}
-                {days === "365" && "Last year"}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="7">Last 7 days</SelectItem>
-              <SelectItem value="30">Last 30 days</SelectItem>
-              <SelectItem value="90">Last 90 days</SelectItem>
-              <SelectItem value="365">Last year</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="ml-auto">
+          <Button variant="ghost" size="sm" asChild>
+            <Link to="/app/analytics">
+              <BarChart3 className="w-4 h-4 mr-2" />
+              View Analytics
+            </Link>
+          </Button>
         </div>
       </div>
 
@@ -241,128 +193,19 @@ function Dashboard() {
         />
         <StatCard
           title="Clicks"
-          value={(analyticsData?.totals.clicks ?? dashData?.clicks ?? 0).toLocaleString()}
+          value={(dashData?.clicks ?? 0).toLocaleString()}
           Icon={MousePointer}
         />
         <StatCard
-          title="Conversions"
-          value={(analyticsData?.totals.conversions ?? 0).toLocaleString()}
+          title="Customers"
+          value={(dashData?.newCustomers ?? 0).toLocaleString()}
           Icon={Users}
         />
         <StatCard
-          title="Commissions"
-          value={`$${(analyticsData?.totals.commissions ?? 0).toLocaleString()}`}
-          Icon={DollarSign}
+          title="Pending Commissions"
+          value={`$${pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          Icon={Clock}
         />
-      </div>
-
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Click Analytics Chart */}
-        <div className="shadow-xs bg-card/50 rounded-2xl p-6">
-          <h3 className="text-sm font-medium text-foreground mb-4">
-            Click Analytics
-          </h3>
-          {analyticsData?.clicksByDay && analyticsData.clicksByDay.length > 0 ? (
-            <ChartContainer config={clicksChartConfig} className="h-64 w-full">
-              <AreaChart data={analyticsData.clicksByDay} accessibilityLayer>
-                <CartesianGrid vertical={false} />
-                <XAxis
-                  dataKey="date"
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  tickFormatter={(v) =>
-                    new Date(v).toLocaleDateString("en", {
-                      month: "short",
-                      day: "numeric",
-                    })
-                  }
-                />
-                <YAxis tickLine={false} axisLine={false} tickMargin={8} />
-                <ChartTooltip
-                  content={
-                    <ChartTooltipContent
-                      labelFormatter={(v) => new Date(v).toLocaleDateString()}
-                    />
-                  }
-                />
-                <Area
-                  type="monotone"
-                  dataKey="count"
-                  fill="var(--color-count)"
-                  fillOpacity={0.15}
-                  stroke="var(--color-count)"
-                  strokeWidth={2}
-                />
-              </AreaChart>
-            </ChartContainer>
-          ) : (
-            <div className="h-64 flex items-center justify-center border-2 border-dashed border-border/30 rounded-xl">
-              <p className="text-muted-foreground text-sm">No click data yet</p>
-            </div>
-          )}
-        </div>
-
-        {/* Revenue Chart */}
-        <div className="shadow-xs bg-card/50 rounded-2xl p-6">
-          <h3 className="text-sm font-medium text-foreground mb-4">
-            Revenue Trends
-          </h3>
-          {analyticsData?.revenueByDay && analyticsData.revenueByDay.length > 0 ? (
-            <ChartContainer config={revenueChartConfig} className="h-64 w-full">
-              <LineChart data={analyticsData.revenueByDay} accessibilityLayer>
-                <CartesianGrid vertical={false} />
-                <XAxis
-                  dataKey="date"
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  tickFormatter={(v) =>
-                    new Date(v).toLocaleDateString("en", {
-                      month: "short",
-                      day: "numeric",
-                    })
-                  }
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  tickFormatter={(v) => `$${v}`}
-                />
-                <ChartTooltip
-                  content={
-                    <ChartTooltipContent
-                      labelFormatter={(v) => new Date(v).toLocaleDateString()}
-                    />
-                  }
-                />
-                <ChartLegend content={<ChartLegendContent />} />
-                <Line
-                  type="monotone"
-                  dataKey="revenue"
-                  stroke="var(--color-revenue)"
-                  strokeWidth={2}
-                  dot={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="commissions"
-                  stroke="var(--color-commissions)"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ChartContainer>
-          ) : (
-            <div className="h-64 flex items-center justify-center border-2 border-dashed border-border/30 rounded-xl">
-              <p className="text-muted-foreground text-sm">
-                No revenue data yet
-              </p>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Tables */}
@@ -384,7 +227,7 @@ function Dashboard() {
             <TableHeader>
               <TableRow>
                 <TableHead>Partner</TableHead>
-                <TableHead>Project</TableHead>
+                {showProjectColumn && <TableHead>Project</TableHead>}
                 <TableHead>Customers</TableHead>
                 <TableHead>Revenue</TableHead>
               </TableRow>
@@ -394,17 +237,24 @@ function Dashboard() {
                 <TableRow key={referrer.id}>
                   <TableCell>
                     <div>
-                      <div className="font-medium">{referrer.partnerName}</div>
+                      <Link
+                        to={`/app/customers?partner=${referrer.id}`}
+                        className="font-medium text-primary hover:underline"
+                      >
+                        {referrer.partnerName}
+                      </Link>
                       <div className="text-sm text-muted-foreground">
                         {referrer.email}
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <span className="text-sm text-muted-foreground">
-                      {referrer.project}
-                    </span>
-                  </TableCell>
+                  {showProjectColumn && (
+                    <TableCell>
+                      <span className="text-sm text-muted-foreground">
+                        {referrer.project}
+                      </span>
+                    </TableCell>
+                  )}
                   <TableCell className="font-medium">
                     {referrer.referredCustomers}
                   </TableCell>
@@ -416,7 +266,7 @@ function Dashboard() {
               {(!dashData?.topReferrers || dashData.topReferrers.length === 0) && (
                 <TableRow>
                   <TableCell
-                    colSpan={4}
+                    colSpan={showProjectColumn ? 4 : 3}
                     className="text-center text-muted-foreground py-8"
                   >
                     No partners yet. Invite your first partner to get started.
@@ -444,7 +294,7 @@ function Dashboard() {
             <TableHeader>
               <TableRow>
                 <TableHead>Customer</TableHead>
-                <TableHead>Project</TableHead>
+                {showProjectColumn && <TableHead>Project</TableHead>}
                 <TableHead>Partner</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
@@ -460,11 +310,13 @@ function Dashboard() {
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <span className="text-sm text-muted-foreground">
-                      {customer.project}
-                    </span>
-                  </TableCell>
+                  {showProjectColumn && (
+                    <TableCell>
+                      <span className="text-sm text-muted-foreground">
+                        {customer.project}
+                      </span>
+                    </TableCell>
+                  )}
                   <TableCell>{customer.referredPartner}</TableCell>
                   <TableCell>{getStatusBadge(customer.status)}</TableCell>
                 </TableRow>
@@ -473,7 +325,7 @@ function Dashboard() {
                 dashData.newReferredCustomers.length === 0) && (
                   <TableRow>
                     <TableCell
-                      colSpan={4}
+                      colSpan={showProjectColumn ? 4 : 3}
                       className="text-center text-muted-foreground py-8"
                     >
                       No customers yet.

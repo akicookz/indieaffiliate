@@ -36,6 +36,7 @@ function InvitePartnerDialog({ projects }: InvitePartnerDialogProps) {
   const [email, setEmail] = useState("");
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [commissionRate, setCommissionRate] = useState("20");
+  const [payoutLink, setPayoutLink] = useState("");
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -45,9 +46,10 @@ function InvitePartnerDialog({ projects }: InvitePartnerDialogProps) {
         credentials: "include",
         body: JSON.stringify({
           projectId,
-          name: name.trim(),
-          email: email.trim().toLowerCase(),
+          ...(name.trim() && { name: name.trim() }),
+          ...(email.trim() && { email: email.trim().toLowerCase() }),
           commissionRate: parseFloat(commissionRate) / 100,
+          ...(payoutLink.trim() && { payoutLink: payoutLink.trim() }),
         }),
       });
       if (!response.ok) {
@@ -67,12 +69,13 @@ function InvitePartnerDialog({ projects }: InvitePartnerDialogProps) {
     setName("");
     setEmail("");
     setCommissionRate("20");
+    setPayoutLink("");
     setProjectId(projects[0]?.id ?? "");
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !email.trim() || !projectId) return;
+    if (!projectId) return;
     mutation.mutate();
   }
 
@@ -119,7 +122,6 @@ function InvitePartnerDialog({ projects }: InvitePartnerDialogProps) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Partner's name"
-              required
             />
           </div>
 
@@ -131,7 +133,16 @@ function InvitePartnerDialog({ projects }: InvitePartnerDialogProps) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="partner@example.com"
-              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="partner-payout">Payout Link</Label>
+            <Input
+              id="partner-payout"
+              value={payoutLink}
+              onChange={(e) => setPayoutLink(e.target.value)}
+              placeholder="paypal.me/name or wise.com/pay/..."
             />
           </div>
 

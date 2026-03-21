@@ -1,7 +1,8 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar } from "recharts";
-import { MousePointer, Users, TrendingUp, DollarSign } from "lucide-react";
+import { MousePointer, Users, TrendingUp, DollarSign, Percent } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -48,6 +49,13 @@ const clicksChartConfig = {
   count: {
     label: "Clicks",
     color: "var(--color-chart-1)",
+  },
+} satisfies ChartConfig;
+
+const conversionsChartConfig = {
+  count: {
+    label: "Conversions",
+    color: "var(--color-chart-4)",
   },
 } satisfies ChartConfig;
 
@@ -160,7 +168,7 @@ function Analytics() {
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
         <StatCard
           title="Total Clicks"
           value={(data?.totals.clicks ?? 0).toLocaleString()}
@@ -170,6 +178,15 @@ function Analytics() {
           title="Conversions"
           value={(data?.totals.conversions ?? 0).toLocaleString()}
           Icon={Users}
+        />
+        <StatCard
+          title="Conversion Rate"
+          value={
+            (data?.totals.clicks ?? 0) > 0
+              ? `${((data!.totals.conversions / data!.totals.clicks) * 100).toFixed(1)}%`
+              : "0%"
+          }
+          Icon={Percent}
         />
         <StatCard
           title="Revenue"
@@ -184,7 +201,7 @@ function Analytics() {
       </div>
 
       {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Click Analytics Chart */}
         <div className="shadow-xs bg-card/50 rounded-2xl p-6">
           <h3 className="text-sm font-medium text-foreground mb-4">
@@ -227,6 +244,52 @@ function Analytics() {
           ) : (
             <div className="h-64 flex items-center justify-center border-2 border-dashed border-border/30 rounded-xl">
               <p className="text-muted-foreground text-sm">No click data yet</p>
+            </div>
+          )}
+        </div>
+
+        {/* Conversions Chart */}
+        <div className="shadow-xs bg-card/50 rounded-2xl p-6">
+          <h3 className="text-sm font-medium text-foreground mb-4">
+            Conversions
+          </h3>
+          {data?.conversionsByDay && data.conversionsByDay.length > 0 ? (
+            <ChartContainer config={conversionsChartConfig} className="h-64 w-full">
+              <AreaChart data={data.conversionsByDay} accessibilityLayer>
+                <CartesianGrid vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  tickFormatter={(v) =>
+                    new Date(v).toLocaleDateString("en", {
+                      month: "short",
+                      day: "numeric",
+                    })
+                  }
+                />
+                <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+                <ChartTooltip
+                  content={
+                    <ChartTooltipContent
+                      labelFormatter={(v) => new Date(v).toLocaleDateString()}
+                    />
+                  }
+                />
+                <Area
+                  type="monotone"
+                  dataKey="count"
+                  fill="var(--color-count)"
+                  fillOpacity={0.15}
+                  stroke="var(--color-count)"
+                  strokeWidth={2}
+                />
+              </AreaChart>
+            </ChartContainer>
+          ) : (
+            <div className="h-64 flex items-center justify-center border-2 border-dashed border-border/30 rounded-xl">
+              <p className="text-muted-foreground text-sm">No conversion data yet</p>
             </div>
           )}
         </div>
@@ -301,7 +364,12 @@ function Analytics() {
                 className="flex items-center justify-between p-4 bg-background/50 rounded-xl border border-border/30"
               >
                 <div>
-                  <p className="font-medium text-foreground">{partner.name}</p>
+                  <Link
+                    to={`/app/customers?partner=${partner.id}`}
+                    className="font-medium text-primary hover:underline"
+                  >
+                    {partner.name}
+                  </Link>
                   <p className="text-sm text-muted-foreground">
                     {partner.email}
                   </p>

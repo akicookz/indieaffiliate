@@ -7,11 +7,12 @@ import { StripeSyncService } from "./stripe-sync-service";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface CsvPartnerRow {
-  name: string;
-  email: string;
+  name?: string;
+  email?: string;
   referralCode?: string;
   commissionRate?: number;
   status?: "active" | "pending" | "inactive";
+  payoutLink?: string;
 }
 
 export interface CsvCustomerRow {
@@ -120,9 +121,9 @@ export class ImportService {
 
     for (let i = 0; i < data.partners.length; i++) {
       const row = data.partners[i];
-      const email = row.email.toLowerCase();
+      const email = row.email?.toLowerCase();
 
-      if (partnerEmailToId.has(email)) {
+      if (email && partnerEmailToId.has(email)) {
         result.skipped.push({ row: i, reason: "Partner with this email already exists", type: "partner" });
         continue;
       }
@@ -145,14 +146,15 @@ export class ImportService {
         await this.db.insert(partners).values({
           id,
           projectId,
-          name: row.name,
-          email,
+          name: row.name ?? "",
+          email: email ?? "",
           referralCode: finalCode,
           commissionRate: row.commissionRate ?? 0.2,
           status: row.status ?? "active",
+          payoutLink: row.payoutLink ?? null,
         });
 
-        partnerEmailToId.set(email, id);
+        if (email) partnerEmailToId.set(email, id);
         result.created.partners++;
       } catch (err) {
         result.errors.push({

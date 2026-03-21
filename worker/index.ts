@@ -1315,15 +1315,17 @@ const app = new Hono<HonoAppContext>()
     }
 
     const partnerService = new PartnerService(db);
-    const existingPartner = await partnerService.getPartnerByEmail(
-      parsed.data.projectId,
-      parsed.data.email.trim().toLowerCase(),
-    );
-    if (existingPartner) {
-      return c.json(
-        { error: "A partner with this email already exists in this project." },
-        409,
+    if (parsed.data.email) {
+      const existingPartner = await partnerService.getPartnerByEmail(
+        parsed.data.projectId,
+        parsed.data.email.trim().toLowerCase(),
       );
+      if (existingPartner) {
+        return c.json(
+          { error: "A partner with this email already exists in this project." },
+          409,
+        );
+      }
     }
 
     const partnerIp =
@@ -1336,10 +1338,11 @@ const app = new Hono<HonoAppContext>()
     try {
       partner = await partnerService.createPartner({
         projectId: parsed.data.projectId,
-        name: parsed.data.name.trim(),
-        email: parsed.data.email.trim().toLowerCase(),
+        name: parsed.data.name?.trim() ?? "",
+        email: parsed.data.email?.trim().toLowerCase() ?? "",
         commissionRate: parsed.data.commissionRate ?? 0.2,
         referralCode: parsed.data.referralCode,
+        payoutLink: parsed.data.payoutLink ?? null,
         status: "active",
         registrationIp: hashedPartnerIp,
       });
@@ -1361,37 +1364,53 @@ const app = new Hono<HonoAppContext>()
       referralCode: partner.referralCode ?? null,
     });
 
-    const fraudService = new FraudService(db);
-    const ownerCheck = await fraudService.checkOwnerAsPartner(
-      parsed.data.email.trim().toLowerCase(),
-      parsed.data.projectId,
-    );
-    if (ownerCheck) {
-      await fraudService.createFlag({
-        projectId: parsed.data.projectId,
-        partnerId: partner.id,
-        type: ownerCheck.type,
-        severity: ownerCheck.severity,
-        details: ownerCheck.details,
-      });
+    if (parsed.data.email) {
+      const fraudService = new FraudService(db);
+      const ownerCheck = await fraudService.checkOwnerAsPartner(
+        parsed.data.email.trim().toLowerCase(),
+        parsed.data.projectId,
+      );
+      if (ownerCheck) {
+        await fraudService.createFlag({
+          projectId: parsed.data.projectId,
+          partnerId: partner.id,
+          type: ownerCheck.type,
+          severity: ownerCheck.severity,
+          details: ownerCheck.details,
+        });
+      }
     }
 
     const sendInvite = (body as { sendInvite?: boolean }).sendInvite !== false;
-    if (sendInvite && c.env.RESEND_API_KEY) {
-      try {
-        const emailService = new EmailService(c.env.RESEND_API_KEY);
-        const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
-        emailService
-          .sendPartnerInvitation({
-            partnerName: partner.name,
-            partnerEmail: partner.email,
-            projectName: project.name,
-            referralCode: partner.referralCode,
-            baseUrl,
-          })
-          .catch((err) => console.error("Failed to send partner invitation:", err));
-      } catch (err) {
-        console.error("Email service init failed:", err);
+    if (sendInvite && partner.email) {
+      if (!c.env.RESEND_API_KEY) {
+        await db.delete(partners).where(eq(partners.id, partner.id));
+        return c.json(
+          {
+            error:
+              "Invitation email is not configured (missing RESEND_API_KEY). Partner was not created.",
+          },
+          500,
+        );
+      }
+      const emailService = new EmailService(c.env.RESEND_API_KEY);
+      const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
+      const sent = await emailService.sendPartnerInvitation({
+        partnerName: partner.name,
+        partnerEmail: partner.email,
+        projectName: project.name,
+        referralCode: partner.referralCode,
+        baseUrl,
+      });
+      if (!sent) {
+        await db.delete(partners).where(eq(partners.id, partner.id));
+        return c.json(
+          {
+            error:
+              "Failed to send invitation email. Please try again after checking email settings.",
+          },
+          500,
+        );
       }
     }
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Users, UserPlus, TrendingUp, Calendar, Upload, ShieldAlert, ShieldCheck, MoreHorizontal } from "lucide-react";
+import { Users, UserPlus, TrendingUp, Calendar, Upload, ShieldAlert, ShieldCheck, MoreHorizontal, Search } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -23,6 +23,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import StatCard from "@/components/StatCard";
 
 const FLAG_REASONS: Record<string, string> = {
@@ -34,6 +35,8 @@ const FLAG_REASONS: Record<string, string> = {
 
 interface Customer {
   id: string;
+  partnerId: string;
+  name: string | null;
   email: string;
   isSelfReferral: boolean;
   flagReason: string | null;
@@ -70,9 +73,11 @@ interface PartnerOption {
 
 function Customers() {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const [selectedProject, setSelectedProject] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [partnerFilter, setPartnerFilter] = useState("all");
+  const [partnerFilter, setPartnerFilter] = useState(searchParams.get("partner") ?? "all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const flagMutation = useMutation({
     mutationFn: async ({ customerId, reason }: { customerId: string; reason: string | null }) => {
@@ -171,6 +176,17 @@ function Customers() {
   const totalRevenue = data?.customers.reduce((sum, c) => sum + c.revenue, 0) ?? 0;
   const projects = projectsData?.projects ?? [];
   const partnerOptions = partnersData?.partners ?? [];
+  const showProjectColumn = projects.length > 1;
+
+  const filteredCustomers = data?.customers.filter((c) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.trim().toLowerCase();
+    return (
+      c.email.toLowerCase().includes(q) ||
+      (c.name && c.name.toLowerCase().includes(q)) ||
+      c.partnerName.toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div className="space-y-6 bg-background">
@@ -252,6 +268,17 @@ function Customers() {
             </SelectContent>
           </Select>
         </div>
+        <div className="relative w-56">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Search by name, email, partner..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9 bg-card"
+            aria-label="Search customers"
+          />
+        </div>
       </div>
 
       {/* Metrics Cards */}
@@ -290,7 +317,7 @@ function Customers() {
           <TableHeader>
             <TableRow>
               <TableHead>Customer</TableHead>
-              <TableHead>Project</TableHead>
+              {showProjectColumn && <TableHead>Project</TableHead>}
               <TableHead>Referred By</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Revenue</TableHead>
@@ -298,12 +325,16 @@ function Customers() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data?.customers.map((customer) => (
+            {filteredCustomers?.map((customer) => (
               <TableRow key={customer.id}>
                 <TableCell>
                    <div>
                      <div className="flex items-center gap-2">
-                       <span className="font-medium">{customer.email}</span>
+                       {customer.name ? (
+                         <span className="font-medium">{customer.name}</span>
+                       ) : (
+                         <span className="font-medium">{customer.email}</span>
+                       )}
                        {customer.flagReason && FLAG_REASONS[customer.flagReason] && (
                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 border border-orange-300">
                            <ShieldAlert className="w-3 h-3 mr-1" />
@@ -311,17 +342,30 @@ function Customers() {
                          </span>
                        )}
                      </div>
+                     {customer.name && (
+                       <div className="text-sm text-muted-foreground">{customer.email}</div>
+                     )}
                      <div className="text-sm text-muted-foreground">
                        {new Date(customer.createdAt).toLocaleDateString()}
                      </div>
                    </div>
                  </TableCell>
+                {showProjectColumn && (
+                  <TableCell>
+                    <span className="text-sm text-muted-foreground">
+                      {customer.projectName}
+                    </span>
+                  </TableCell>
+                )}
                 <TableCell>
-                  <span className="text-sm text-muted-foreground">
-                    {customer.projectName}
-                  </span>
+                  <Link
+                    to={`/app/customers?partner=${customer.partnerId}`}
+                    className="text-primary hover:underline"
+                    onClick={() => setPartnerFilter(customer.partnerId)}
+                  >
+                    {customer.partnerName}
+                  </Link>
                 </TableCell>
-                <TableCell>{customer.partnerName}</TableCell>
                 <TableCell>{getStatusBadge(customer.status)}</TableCell>
                 <TableCell className="font-medium">
                    ${customer.revenue.toFixed(2)}
@@ -372,13 +416,13 @@ function Customers() {
                 </TableCell>
               </TableRow>
             ))}
-            {(!data?.customers || data.customers.length === 0) && (
+            {(!filteredCustomers || filteredCustomers.length === 0) && (
               <TableRow>
                 <TableCell
-                   colSpan={6}
+                   colSpan={showProjectColumn ? 6 : 5}
                    className="text-center text-muted-foreground py-8"
                  >
-                  No customers yet.
+                  {searchQuery.trim() ? "No customers match your search." : "No customers yet."}
                 </TableCell>
               </TableRow>
             )}
