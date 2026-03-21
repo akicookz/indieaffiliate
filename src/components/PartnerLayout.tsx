@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   BarChart3,
   LayoutDashboard,
-  Users,
   DollarSign,
   Wallet,
   LogOut,
@@ -13,7 +12,6 @@ import { Button } from "@/components/ui/button";
 
 const navItems = [
   { label: "Dashboard", icon: LayoutDashboard, path: "/portal" },
-  { label: "Referrals", icon: Users, path: "/portal/referrals" },
   { label: "Commissions", icon: DollarSign, path: "/portal/commissions" },
   { label: "Payouts", icon: Wallet, path: "/portal/payouts" },
 ];

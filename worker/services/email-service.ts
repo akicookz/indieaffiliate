@@ -49,7 +49,8 @@ export class EmailService {
     referralCode: string;
     baseUrl: string;
   }): Promise<boolean> {
-    const referralLink = `${params.baseUrl}/api/t/${params.referralCode}`;
+    const base = params.baseUrl.replace(/\/+$/, "");
+    const partnerDashboardUrl = `${base}/portal`;
 
     const result = await this.sendEmail({
       to: params.partnerEmail,
@@ -62,17 +63,21 @@ export class EmailService {
           </p>
           <p style="color: #555; line-height: 1.6;">
             You've been invited to become an affiliate partner for <strong>${params.projectName}</strong>.
-            Share your unique referral link to earn commissions on every customer you refer.
+            Sign in to your partner dashboard to view your referral code and share it with your audience.
           </p>
-          <div style="background: #f5f5f5; border-radius: 8px; padding: 16px; margin: 24px 0;">
-            <p style="margin: 0 0 8px; font-size: 13px; color: #888;">Your referral link:</p>
-            <p style="margin: 0; font-family: monospace; font-size: 14px; color: #1a1a1a; word-break: break-all;">
-              ${referralLink}
+          <div style="background: #f5f5f5; border-radius: 8px; padding: 16px; margin: 24px 0; text-align: center;">
+            <p style="margin: 0 0 8px; font-size: 13px; color: #888;">Your referral code</p>
+            <p style="margin: 0; font-family: monospace; font-size: 22px; font-weight: 600; letter-spacing: 0.08em; color: #1a1a1a;">
+              ${params.referralCode}
             </p>
           </div>
-          <p style="color: #555; line-height: 1.6;">
-            Your referral code is <strong>${params.referralCode}</strong>. Append <code>?ref=${params.referralCode}</code>
-            to any link to track referrals.
+          <div style="margin: 28px 0; text-align: center;">
+            <a href="${partnerDashboardUrl}" style="display: inline-block; background: #7c3aed; color: #ffffff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600;">
+              Open partner dashboard
+            </a>
+          </div>
+          <p style="color: #888; font-size: 13px; line-height: 1.5;">
+            If you're not signed in yet, use the same email address this invitation was sent to when you request a sign-in link.
           </p>
           <p style="color: #888; font-size: 13px; margin-top: 32px;">
             — The ${params.projectName} team via UnlockAffiliate
