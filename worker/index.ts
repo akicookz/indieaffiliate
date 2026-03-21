@@ -1352,6 +1352,39 @@ const app = new Hono<HonoAppContext>()
       );
     }
 
+    const sendInvite = (body as { sendInvite?: boolean }).sendInvite !== false;
+    if (sendInvite) {
+      if (!c.env.RESEND_API_KEY) {
+        await db.delete(partners).where(eq(partners.id, partner.id));
+        return c.json(
+          {
+            error:
+              "Invitation email is not configured (missing RESEND_API_KEY). Partner was not created.",
+          },
+          500,
+        );
+      }
+      const emailService = new EmailService(c.env.RESEND_API_KEY);
+      const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
+      const sent = await emailService.sendPartnerInvitation({
+        partnerName: partner.name,
+        partnerEmail: partner.email,
+        projectName: project.name,
+        referralCode: partner.referralCode,
+        baseUrl,
+      });
+      if (!sent) {
+        await db.delete(partners).where(eq(partners.id, partner.id));
+        return c.json(
+          {
+            error:
+              "Failed to send invitation email. Please try again after checking email settings.",
+          },
+          500,
+        );
+      }
+    }
+
     const webhookServicePartners = new WebhookService(db);
     await webhookServicePartners.fireEvent(parsed.data.projectId, "partner.created", {
       partnerId: partner.id,
@@ -1374,25 +1407,6 @@ const app = new Hono<HonoAppContext>()
         severity: ownerCheck.severity,
         details: ownerCheck.details,
       });
-    }
-
-    const sendInvite = (body as { sendInvite?: boolean }).sendInvite !== false;
-    if (sendInvite && c.env.RESEND_API_KEY) {
-      try {
-        const emailService = new EmailService(c.env.RESEND_API_KEY);
-        const baseUrl = c.env.BETTER_AUTH_URL || c.req.url.split("/api")[0];
-        emailService
-          .sendPartnerInvitation({
-            partnerName: partner.name,
-            partnerEmail: partner.email,
-            projectName: project.name,
-            referralCode: partner.referralCode,
-            baseUrl,
-          })
-          .catch((err) => console.error("Failed to send partner invitation:", err));
-      } catch (err) {
-        console.error("Email service init failed:", err);
-      }
     }
 
     return c.json({ partner }, 201);
