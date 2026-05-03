@@ -21,7 +21,6 @@ import {
   CheckCircle,
   AlertTriangle,
   UserPlus,
-  DollarSign,
 } from "lucide-react";
 import {
   Select,
