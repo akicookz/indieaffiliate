@@ -9,7 +9,7 @@
     "STRIPE_PRICE_GROWTH_MONTHLY": "price_1SzvXBR8lpKvtDuLtYpOzWEQ",
     "STRIPE_PRICE_GROWTH_ANNUAL": "price_1T9ixBR8lpKvtDuL7Kj845YN",
     "STRIPE_PRICE_SCALE_MONTHLY": "price_1SzvYjR8lpKvtDuL9ObPOIrk",
-    "STRIPE_PRICE_SCALE_ANNUAL": "price_1T396ZR8lpKvtDuLC6aUmJgt"
+    "STRIPE_PRICE_SCALE_ANNUAL": "price_1T396ZR8lpKvtDuLC6aUmJgt",
   },
   "assets": {
     "binding": "ASSETS",
@@ -21,6 +21,7 @@
   "d1_databases": [
     {
       "binding": "DB",
+      "remote": true,
       "database_name": "unlockaffiliate-db",
       "database_id": "eba98925-3b0c-44b7-b4ac-a26c1171a9a4",
       "migrations_dir": "worker/db/drizzle",
@@ -30,6 +31,7 @@
     {
       "binding": "UPLOADS",
       "bucket_name": "unlockaffiliate-uploads",
+      "remote": true,
     },
   ],
   "triggers": {

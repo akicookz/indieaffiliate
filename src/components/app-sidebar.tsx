@@ -6,6 +6,8 @@ import {
   CreditCard,
   ShieldAlert,
   LineChart,
+  PanelLeftClose,
+  PanelLeft,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
@@ -17,7 +19,9 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarRail,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
 import { useSession } from "@/lib/auth-client";
 
 const navMain = [
@@ -56,6 +60,7 @@ const navMain = [
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { data: session } = useSession();
+  const { toggleSidebar } = useSidebar();
 
   const user = {
     name: session?.user?.name ?? "User",
@@ -65,7 +70,33 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   return (
     <Sidebar collapsible="icon" {...props}>
-      <SidebarHeader />
+      <SidebarHeader>
+        {/* Expanded: label + close button */}
+        <div className="flex items-center justify-between px-2 h-8 group-data-[collapsible=icon]:hidden">
+          <span className="text-xs font-medium text-sidebar-foreground/70">Platform</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 text-sidebar-foreground/70 hover:text-sidebar-foreground"
+            onClick={toggleSidebar}
+            aria-label="Close sidebar"
+          >
+            <PanelLeftClose className="size-4" />
+          </Button>
+        </div>
+        {/* Collapsed: open button */}
+        <div className="hidden group-data-[collapsible=icon]:flex items-center justify-center py-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 text-sidebar-foreground/70 hover:text-sidebar-foreground"
+            onClick={toggleSidebar}
+            aria-label="Open sidebar"
+          >
+            <PanelLeft className="size-4" />
+          </Button>
+        </div>
+      </SidebarHeader>
       <SidebarContent>
         <NavMain items={navMain} />
         <NavProjects />

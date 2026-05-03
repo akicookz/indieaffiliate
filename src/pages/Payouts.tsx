@@ -14,7 +14,6 @@ import {
   Calendar,
   Copy,
   Check,
-  Download,
 } from "lucide-react";
 import {
   Select,
@@ -653,126 +652,94 @@ function Payouts() {
     })
     .filter((partner) => partner.commissions.length > 0);
 
-  const pendingCount = filteredPartnerGroups.reduce(
-    (total, partner) => total + partner.pendingCount,
-    0,
-  );
-  const approvedCount = filteredPartnerGroups.reduce(
-    (total, partner) => total + partner.approvedCount,
-    0,
-  );
-  const paidCount = filteredPartnerGroups.reduce(
-    (total, partner) => total + partner.paidCount,
-    0,
-  );
-
   return (
     <div className="space-y-6 bg-background">
-      {/* Row 1: title + primary action */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            Payouts
-          </h1>
-          <p className="text-sm leading-6 text-muted-foreground">
-            Approve commissions, process payouts, and review flagged items in one place.
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-foreground">Payouts</h1>
+          <p className="text-muted-foreground">
+            Review commissions by partner, approve, and track payments
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-9 rounded-lg px-3 text-xs"
-        >
-          <Download className="mr-1.5 h-3.5 w-3.5" />
-          Export CSV
-        </Button>
       </div>
 
-      {/* Row 2: docked filter toolbar */}
-      <div className="rounded-2xl border border-border/60 bg-card/70 p-4 shadow-xs">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="w-full sm:w-48">
-            <div className="mb-1 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-              Project
-            </div>
-            <Select value={selectedProject} onValueChange={setSelectedProject}>
-              <SelectTrigger className="h-9 rounded-lg bg-background">
-                <span>
-                  {selectedProject === "all"
-                    ? "All Projects"
-                    : projects.find((p) => p.id === selectedProject)?.name ??
-                      "Select"}
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Projects</SelectItem>
-                {projects.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="w-full sm:w-40">
-            <div className="mb-1 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-              Status
-            </div>
-            <Select
-              value={statusFilter}
-              onValueChange={(value) =>
-                setStatusFilter(value as typeof statusFilter)
-              }
-            >
-              <SelectTrigger className="h-9 rounded-lg bg-background">
-                <span className="capitalize">
-                  {statusFilter === "all" ? "All statuses" : statusFilter}
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="paid">Paid</SelectItem>
-                <SelectItem value="rejected">Rejected</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <Button
-            type="button"
-            variant={fraudOnly ? "default" : "outline"}
-            className="h-9 rounded-lg px-3 text-xs"
-            onClick={() => setFraudOnly((v) => !v)}
+      {/* Filters */}
+      <div className="flex flex-wrap gap-4 items-center">
+        <div className="w-48">
+          <Select value={selectedProject} onValueChange={setSelectedProject}>
+            <SelectTrigger className="bg-card">
+              <span>
+                {selectedProject === "all"
+                  ? "All Projects"
+                  : projects.find((p) => p.id === selectedProject)?.name ??
+                    "Select"}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Projects</SelectItem>
+              {projects.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="w-40">
+          <Select
+            value={statusFilter}
+            onValueChange={(value) =>
+              setStatusFilter(value as typeof statusFilter)
+            }
           >
-            <AlertTriangle className="mr-2 h-3.5 w-3.5" />
-            {fraudOnly ? "Flagged only (on)" : "Flagged only"}
-          </Button>
+            <SelectTrigger className="bg-card">
+              <span className="capitalize">
+                {statusFilter === "all" ? "All Statuses" : statusFilter}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="approved">Approved</SelectItem>
+              <SelectItem value="paid">Paid</SelectItem>
+              <SelectItem value="rejected">Rejected</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="w-48">
+          <Select
+            value={fraudOnly ? "flagged" : "all"}
+            onValueChange={(v) => setFraudOnly(v === "flagged")}
+          >
+            <SelectTrigger className="bg-card">
+              <span>{fraudOnly ? "Fraud-flagged Only" : "All Commissions"}</span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Commissions</SelectItem>
+              <SelectItem value="flagged">Fraud-flagged Only</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
-      {/* Overview row */}
-      <div className="rounded-2xl border border-border/60 bg-card/60 p-4 shadow-xs">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-medium text-foreground">Overview</h2>
-        </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          <StatCard
-            title={`Pending Approval${pendingCount > 0 ? ` · ${pendingCount}` : ""}`}
-            value={formatCurrency(totals.pendingAmount)}
-            Icon={Clock}
-          />
-          <StatCard
-            title={`Approved To Pay${approvedCount > 0 ? ` · ${approvedCount}` : ""}`}
-            value={formatCurrency(totals.approvedAmount)}
-            Icon={DollarSign}
-          />
-          <StatCard
-            title={`Paid${paidCount > 0 ? ` · ${paidCount}` : ""}`}
-            value={formatCurrency(totals.paidAmount)}
-            Icon={CheckCircle}
-          />
-        </div>
+      {/* Stat Cards */}
+      <div className="grid grid-cols-3 gap-6">
+        <StatCard
+          title="Pending Approval"
+          value={formatCurrency(totals.pendingAmount)}
+          Icon={Clock}
+        />
+        <StatCard
+          title="Approved (Owed)"
+          value={formatCurrency(totals.approvedAmount)}
+          Icon={DollarSign}
+        />
+        <StatCard
+          title="Paid"
+          value={formatCurrency(totals.paidAmount)}
+          Icon={CheckCircle}
+        />
       </div>
 
       {/* Partner payouts table */}

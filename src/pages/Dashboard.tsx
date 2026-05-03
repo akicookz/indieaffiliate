@@ -1,7 +1,28 @@
 import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { TrendingUp, MousePointer, Users, Clock, Upload, BarChart3 } from "lucide-react";
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+} from "recharts";
+import {
+  TrendingUp,
+  Users,
+  Clock,
+  Upload,
+  HandHeart,
+  CheckCircle,
+  AlertTriangle,
+  UserPlus,
+  DollarSign,
+} from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -16,8 +37,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  type ChartConfig,
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  ChartLegend,
+  ChartLegendContent,
+} from "@/components/ui/chart";
 import { Button } from "@/components/ui/button";
-import StatCard from "@/components/StatCard";
+import { useSession } from "@/lib/auth-client";
 
 interface DashboardData {
   revenue: {
@@ -34,6 +63,7 @@ interface DashboardData {
     email: string;
     referredCustomers: number;
     totalRevenue: number;
+    commissionRate: number;
     project: string;
   }>;
   newReferredCustomers: Array<{
@@ -46,6 +76,26 @@ interface DashboardData {
   }>;
 }
 
+interface AnalyticsData {
+  clicksByDay: Array<{ date: string; count: number }>;
+  conversionsByDay: Array<{ date: string; count: number }>;
+  revenueByDay: Array<{ date: string; revenue: number; commissions: number }>;
+  topPartners: Array<{
+    id: string;
+    name: string;
+    email: string;
+    clicks: number;
+    customers: number;
+    revenue: number;
+  }>;
+  totals: {
+    clicks: number;
+    conversions: number;
+    revenue: number;
+    commissions: number;
+  };
+}
+
 interface CommissionsTotals {
   partners: unknown[];
   totals: {
@@ -55,14 +105,63 @@ interface CommissionsTotals {
   };
 }
 
+interface PartnerStats {
+  totalPartners: number;
+  activePartners: number;
+  pendingPartners: number;
+}
+
 interface Project {
   id: string;
   name: string;
   slug: string;
 }
 
+const revenueChartConfig = {
+  revenue: {
+    label: "Revenue",
+    color: "var(--color-chart-2)",
+  },
+  commissions: {
+    label: "Commissions",
+    color: "var(--color-chart-3)",
+  },
+} satisfies ChartConfig;
+
+const PIE_COLORS = [
+  "var(--color-chart-1)",
+  "var(--color-chart-2)",
+  "var(--color-chart-3)",
+  "var(--color-chart-4)",
+  "var(--color-chart-5)",
+  "hsl(var(--muted-foreground))",
+];
+
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function getStatusIcon(status: string) {
+  switch (status) {
+    case "paid":
+      return <CheckCircle className="w-4 h-4 text-green-600" />;
+    case "trialing":
+      return <Clock className="w-4 h-4 text-blue-600" />;
+    case "cancelled":
+      return <AlertTriangle className="w-4 h-4 text-red-600" />;
+    default:
+      return <UserPlus className="w-4 h-4 text-muted-foreground" />;
+  }
+}
+
 function Dashboard() {
+  const [days, setDays] = useState("30");
   const [selectedProject, setSelectedProject] = useState("all");
+  const { data: session } = useSession();
+  const userName = session?.user?.name?.split(" ")[0] ?? "there";
 
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
     queryKey: ["projects"],
@@ -89,6 +188,19 @@ function Dashboard() {
     enabled: !projectsLoading && projects.length > 0,
   });
 
+  const { data: analyticsData } = useQuery({
+    queryKey: ["analytics", selectedProject, days],
+    queryFn: async (): Promise<AnalyticsData> => {
+      const params = new URLSearchParams();
+      if (selectedProject !== "all") params.set("project", selectedProject);
+      params.set("days", days);
+      const response = await fetch(`/api/analytics?${params}`);
+      if (!response.ok) throw new Error("Failed to fetch analytics");
+      return response.json();
+    },
+    enabled: !projectsLoading && projects.length > 0,
+  });
+
   const { data: commissionsData } = useQuery({
     queryKey: ["commissions-by-partner", selectedProject],
     queryFn: async (): Promise<CommissionsTotals> => {
@@ -96,6 +208,18 @@ function Dashboard() {
       if (selectedProject !== "all") params.set("project", selectedProject);
       const response = await fetch(`/api/commissions/by-partner?${params}`);
       if (!response.ok) throw new Error("Failed to fetch commissions");
+      return response.json();
+    },
+    enabled: !projectsLoading && projects.length > 0,
+  });
+
+  const { data: partnersData } = useQuery({
+    queryKey: ["partners", selectedProject],
+    queryFn: async (): Promise<{ partners: unknown[]; stats: PartnerStats }> => {
+      const params = new URLSearchParams();
+      if (selectedProject !== "all") params.set("project", selectedProject);
+      const response = await fetch(`/api/partners?${params}`);
+      if (!response.ok) throw new Error("Failed to fetch partners");
       return response.json();
     },
     enabled: !projectsLoading && projects.length > 0,
@@ -123,152 +247,318 @@ function Dashboard() {
     );
   }
 
-  function getStatusBadge(status: string) {
-    const styles = {
-      paid: "bg-green-100 text-green-800",
-      trialing: "bg-yellow-100 text-yellow-800",
-      cancelled: "bg-red-100 text-red-800 border border-red-300",
-    };
-
-    return (
-      <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border ${styles[status as keyof typeof styles]
-          }`}
-      >
-        {status}
-      </span>
-    );
-  }
-
+  const totalRevenue = dashData?.revenue.total ?? 0;
+  const totalClicks = analyticsData?.totals.clicks ?? dashData?.clicks ?? 0;
+  const totalConversions = analyticsData?.totals.conversions ?? dashData?.newCustomers ?? 0;
+  const conversionRate = totalClicks > 0 ? ((totalConversions / totalClicks) * 100).toFixed(1) : "0";
   const pendingAmount = commissionsData?.totals.pendingAmount ?? 0;
+  const activePartners = partnersData?.stats.activePartners ?? 0;
+  const pendingPartners = partnersData?.stats.pendingPartners ?? 0;
+
+  const topReferrers = dashData?.topReferrers ?? [];
+  const pieData = topReferrers
+    .filter((r) => r.totalRevenue > 0)
+    .slice(0, 5)
+    .map((r) => ({
+      name: r.partnerName,
+      value: r.totalRevenue,
+    }));
+  const pieTotal = pieData.reduce((s, d) => s + d.value, 0);
+
+  const now = new Date();
+  const monthYear = now.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
   return (
     <div className="space-y-6 bg-background">
-      {/* Header with Filters */}
-      <div className="flex gap-4 items-center">
-        <Button variant="outline" size="sm" asChild>
-          <Link to="/app/import">
-            <Upload className="w-4 h-4 mr-2" />
-            Import
-          </Link>
-        </Button>
-        <div className="w-48">
-          <Select value={selectedProject} onValueChange={setSelectedProject}>
-            <SelectTrigger className="bg-card">
-              <span>
-                {selectedProject === "all"
-                  ? "All Projects"
-                  : projects.find((p) => p.id === selectedProject)?.name ??
-                  "Select"}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Projects</SelectItem>
-              {projects.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      {/* Header */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between pb-2">
+        <div className="space-y-1.5">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            Overview &middot; {monthYear}
+          </p>
+          <h1 className="text-2xl font-semibold text-foreground">
+            {getGreeting()}, {userName}.
+          </h1>
+          {totalRevenue > 0 && (
+            <p className="text-muted-foreground">
+              Your program has generated{" "}
+              <span className="font-semibold text-foreground">
+                ${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>{" "}
+              in attributed revenue across{" "}
+              <span className="font-semibold text-foreground">{activePartners}</span>{" "}
+              active partner{activePartners !== 1 ? "s" : ""}.
+            </p>
+          )}
         </div>
-        <div className="ml-auto">
-          <Button variant="ghost" size="sm" asChild>
-            <Link to="/app/analytics">
-              <BarChart3 className="w-4 h-4 mr-2" />
-              View Analytics
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="w-40">
+            <Select value={days} onValueChange={setDays}>
+              <SelectTrigger className="bg-card">
+                <span>
+                  {days === "7" && "Last 7 days"}
+                  {days === "30" && "Last 30 days"}
+                  {days === "90" && "Last 90 days"}
+                  {days === "365" && "Last year"}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="7">Last 7 days</SelectItem>
+                <SelectItem value="30">Last 30 days</SelectItem>
+                <SelectItem value="90">Last 90 days</SelectItem>
+                <SelectItem value="365">Last year</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {showProjectColumn && (
+            <div className="w-40">
+              <Select value={selectedProject} onValueChange={setSelectedProject}>
+                <SelectTrigger className="bg-card">
+                  <span>
+                    {selectedProject === "all"
+                      ? "All Projects"
+                      : projects.find((p) => p.id === selectedProject)?.name ?? "Select"}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Projects</SelectItem>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <Button variant="outline" asChild>
+            <Link to="/app/import">
+              <Upload className="w-4 h-4 mr-2" />
+              Import
             </Link>
           </Button>
         </div>
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-        <StatCard
-          title="Revenue"
-          value={`$${(dashData?.revenue.total ?? 0).toLocaleString()}`}
-          Icon={TrendingUp}
-          isPositive={dashData?.revenue.isPositive}
-          change={dashData?.revenue.change}
-        />
-        <StatCard
-          title="Clicks"
-          value={(dashData?.clicks ?? 0).toLocaleString()}
-          Icon={MousePointer}
-        />
-        <StatCard
-          title="Customers"
-          value={(dashData?.newCustomers ?? 0).toLocaleString()}
-          Icon={Users}
-        />
-        <StatCard
-          title="Pending Commissions"
-          value={`$${pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-          Icon={Clock}
-        />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="shadow-xs bg-card/50 rounded-2xl p-5 space-y-1">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Revenue</p>
+          <p className="text-2xl font-semibold text-foreground">
+            ${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+          </p>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <TrendingUp className="w-3.5 h-3.5" />
+            <span>{dashData?.newCustomers ?? 0} customers</span>
+          </div>
+        </div>
+
+        <div className="shadow-xs bg-card/50 rounded-2xl p-5 space-y-1">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active Partners</p>
+          <p className="text-2xl font-semibold text-foreground">{activePartners}</p>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <HandHeart className="w-3.5 h-3.5" />
+            {pendingPartners > 0 ? (
+              <Link to="/app/partners?status=pending" className="text-yellow-700 dark:text-yellow-400 hover:underline">
+                +{pendingPartners} pending review
+              </Link>
+            ) : (
+              <span>all approved</span>
+            )}
+          </div>
+        </div>
+
+        <div className="shadow-xs bg-card/50 rounded-2xl p-5 space-y-1">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Conversion Rate</p>
+          <p className="text-2xl font-semibold text-foreground">{conversionRate}%</p>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Users className="w-3.5 h-3.5" />
+            <span>{totalClicks.toLocaleString()} clicks &rarr; {totalConversions.toLocaleString()} customers</span>
+          </div>
+        </div>
+
+        <div className="shadow-xs bg-card/50 rounded-2xl p-5 space-y-1">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Pending Commissions</p>
+          <p className="text-2xl font-semibold text-foreground">
+            ${pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </p>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Clock className="w-3.5 h-3.5" />
+            <Link to="/app/payouts" className="hover:underline">
+              Review in Payouts &rarr;
+            </Link>
+          </div>
+        </div>
       </div>
 
-      {/* Tables */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        {/* Top Referrers Table */}
-        <div className="shadow-xs bg-card/50 rounded-2xl p-6">
+      {/* Revenue Chart + Partner Breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Revenue Chart */}
+        <div className="shadow-xs bg-card/50 rounded-2xl p-6 lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-foreground">
-              Top referrers
-            </h3>
+            <div>
+              <h3 className="text-sm font-medium text-foreground">Attributed revenue</h3>
+              <p className="text-xs text-muted-foreground">Revenue and commissions from affiliate-referred customers</p>
+            </div>
+          </div>
+          {analyticsData?.revenueByDay && analyticsData.revenueByDay.length > 0 ? (
+            <ChartContainer config={revenueChartConfig} className="h-72 w-full">
+              <AreaChart data={analyticsData.revenueByDay} accessibilityLayer>
+                <CartesianGrid vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  tickFormatter={(v) =>
+                    new Date(v).toLocaleDateString("en", {
+                      month: "short",
+                      day: "numeric",
+                    })
+                  }
+                />
+                <YAxis
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  tickFormatter={(v) => `$${v}`}
+                />
+                <ChartTooltip
+                  content={
+                    <ChartTooltipContent
+                      labelFormatter={(v) => new Date(v).toLocaleDateString()}
+                    />
+                  }
+                />
+                <ChartLegend content={<ChartLegendContent />} />
+                <Area
+                  type="monotone"
+                  dataKey="revenue"
+                  fill="var(--color-revenue)"
+                  fillOpacity={0.1}
+                  stroke="var(--color-revenue)"
+                  strokeWidth={2}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="commissions"
+                  fill="var(--color-commissions)"
+                  fillOpacity={0.1}
+                  stroke="var(--color-commissions)"
+                  strokeWidth={2}
+                />
+              </AreaChart>
+            </ChartContainer>
+          ) : (
+            <div className="h-72 flex items-center justify-center border-2 border-dashed border-border/30 rounded-xl">
+              <p className="text-muted-foreground text-sm">No revenue data yet</p>
+            </div>
+          )}
+        </div>
+
+        {/* Partner Revenue Breakdown */}
+        <div className="shadow-xs bg-card/50 rounded-2xl p-6">
+          <h3 className="text-sm font-medium text-foreground mb-4">Revenue by partner</h3>
+          {pieData.length > 0 ? (
+            <div className="flex flex-col items-center">
+              <ResponsiveContainer width="100%" height={180}>
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={55}
+                    outerRadius={80}
+                    paddingAngle={2}
+                    dataKey="value"
+                    strokeWidth={0}
+                  >
+                    {pieData.map((_, index) => (
+                      <Cell key={index} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="w-full space-y-2 mt-2">
+                {pieData.map((entry, index) => (
+                  <div key={entry.name} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length] }}
+                      />
+                      <span className="text-foreground truncate">{entry.name}</span>
+                    </div>
+                    <span className="text-muted-foreground tabular-nums shrink-0 ml-2">
+                      {pieTotal > 0 ? Math.round((entry.value / pieTotal) * 100) : 0}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="h-48 flex items-center justify-center border-2 border-dashed border-border/30 rounded-xl">
+              <p className="text-muted-foreground text-sm">No partner data yet</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Top Referrers + Activity Feed */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Top Partners Table */}
+        <div className="shadow-xs bg-card/50 rounded-2xl p-6 lg:col-span-2">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-foreground">Top partners</h3>
             <Link
               to="/app/partners"
               className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              View all →
+              View all &rarr;
             </Link>
           </div>
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Partner</TableHead>
-                {showProjectColumn && <TableHead>Project</TableHead>}
                 <TableHead>Customers</TableHead>
                 <TableHead>Revenue</TableHead>
+                <TableHead>Commission</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {dashData?.topReferrers.map((referrer) => (
-                <TableRow key={referrer.id}>
-                  <TableCell>
-                    <div>
-                      <Link
-                        to={`/app/customers?partner=${referrer.id}`}
-                        className="font-medium text-primary hover:underline"
-                      >
-                        {referrer.partnerName}
-                      </Link>
-                      <div className="text-sm text-muted-foreground">
-                        {referrer.email}
-                      </div>
-                    </div>
-                  </TableCell>
-                  {showProjectColumn && (
+              {topReferrers.map((referrer) => {
+                const commEst = referrer.totalRevenue * (referrer.commissionRate ?? 0.2);
+                return (
+                  <TableRow key={referrer.id}>
                     <TableCell>
-                      <span className="text-sm text-muted-foreground">
-                        {referrer.project}
-                      </span>
+                      <div>
+                        <Link
+                          to={`/app/customers?partner=${referrer.id}`}
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {referrer.partnerName}
+                        </Link>
+                        <div className="text-xs text-muted-foreground">
+                          {referrer.email}
+                        </div>
+                      </div>
                     </TableCell>
-                  )}
-                  <TableCell className="font-medium">
-                    {referrer.referredCustomers}
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    ${referrer.totalRevenue.toFixed(2)}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {(!dashData?.topReferrers || dashData.topReferrers.length === 0) && (
+                    <TableCell className="font-medium tabular-nums">
+                      {referrer.referredCustomers}
+                    </TableCell>
+                    <TableCell className="font-medium tabular-nums">
+                      ${referrer.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell className="tabular-nums text-muted-foreground">
+                      ${commEst.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+              {topReferrers.length === 0 && (
                 <TableRow>
-                  <TableCell
-                    colSpan={showProjectColumn ? 4 : 3}
-                    className="text-center text-muted-foreground py-8"
-                  >
+                  <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
                     No partners yet. Invite your first partner to get started.
                   </TableCell>
                 </TableRow>
@@ -277,63 +567,46 @@ function Dashboard() {
           </Table>
         </div>
 
-        {/* New Referred Customers Table */}
+        {/* Activity Feed */}
         <div className="shadow-xs bg-card/50 rounded-2xl p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-foreground">
-              New referred customers
-            </h3>
+            <h3 className="text-sm font-medium text-foreground">Recent activity</h3>
             <Link
               to="/app/customers"
               className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              View all →
+              View all &rarr;
             </Link>
           </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Customer</TableHead>
-                {showProjectColumn && <TableHead>Project</TableHead>}
-                <TableHead>Partner</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {dashData?.newReferredCustomers.map((customer) => (
-                <TableRow key={customer.id}>
-                  <TableCell>
-                    <div>
-                      <div className="font-medium">{customer.email}</div>
-                      <div className="text-sm text-muted-foreground">
-                        {new Date(customer.createdDate).toLocaleDateString()}
-                      </div>
-                    </div>
-                  </TableCell>
-                  {showProjectColumn && (
-                    <TableCell>
-                      <span className="text-sm text-muted-foreground">
-                        {customer.project}
-                      </span>
-                    </TableCell>
-                  )}
-                  <TableCell>{customer.referredPartner}</TableCell>
-                  <TableCell>{getStatusBadge(customer.status)}</TableCell>
-                </TableRow>
-              ))}
-              {(!dashData?.newReferredCustomers ||
-                dashData.newReferredCustomers.length === 0) && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={showProjectColumn ? 4 : 3}
-                      className="text-center text-muted-foreground py-8"
-                    >
-                      No customers yet.
-                    </TableCell>
-                  </TableRow>
-                )}
-            </TableBody>
-          </Table>
+          <div className="space-y-4">
+            {dashData?.newReferredCustomers.map((customer) => (
+              <div key={customer.id} className="flex items-start gap-3">
+                <div className="mt-0.5 shrink-0">
+                  {getStatusIcon(customer.status)}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm text-foreground leading-snug">
+                    <span className="font-medium">{customer.referredPartner}</span>
+                    {" "}referred{" "}
+                    <span className="font-medium">{customer.email}</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {new Date(customer.createdDate).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                    })}
+                    {" "}&middot;{" "}
+                    <span className="capitalize">{customer.status}</span>
+                  </p>
+                </div>
+              </div>
+            ))}
+            {(!dashData?.newReferredCustomers || dashData.newReferredCustomers.length === 0) && (
+              <div className="text-center text-muted-foreground text-sm py-6">
+                No activity yet.
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

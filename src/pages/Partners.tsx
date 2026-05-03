@@ -379,7 +379,7 @@ function Partners() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" asChild>
+          <Button variant="outline" asChild>
             <Link to="/app/import">
               <Upload className="w-4 h-4 mr-2" />
               Import

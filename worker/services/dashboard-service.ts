@@ -95,6 +95,7 @@ export class DashboardService {
         email: r.email,
         referredCustomers: r.referredCustomers,
         totalRevenue: r.totalRevenue,
+        commissionRate: r.commissionRate,
         project: projectMap.get(r.projectId) ?? "Unknown",
       })),
       newReferredCustomers: newCustomerRows.map((c) => ({
