@@ -44,7 +44,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
       return (
         <div className="min-h-screen bg-background flex items-center justify-center px-4">
           <div className="w-full max-w-md text-center space-y-6">
-            <div className="mx-auto w-14 h-14 rounded-2xl bg-destructive/10 flex items-center justify-center">
+            <div className="mx-auto w-14 h-14 rounded-md bg-destructive/10 flex items-center justify-center">
               <AlertTriangle className="w-7 h-7 text-destructive" />
             </div>
             <div className="space-y-2">
@@ -57,12 +57,12 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
               </p>
             </div>
             {this.state.error && (
-              <pre className="bg-muted/50 border border-border rounded-xl p-4 text-xs text-left overflow-x-auto font-mono text-muted-foreground max-h-32 overflow-y-auto">
+              <pre className="bg-muted/50 border border-border rounded-md p-4 text-xs text-left overflow-x-auto font-mono text-muted-foreground max-h-32 overflow-y-auto">
                 {this.state.error.message}
               </pre>
             )}
             <div className="flex items-center justify-center gap-3">
-              <Button variant="outline" onClick={this.handleReset}>
+              <Button variant="secondary" onClick={this.handleReset}>
                 <RotateCcw className="w-4 h-4 mr-2" />
                 Try again
               </Button>

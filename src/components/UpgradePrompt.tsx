@@ -98,7 +98,7 @@ export function UpgradePrompt() {
               {checkoutMutation.isPending ? "Loading..." : "Upgrade to Growth Plan (Monthly)"}
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               className="w-full"
               onClick={() => checkoutMutation.mutate("year")}
               disabled={checkoutMutation.isPending}

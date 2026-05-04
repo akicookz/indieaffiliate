@@ -1,12 +1,15 @@
-import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { HandHeart, Users, TrendingUp, UserPlus, Copy, Check, Pencil, Upload, CheckCircle, XCircle, Search } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Search, Upload, Download } from "lucide-react";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import CsvImportPanel from "@/components/CsvImportPanel";
+import PageHeader from "@/components/PageHeader";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
   Table,
@@ -16,20 +19,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import StatCard from "@/components/StatCard";
+import { cn } from "@/lib/utils";
 import InvitePartnerDialog from "@/components/InvitePartnerDialog";
+import PartnerDetailDrawer from "@/components/PartnerDetailDrawer";
 
-interface Partner {
+export interface PartnerListRow {
   id: string;
   name: string;
   email: string;
@@ -37,21 +33,25 @@ interface Partner {
   referredCustomers: number;
   totalRevenue: number;
   commissionRate: number;
+  commissionProgramId: string | null;
+  channel: string | null;
   projectName: string;
+  projectId: string;
   referralCode: string;
   payoutLink: string | null;
   createdAt: string;
-}
-
-interface PartnerStats {
-  totalPartners: number;
-  activePartners: number;
-  pendingPartners: number;
+  metrics: {
+    refs: number;
+    clicks: number;
+    conv: number;
+    epc: number;
+    mrr: number;
+  };
 }
 
 interface PartnersResponse {
-  partners: Partner[];
-  stats: PartnerStats;
+  partners: PartnerListRow[];
+  stats: { totalPartners: number; activePartners: number; pendingPartners: number };
 }
 
 interface Project {
@@ -60,543 +60,454 @@ interface Project {
   slug: string;
 }
 
-function CopyReferralLink({ referralCode }: { referralCode: string }) {
-  const [copied, setCopied] = useState(false);
-  const referralUrl = `${window.location.origin}/api/t/${referralCode}`;
+const CHANNEL_META: Record<string, { label: string; color: string }> = {
+  newsletter: { label: "Newsletter", color: "#2563eb" },
+  youtube: { label: "Youtube", color: "#dc2626" },
+  paid: { label: "Paid", color: "#7c3aed" },
+  podcast: { label: "Podcast", color: "#d97706" },
+  twitter: { label: "Twitter", color: "#0ea5e9" },
+  agency: { label: "Agency", color: "#15803d" },
+  blog: { label: "Blog", color: "#78716c" },
+  community: { label: "Community", color: "#db2777" },
+};
 
-  function handleCopy() {
-    navigator.clipboard.writeText(referralUrl).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }
+const STATUS_TONE: Record<string, string> = {
+  active: "bg-positive/10 text-positive",
+  pending: "bg-warning/10 text-warning",
+  inactive: "bg-muted text-muted-foreground",
+};
 
-  return (
-    <div className="flex items-center gap-1.5">
-      <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
-        {referralCode}
-      </code>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-6 w-6 p-0"
-        onClick={handleCopy}
-        aria-label="Copy referral link"
-      >
-        {copied ? (
-          <Check className="w-3 h-3 text-green-600" />
-        ) : (
-          <Copy className="w-3 h-3 text-muted-foreground" />
-        )}
-      </Button>
-    </div>
-  );
+const AVATAR_PALETTE = [
+  "#3b82f6",
+  "#f59e0b",
+  "#10b981",
+  "#ef4444",
+  "#8b5cf6",
+  "#0ea5e9",
+  "#db2777",
+  "#15803d",
+];
+
+function avatarColor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
 }
 
-function EditPartnerSheet({
-  partner,
-  open,
-  onOpenChange,
-}: {
-  partner: Partner;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const queryClient = useQueryClient();
-  const [name, setName] = useState(partner.name);
-  const [email, setEmail] = useState(partner.email);
-  const [status, setStatus] = useState(partner.status);
-  const [commissionRate, setCommissionRate] = useState(
-    String(Math.round(partner.commissionRate * 100)),
-  );
-  const [referralCode, setReferralCode] = useState(partner.referralCode);
-  const [payoutLink, setPayoutLink] = useState(partner.payoutLink ?? "");
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
-  // Reset form when partner changes
-  useEffect(() => {
-    setName(partner.name);
-    setEmail(partner.email);
-    setStatus(partner.status);
-    setCommissionRate(String(Math.round(partner.commissionRate * 100)));
-    setReferralCode(partner.referralCode);
-    setPayoutLink(partner.payoutLink ?? "");
-  }, [partner]);
-
-  const updateMutation = useMutation({
-    mutationFn: async (data: Record<string, unknown>) => {
-      const response = await fetch(`/api/partners/${partner.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!response.ok) {
-        const body = await response.json();
-        throw new Error((body as { error?: string }).error ?? "Failed to update partner");
-      }
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["partners"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      onOpenChange(false);
-    },
+function fmtMoney(n: number): string {
+  return n.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: n >= 100 ? 0 : 2,
   });
+}
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-
-    const updates: Record<string, unknown> = {};
-
-    if (name.trim() !== partner.name) updates.name = name.trim();
-    if (email.trim() !== partner.email) updates.email = email.trim().toLowerCase();
-    if (status !== partner.status) updates.status = status;
-
-    const rateDecimal = parseFloat(commissionRate) / 100;
-    if (!isNaN(rateDecimal) && rateDecimal !== partner.commissionRate) {
-      updates.commissionRate = rateDecimal;
-    }
-
-    if (referralCode.trim() !== partner.referralCode) {
-      updates.referralCode = referralCode.trim();
-    }
-
-    const newPayoutLink = payoutLink.trim() || null;
-    if (newPayoutLink !== partner.payoutLink) {
-      updates.payoutLink = newPayoutLink;
-    }
-
-    if (Object.keys(updates).length === 0) {
-      onOpenChange(false);
-      return;
-    }
-
-    updateMutation.mutate(updates);
+function statusFromTab(tab: string): string {
+  switch (tab) {
+    case "active":
+      return "active";
+    case "review":
+      return "pending";
+    case "paused":
+      return "inactive";
+    default:
+      return "all";
   }
+}
 
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-md">
-        <SheetHeader>
-          <SheetTitle>Edit Partner</SheetTitle>
-          <SheetDescription>
-            Update partner details. Changes are saved immediately.
-          </SheetDescription>
-        </SheetHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4 mt-6 px-4">
-          <div className="space-y-2">
-            <Label htmlFor="edit-name">Name</Label>
-            <Input
-              id="edit-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Partner name"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="edit-email">Email</Label>
-            <Input
-              id="edit-email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="partner@example.com"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="edit-status">Status</Label>
-            <Select value={status} onValueChange={(v) => setStatus(v as Partner["status"])}>
-              <SelectTrigger id="edit-status">
-                <span className="capitalize">{status}</span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="inactive">Inactive</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="edit-commission">Commission Rate (%)</Label>
-            <Input
-              id="edit-commission"
-              type="number"
-              min="1"
-              max="100"
-              step="1"
-              value={commissionRate}
-              onChange={(e) => setCommissionRate(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="edit-referral">Referral Code</Label>
-            <Input
-              id="edit-referral"
-              value={referralCode}
-              onChange={(e) => setReferralCode(e.target.value)}
-              placeholder="CODE123"
-              className="font-mono"
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="edit-payout">Payout Link</Label>
-            <Input
-              id="edit-payout"
-              value={payoutLink}
-              onChange={(e) => setPayoutLink(e.target.value)}
-              placeholder="paypal.me/name or wise.com/pay/..."
-            />
-          </div>
-
-          {updateMutation.error && (
-            <p className="text-sm text-destructive">
-              {updateMutation.error.message}
-            </p>
-          )}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? "Saving..." : "Save Changes"}
-            </Button>
-          </div>
-        </form>
-      </SheetContent>
-    </Sheet>
-  );
+function downloadCsv(rows: PartnerListRow[]) {
+  const header = [
+    "name",
+    "email",
+    "code",
+    "channel",
+    "commission",
+    "refs",
+    "conv",
+    "epc",
+    "mrr",
+    "status",
+  ];
+  const lines = [header.join(",")];
+  for (const r of rows) {
+    const cells = [
+      r.name,
+      r.email,
+      r.referralCode,
+      r.channel ?? "",
+      `${(r.commissionRate * 100).toFixed(0)}%`,
+      r.metrics.refs,
+      `${r.metrics.conv.toFixed(1)}%`,
+      r.metrics.epc.toFixed(2),
+      r.metrics.mrr.toFixed(2),
+      r.status,
+    ].map((v) => `"${String(v).replaceAll('"', '""')}"`);
+    lines.push(cells.join(","));
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `partners-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function Partners() {
-  const queryClient = useQueryClient();
-  const [selectedProject, setSelectedProject] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [editingPartner, setEditingPartner] = useState<Partner | null>(null);
-
-  const statusMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      const response = await fetch(`/api/partners/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      if (!response.ok) {
-        const body = await response.json();
-        throw new Error((body as { error?: string }).error ?? "Failed to update status");
-      }
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["partners"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-    },
-  });
+  const [tab, setTab] = useState<"all" | "active" | "review" | "paused">("all");
+  const [search, setSearch] = useState("");
+  const [channelFilter, setChannelFilter] = useState<string>("all");
+  const [selectedPartnerId, setSelectedPartnerId] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importProjectId, setImportProjectId] = useState<string>("");
 
   const { data: projectsData } = useQuery({
     queryKey: ["projects"],
     queryFn: async (): Promise<{ projects: Project[] }> => {
-      const response = await fetch("/api/projects");
-      if (!response.ok) throw new Error("Failed to fetch projects");
-      return response.json();
+      const r = await fetch("/api/projects");
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
     },
   });
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["partners", selectedProject, statusFilter, searchQuery],
+  const { data, isLoading } = useQuery({
+    queryKey: ["partners", tab, search, channelFilter],
     queryFn: async (): Promise<PartnersResponse> => {
       const params = new URLSearchParams();
-      if (selectedProject !== "all") params.set("project", selectedProject);
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      if (searchQuery.trim()) params.set("search", searchQuery.trim());
-      const response = await fetch(`/api/partners?${params}`);
-      if (!response.ok) {
-        throw new Error("Failed to fetch partners data");
-      }
-      return response.json();
+      const status = statusFromTab(tab);
+      if (status !== "all") params.set("status", status);
+      if (search.trim()) params.set("search", search.trim());
+      if (channelFilter !== "all") params.set("channel", channelFilter);
+      const r = await fetch(`/api/partners?${params.toString()}`);
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
     },
   });
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-foreground/70">Loading partners...</div>
-      </div>
-    );
-  }
+  const partners = data?.partners ?? [];
+  const reviewCount = useMemo(
+    () => partners.filter((p) => p.status === "pending").length,
+    [partners],
+  );
+  const channelCount = useMemo(
+    () => new Set(partners.map((p) => p.channel).filter(Boolean)).size,
+    [partners],
+  );
+  const activeLast30 = useMemo(() => {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    return partners.filter(
+      (p) => p.status === "active" && new Date(p.createdAt).getTime() > cutoff,
+    ).length;
+  }, [partners]);
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-lg text-destructive">
-          Error loading partners: {error.message}
-        </div>
-      </div>
-    );
-  }
+  const subtitle = `${data?.stats.totalPartners ?? 0} partners across ${channelCount} channels · ${activeLast30} active in last 30 days`;
 
-  function getStatusBadge(status: string) {
-    const styles = {
-      active: "bg-green-100 text-green-800",
-      pending: "bg-yellow-100 text-yellow-800",
-      inactive: "bg-red-100 text-red-800 border border-red-300",
-    };
-
-    return (
-      <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border ${
-          styles[status as keyof typeof styles]
-        }`}
-      >
-        {status}
-      </span>
-    );
-  }
-
-  const totalRevenue = data?.partners.reduce((sum, p) => sum + p.totalRevenue, 0) ?? 0;
-  const projects = projectsData?.projects ?? [];
-  const showProjectColumn = projects.length > 1;
+  const tabs: { value: typeof tab; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "active", label: "Active" },
+    { value: "review", label: reviewCount > 0 ? `Review (${reviewCount})` : "Review" },
+    { value: "paused", label: "Paused" },
+  ];
 
   return (
-    <div className="space-y-6 bg-background">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Partners</h1>
-          <p className="text-muted-foreground">
-            Manage and view all your affiliate partners
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" asChild>
-            <Link to="/app/import">
-              <Upload className="w-4 h-4 mr-2" />
-              Import
-            </Link>
-          </Button>
-          <InvitePartnerDialog projects={projects} />
-        </div>
-      </div>
+    <div className="p-6">
+      <PageHeader eyebrow="NETWORK" title="Partners" subtitle={subtitle}>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            const projects = projectsData?.projects ?? [];
+            if (!importProjectId && projects.length > 0) {
+              setImportProjectId(projects[0].id);
+            }
+            setImportOpen(true);
+          }}
+        >
+          <Upload className="size-3.5" />
+          Import
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => downloadCsv(partners)}
+        >
+          <Download className="size-3.5" />
+          Export
+        </Button>
+        <InvitePartnerDialog projects={projectsData?.projects ?? []} />
+      </PageHeader>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-4 items-center">
-        <div className="w-48">
-          <Select value={selectedProject} onValueChange={setSelectedProject}>
-            <SelectTrigger className="bg-card">
-              <span>
-                {selectedProject === "all"
-                  ? "All Projects"
-                  : projects.find((p) => p.id === selectedProject)?.name ??
-                    "Select"}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Projects</SelectItem>
-              {projects.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="w-48">
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="bg-card">
-              <span>
-                {statusFilter === "all" && "All Statuses"}
-                {statusFilter === "active" && "Active"}
-                {statusFilter === "pending" && "Pending"}
-                {statusFilter === "inactive" && "Inactive"}
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="inactive">Inactive</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="relative w-56">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Search by name, email, code..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9 bg-card"
-            aria-label="Search partners"
+      <div className="bg-card border rounded-md">
+        {/* Toolbar */}
+        <div className="flex flex-col lg:flex-row gap-3 p-4">
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name, email or code…"
+              className="pl-9 h-9"
+            />
+          </div>
+
+          <div className="inline-flex items-center p-1 bg-muted rounded-md gap-1">
+            {tabs.map((t) => {
+              const active = t.value === tab;
+              return (
+                <button
+                  key={t.value}
+                  type="button"
+                  onClick={() => setTab(t.value)}
+                  className={cn(
+                    "px-3 h-7 text-sm font-medium rounded transition-colors",
+                    active
+                      ? "bg-card text-foreground border border-border shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <FilterSelect
+            value={channelFilter}
+            onChange={setChannelFilter}
+            placeholder="Channel"
+            options={[
+              { value: "all", label: "All channels" },
+              { value: "unset", label: "Unset" },
+              ...Object.entries(CHANNEL_META).map(([v, m]) => ({
+                value: v,
+                label: m.label,
+              })),
+            ]}
           />
         </div>
-      </div>
 
-      {/* Metrics Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-        <StatCard
-          title="Total Partners"
-          value={(data?.stats.totalPartners ?? 0).toLocaleString()}
-          Icon={HandHeart}
-        />
-
-        <StatCard
-          title="Active Partners"
-          value={(data?.stats.activePartners ?? 0).toLocaleString()}
-          Icon={Users}
-        />
-
-        <StatCard
-          title="Pending"
-          value={(data?.stats.pendingPartners ?? 0).toLocaleString()}
-          Icon={UserPlus}
-        />
-
-        <StatCard
-          title="Total Revenue"
-          value={`$${totalRevenue.toLocaleString()}`}
-          Icon={TrendingUp}
-        />
-      </div>
-
-      {/* Partners Table */}
-      <div className="shadow-xs bg-card/50 rounded-2xl p-6">
-        <h3 className="text-sm font-medium text-foreground mb-4">
-          All Partners
-        </h3>
-         <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Partner</TableHead>
-              {showProjectColumn && <TableHead>Project</TableHead>}
-              <TableHead>Status</TableHead>
-              <TableHead>Referral Link</TableHead>
-              <TableHead>Customers</TableHead>
-              <TableHead>Revenue</TableHead>
-              <TableHead>Owed</TableHead>
-              <TableHead className="w-10" />
+        {/* Table */}
+        <Table className="px-2 pb-2">
+          <TableHeader className="[&_tr]:border-0">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="text-eyebrow-muted h-12 px-4">Partner</TableHead>
+              <TableHead className="text-eyebrow-muted h-12 px-4">Code</TableHead>
+              <TableHead className="text-eyebrow-muted h-12 px-4">Channel</TableHead>
+              <TableHead className="text-eyebrow-muted h-12 px-4">Commission</TableHead>
+              <TableHead className="text-eyebrow-muted h-12 px-4 text-right">Refs</TableHead>
+              <TableHead className="text-eyebrow-muted h-12 px-4 text-right">Conv.</TableHead>
+              <TableHead className="text-eyebrow-muted h-12 px-4 text-right">EPC</TableHead>
+              <TableHead className="text-eyebrow-muted h-12 px-4 text-right">MRR</TableHead>
+              <TableHead className="text-eyebrow-muted h-12 px-4">Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data?.partners.map((partner) => (
-              <TableRow
-                key={partner.id}
-                className={partner.status === "pending" ? "bg-amber-50/30 dark:bg-amber-950/10" : undefined}
-              >
-                <TableCell>
-                  <div>
-                    <Link
-                      to={`/app/customers?partner=${partner.id}`}
-                      className="font-medium text-primary hover:underline"
-                    >
-                      {partner.name || "Unnamed"}
-                    </Link>
-                    <div className="text-sm text-muted-foreground">
-                      {partner.email}
-                    </div>
-                  </div>
-                </TableCell>
-                {showProjectColumn && (
-                  <TableCell>
-                    <span className="text-sm text-muted-foreground">
-                      {partner.projectName}
-                    </span>
-                  </TableCell>
-                )}
-                <TableCell>{getStatusBadge(partner.status)}</TableCell>
-                <TableCell>
-                  <CopyReferralLink referralCode={partner.referralCode} />
-                </TableCell>
-                <TableCell className="font-medium">
-                  {partner.referredCustomers}
-                </TableCell>
-                <TableCell className="font-medium">
-                  ${partner.totalRevenue.toFixed(2)}
-                </TableCell>
-                <TableCell>
-                  <div>
-                    <span className="font-medium">
-                      ${(partner.totalRevenue * partner.commissionRate).toFixed(2)}
-                    </span>
-                    <div className="text-xs text-muted-foreground">
-                      ({Math.round(partner.commissionRate * 100)}%)
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-1.5">
-                    {partner.status === "pending" && (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 px-2 text-green-600 border-green-200 hover:bg-green-50 dark:border-green-800 dark:hover:bg-green-950/30"
-                          onClick={() => statusMutation.mutate({ id: partner.id, status: "active" })}
-                          disabled={statusMutation.isPending}
-                          aria-label="Approve partner"
-                        >
-                          <CheckCircle className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 px-2 text-red-600 border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950/30"
-                          onClick={() => statusMutation.mutate({ id: partner.id, status: "inactive" })}
-                          disabled={statusMutation.isPending}
-                          aria-label="Reject partner"
-                        >
-                          <XCircle className="w-3.5 h-3.5" />
-                        </Button>
-                      </>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 w-7 p-0"
-                      onClick={() => setEditingPartner(partner)}
-                      aria-label="Edit partner"
-                    >
-                      <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-            {(!data?.partners || data.partners.length === 0) && (
+            {isLoading && (
               <TableRow>
-                <TableCell
-                  colSpan={showProjectColumn ? 8 : 7}
-                  className="text-center text-muted-foreground py-8"
-                >
-                  No partners yet. Create a project first, then invite partners.
+                <TableCell colSpan={9} className="text-center py-12 text-muted-foreground text-sm">
+                  Loading partners…
                 </TableCell>
               </TableRow>
             )}
+            {!isLoading && partners.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={9} className="text-center py-12 text-muted-foreground text-sm">
+                  No partners match these filters.
+                </TableCell>
+              </TableRow>
+            )}
+            {partners.map((p) => {
+              const ch = p.channel ? CHANNEL_META[p.channel] : null;
+              return (
+                <TableRow
+                  key={p.id}
+                  className="cursor-pointer hover:bg-muted/30 border-0 [&>td]:py-4 [&>td]:px-4"
+                  onClick={() => setSelectedPartnerId(p.id)}
+                >
+                  <TableCell>
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="size-9 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0"
+                        style={{ backgroundColor: avatarColor(p.id) }}
+                      >
+                        {initials(p.name || p.email)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-medium text-foreground truncate">
+                          {p.name || "—"}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {p.email}
+                        </div>
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
+                      {p.referralCode}
+                    </code>
+                  </TableCell>
+                  <TableCell>
+                    {ch ? (
+                      <span className="inline-flex items-center gap-1.5 text-sm">
+                        <span
+                          className="size-1.5 rounded-full"
+                          style={{ backgroundColor: ch.color }}
+                        />
+                        {ch.label}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground text-sm">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {(p.commissionRate * 100).toFixed(0)}% · recurring
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-sm">
+                    {p.metrics.refs.toLocaleString()}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-sm">
+                    {p.metrics.conv.toFixed(1)}%
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-sm">
+                    {fmtMoney(p.metrics.epc)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-sm">
+                    {fmtMoney(p.metrics.mrr)}
+                  </TableCell>
+                  <TableCell>
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs",
+                        STATUS_TONE[p.status] ?? "bg-muted",
+                      )}
+                    >
+                      <span
+                        className="size-1.5 rounded-full"
+                        style={{
+                          backgroundColor:
+                            p.status === "active"
+                              ? "var(--positive)"
+                              : p.status === "pending"
+                                ? "var(--warning)"
+                                : "var(--muted-foreground)",
+                        }}
+                      />
+                      {p.status === "pending"
+                        ? "Review"
+                        : p.status === "inactive"
+                          ? "Paused"
+                          : "Active"}
+                    </span>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>
 
-      {/* Edit Partner Sheet */}
-      {editingPartner && (
-        <EditPartnerSheet
-          partner={editingPartner}
-          open={editingPartner !== null}
-          onOpenChange={(open) => {
-            if (!open) setEditingPartner(null);
-          }}
-        />
-      )}
+      <PartnerDetailDrawer
+        partnerId={selectedPartnerId}
+        open={!!selectedPartnerId}
+        onOpenChange={(o) => !o && setSelectedPartnerId(null)}
+      />
+
+      <Sheet open={importOpen} onOpenChange={setImportOpen}>
+        <SheetContent
+          side="right"
+          className="w-full sm:!w-[640px] sm:!max-w-[640px] overflow-y-auto p-6 gap-0"
+        >
+          <SheetTitle
+            className="text-2xl tracking-tight mb-1"
+            style={{
+              fontFamily: `"Source Serif 4", Georgia, serif`,
+              fontWeight: 500,
+            }}
+          >
+            Import partners from CSV
+          </SheetTitle>
+          <p className="text-sm text-muted-foreground mb-4">
+            Upload a CSV with your partner list. We'll auto-map columns where
+            we can.
+          </p>
+
+          {(projectsData?.projects ?? []).length > 1 && (
+            <div className="space-y-1.5 mb-4">
+              <p className="text-xs font-semibold tracking-[0.08em] uppercase text-muted-foreground">
+                Project
+              </p>
+              <Select
+                value={importProjectId}
+                onValueChange={setImportProjectId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Pick a project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(projectsData?.projects ?? []).map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {importProjectId &&
+            (() => {
+              const proj = (projectsData?.projects ?? []).find(
+                (p) => p.id === importProjectId,
+              );
+              return proj ? (
+                <CsvImportPanel
+                  project={proj}
+                  defaultType="partners"
+                  hideTypeSelect
+                  framed={false}
+                />
+              ) : null;
+            })()}
+        </SheetContent>
+      </Sheet>
     </div>
+  );
+}
+
+function FilterSelect({
+  value,
+  onChange,
+  placeholder,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-9 w-36">
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((o) => (
+          <SelectItem key={o.value} value={o.value}>
+            {o.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 

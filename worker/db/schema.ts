@@ -54,6 +54,8 @@ export const partners = sqliteTable(
       .notNull()
       .default("pending"),
     commissionRate: real("commission_rate").notNull().default(0.2),
+    commissionProgramId: text("commission_program_id"),
+    channel: text("channel"),
     referralCode: text("referral_code").notNull().unique(),
     payoutLink: text("payout_link"), // e.g. PayPal.me, Wise, or Venmo link
     registrationIp: text("registration_ip"), // hashed IP at join time
@@ -126,6 +128,49 @@ export const customers = sqliteTable(
 
 export type CustomerRow = typeof customers.$inferSelect;
 export type NewCustomerRow = typeof customers.$inferInsert;
+
+// Payments - source-agnostic ledger of payments (Stripe subs/charges, CSV, future) with optional partner attribution
+export const payments = sqliteTable(
+  "payments",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id").references(() => partners.id, {
+      onDelete: "set null",
+    }),
+    source: text("source").notNull().default("stripe"),
+    externalPaymentId: text("external_payment_id").notNull(),
+    kind: text("kind", { enum: ["subscription", "one_time"] }).notNull(),
+    customerEmail: text("customer_email"),
+    customerName: text("customer_name"),
+    planName: text("plan_name"),
+    mrr: real("mrr"),
+    startedAt: integer("started_at", { mode: "timestamp" }),
+    status: text("status"),
+    flagReason: text("flag_reason"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_payments_project_source_extid").on(
+      table.projectId,
+      table.source,
+      table.externalPaymentId,
+    ),
+    index("idx_payments_project_partner").on(table.projectId, table.partnerId),
+    index("idx_payments_project").on(table.projectId),
+  ],
+);
+
+export type PaymentRow = typeof payments.$inferSelect;
+export type NewPaymentRow = typeof payments.$inferInsert;
 
 // Partner OTPs - one-time codes for partner login via join page
 export const partnerOtps = sqliteTable(
@@ -209,6 +254,9 @@ export const commissions = sqliteTable(
     externalEventId: text("external_event_id"),
     eventDate: integer("event_date", { mode: "timestamp" }), // when the payment actually occurred (e.g. Stripe charge/invoice date)
     fraudFlag: text("fraud_flag"),
+    commissionProgramId: text("commission_program_id"),
+    monthIndex: integer("month_index"),
+    mrr: real("mrr"),
     createdAt: integer("created_at", { mode: "timestamp" })
       .default(sql`(unixepoch())`)
       .notNull(),
@@ -226,6 +274,93 @@ export const commissions = sqliteTable(
 
 export type CommissionRow = typeof commissions.$inferSelect;
 export type NewCommissionRow = typeof commissions.$inferInsert;
+
+// Commission Programs (rules/templates) - define how partners earn
+export const commissionPrograms = sqliteTable(
+  "commission_programs",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    code: text("code").notNull(), // e.g. "rec-30-3"
+    name: text("name").notNull(), // e.g. "Standard recurring"
+    type: text("type", { enum: ["recurring", "lifetime", "one-time"] })
+      .notNull()
+      .default("recurring"),
+    rate: real("rate").notNull(), // percent (e.g. 30 for 30%)
+    durationMonths: integer("duration_months"), // for recurring; null for lifetime/one-time
+    flatAmount: real("flat_amount"), // for one-time when set; otherwise null
+    description: text("description"),
+    minPayout: real("min_payout").notNull().default(50),
+    isDefault: integer("is_default", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    payoutCadence: text("payout_cadence"),
+    payoutDayOfMonth: integer("payout_day_of_month"),
+    payoutDayOfWeek: integer("payout_day_of_week"),
+    payoutOrdinal: integer("payout_ordinal"),
+    archivedAt: integer("archived_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_commission_programs_project_code").on(
+      table.projectId,
+      table.code,
+    ),
+    index("idx_commission_programs_project").on(table.projectId),
+  ],
+);
+
+export type CommissionProgramRow = typeof commissionPrograms.$inferSelect;
+export type NewCommissionProgramRow = typeof commissionPrograms.$inferInsert;
+
+// Coupons - coupon code attribution to partners
+export const coupons = sqliteTable(
+  "coupons",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    commissionProgramId: text("commission_program_id").references(
+      () => commissionPrograms.id,
+      { onDelete: "set null" },
+    ),
+    code: text("code").notNull(), // e.g. "IHW20"
+    customerDiscount: text("customer_discount"), // human-readable, e.g. "15% off year 1"
+    stripeCoupon: text("stripe_coupon"), // optional external coupon id
+    redemptions: integer("redemptions").notNull().default(0),
+    mrrAttributed: real("mrr_attributed").notNull().default(0),
+    status: text("status", { enum: ["live", "paused", "archived"] })
+      .notNull()
+      .default("live"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_coupons_project_code").on(table.projectId, table.code),
+    index("idx_coupons_partner").on(table.partnerId),
+    index("idx_coupons_program").on(table.commissionProgramId),
+  ],
+);
+
+export type CouponRow = typeof coupons.$inferSelect;
+export type NewCouponRow = typeof coupons.$inferInsert;
 
 // API Keys - project-level keys for authenticating the conversion endpoint
 export const apiKeys = sqliteTable(
@@ -332,6 +467,25 @@ export const projectBranding = sqliteTable(
       .notNull()
       .default(false),
     defaultCommissionRate: real("default_commission_rate").notNull().default(0.2),
+    defaultCommissionProgramId: text("default_commission_program_id"),
+    wordmark: text("wordmark"),
+    backgroundMode: text("background_mode").notNull().default("cream"),
+    layout: text("layout").notNull().default("split"),
+    showSocialProof: integer("show_social_proof", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    showFaq: integer("show_faq", { mode: "boolean" }).notNull().default(true),
+    showEarningsCalculator: integer("show_earnings_calculator", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    showTermsAcceptance: integer("show_terms_acceptance", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    socialProofText: text("social_proof_text"),
+    socialProofAvatars: text("social_proof_avatars"),
+    faqs: text("faqs"),
+    samplePlanName: text("sample_plan_name"),
+    samplePlanPrice: real("sample_plan_price"),
     createdAt: integer("created_at", { mode: "timestamp" })
       .default(sql`(unixepoch())`)
       .notNull(),
@@ -566,4 +720,6 @@ export const schema = {
   notifications,
   webhookEndpoints,
   webhookLogs,
+  commissionPrograms,
+  coupons,
 } as const;

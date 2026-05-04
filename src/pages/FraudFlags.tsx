@@ -185,9 +185,9 @@ function FraudFlags() {
 
   function getSeverityBadge(severity: string) {
     const styles: Record<string, string> = {
-      high: "bg-red-100 text-red-800",
-      medium: "bg-yellow-100 text-yellow-800",
-      low: "bg-gray-100 text-gray-700",
+      high: "bg-negative/10 text-negative",
+      medium: "bg-warning/10 text-warning",
+      low: "bg-muted text-muted-foreground",
     };
     return (
       <span
@@ -202,9 +202,9 @@ function FraudFlags() {
 
   function getStatusBadge(status: string) {
     const styles: Record<string, string> = {
-      open: "bg-blue-100 text-blue-800",
-      dismissed: "bg-gray-100 text-gray-700",
-      confirmed: "bg-red-100 text-red-800",
+      open: "bg-info/10 text-info",
+      dismissed: "bg-muted text-muted-foreground",
+      confirmed: "bg-negative/10 text-negative",
     };
     return (
       <span
@@ -339,7 +339,7 @@ function FraudFlags() {
       </div>
 
       {/* Flags Table */}
-      <div className="shadow-xs bg-card/50 rounded-2xl p-6">
+      <div className="bg-card border rounded-md p-6">
         <h3 className="text-sm font-medium text-foreground mb-4">
           All Fraud Flags
         </h3>
@@ -406,7 +406,7 @@ function FraudFlags() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                        className="h-7 px-2 text-negative hover:text-negative hover:bg-negative/10"
                         onClick={() =>
                           updateFlagMutation.mutate({
                             id: flag.id,

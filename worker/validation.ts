@@ -21,11 +21,24 @@ export const createPartnerSchema = z.object({
   payoutLink: z.string().max(500).optional(),
 });
 
+export const PARTNER_CHANNELS = [
+  "newsletter",
+  "youtube",
+  "paid",
+  "podcast",
+  "twitter",
+  "agency",
+  "blog",
+  "community",
+] as const;
+
 export const updatePartnerSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   email: z.string().email().optional(),
   status: z.enum(["active", "pending", "inactive"]).optional(),
   commissionRate: z.number().min(0.01).max(1).optional(),
+  commissionProgramId: z.string().min(1).nullable().optional(),
+  channel: z.enum(PARTNER_CHANNELS).nullable().optional(),
   payoutLink: z.string().max(500).nullable().optional(),
   referralCode: z.string().min(1).max(50).optional(),
 });
@@ -66,6 +79,7 @@ export const trackConversionSchema = z.object({
   revenue: z.number().min(0, "Revenue must be non-negative"),
   customerStatus: z.enum(["trialing", "paid", "cancelled"]).optional(),
   eventId: z.string().max(255).optional(),
+  mrr: z.number().min(0).optional(),
 });
 
 // ─── API Keys ─────────────────────────────────────────────────────────────────
@@ -97,7 +111,38 @@ export const updateBrandingSchema = z.object({
   borderRadius: z.enum(["rectangle", "soft", "pill"]).optional(),
   autoApprove: z.boolean().optional(),
   defaultCommissionRate: z.number().min(0.01).max(1).optional(),
+  defaultCommissionProgramId: z.string().min(1).nullable().optional(),
   portalName: z.string().max(80).nullable().optional(), // accepted but only persisted when portal_name column exists (run migration 0015)
+  wordmark: z.string().max(20).nullable().optional(),
+  backgroundMode: z.enum(["cream", "white", "dark"]).optional(),
+  layout: z.enum(["split", "stacked", "cover"]).optional(),
+  showSocialProof: z.boolean().optional(),
+  showFaq: z.boolean().optional(),
+  showEarningsCalculator: z.boolean().optional(),
+  showTermsAcceptance: z.boolean().optional(),
+  socialProofText: z.string().max(200).nullable().optional(),
+  socialProofAvatars: z
+    .array(
+      z.object({
+        image: z.string().nullable(),
+        initials: z.string().max(2).nullable(),
+      }),
+    )
+    .max(5)
+    .nullable()
+    .optional(),
+  faqs: z
+    .array(
+      z.object({
+        q: z.string().min(1).max(200),
+        a: z.string().min(1).max(1000),
+      }),
+    )
+    .max(8)
+    .nullable()
+    .optional(),
+  samplePlanName: z.string().max(80).nullable().optional(),
+  samplePlanPrice: z.number().nonnegative().max(100000).nullable().optional(),
 });
 
 // ─── Partner Self-Registration ────────────────────────────────────────────────

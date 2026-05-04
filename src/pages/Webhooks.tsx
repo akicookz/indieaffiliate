@@ -271,7 +271,7 @@ function Webhooks() {
                     </TableCell>
                     <TableCell>
                       {ep.isActive ? (
-                        <Badge variant="default" className="bg-green-600/90">Active</Badge>
+                        <Badge variant="default" className="bg-positive">Active</Badge>
                       ) : (
                         <Badge variant="secondary">Inactive</Badge>
                       )}
@@ -336,7 +336,7 @@ function Webhooks() {
                 {logsEndpoint.url}
               </CardDescription>
             </div>
-            <Button variant="outline" size="sm" onClick={() => setLogsEndpointId(null)}>
+            <Button variant="secondary" size="sm" onClick={() => setLogsEndpointId(null)}>
               Close
             </Button>
           </CardHeader>
@@ -589,12 +589,12 @@ function CreateEditForm({
       )}
       {createdSecret && (
         <div className="space-y-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3">
-          <Label className="text-amber-700 dark:text-amber-400">Signing secret (copy now; it won’t be shown again)</Label>
+          <Label className="text-warning">Signing secret (copy now; it won’t be shown again)</Label>
           <div className="flex gap-2">
             <code className="flex-1 text-xs break-all bg-background/80 px-2 py-1.5 rounded">
               {createdSecret}
             </code>
-            <Button type="button" variant="outline" size="sm" onClick={onSecretCopy}>
+            <Button type="button" variant="secondary" size="sm" onClick={onSecretCopy}>
               {copiedSecret ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
             </Button>
           </div>
@@ -602,7 +602,7 @@ function CreateEditForm({
       )}
       {error && <p className="text-destructive text-sm">{error}</p>}
       <DialogFooter showCloseButton={false}>
-        <Button type="button" variant="outline" onClick={onClose}>
+        <Button type="button" variant="secondary" onClick={onClose}>
           {createdSecret ? "Done" : "Cancel"}
         </Button>
         {!createdSecret && (

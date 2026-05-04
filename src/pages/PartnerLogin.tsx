@@ -41,7 +41,7 @@ function PartnerLogin() {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center px-4">
         <div className="w-full max-w-sm space-y-8 text-center">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-primary/10 rounded-2xl mx-auto">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-primary/10 rounded-md mx-auto">
             <Mail className="w-8 h-8 text-primary" />
           </div>
           <div>
@@ -76,7 +76,7 @@ function PartnerLogin() {
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
           <Link to="/" className="inline-flex items-center space-x-2 mb-6">
-            <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center">
+            <div className="w-8 h-8 bg-primary rounded-md flex items-center justify-center">
               <BarChart3 className="w-5 h-5 text-white" />
             </div>
             <span className="text-xl font-semibold text-primary">

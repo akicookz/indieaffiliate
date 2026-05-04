@@ -89,7 +89,7 @@ function PayoutLinkCard({ currentLink }: { currentLink: string | null }) {
   });
 
   return (
-    <div className="bg-card/50 border border-border rounded-2xl p-5 shadow-xs">
+    <div className="bg-card border border-border rounded-md p-5">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <Wallet className="w-4 h-4 text-muted-foreground" />
@@ -138,7 +138,7 @@ function PayoutLinkCard({ currentLink }: { currentLink: string | null }) {
             {mutation.isPending ? "Saving..." : "Save"}
           </Button>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => {
               setEditing(false);
@@ -208,7 +208,7 @@ function PortalDashboard() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-2xl border border-border bg-card/50 p-8">
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-md border border-border bg-card p-8">
         <p className="text-sm text-destructive">{error.message}</p>
       </div>
     );
@@ -224,8 +224,8 @@ function PortalDashboard() {
 
   function getPayoutStatusBadge(status: string) {
     const styles: Record<string, string> = {
-      scheduled: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-      paid: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+      scheduled: "bg-warning/15 text-warning",
+      paid: "bg-positive/15 text-positive",
       failed: "bg-destructive/15 text-destructive",
     };
     return (
@@ -254,7 +254,7 @@ function PortalDashboard() {
       </div>
 
       {/* Referral Link Card */}
-      <div className="bg-card/50 border border-border rounded-2xl p-5 shadow-xs">
+      <div className="bg-card border border-border rounded-md p-5">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-medium text-foreground">
             Your Referral Link
@@ -268,7 +268,7 @@ function PortalDashboard() {
             {referralLink}
           </code>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={handleCopyLink}
             className="shrink-0"
@@ -325,7 +325,7 @@ function PortalDashboard() {
       </div>
 
       {/* Recent Payouts */}
-      <div className="bg-card/50 border border-border rounded-2xl p-6 shadow-xs">
+      <div className="bg-card border border-border rounded-md p-6">
         <h3 className="text-sm font-medium text-foreground mb-4">
           Recent Payouts
         </h3>

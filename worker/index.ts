@@ -49,8 +49,18 @@ import { AnalyticsService } from "./services/analytics-service";
 import { ApiKeyService } from "./services/api-key-service";
 import { EmailService } from "./services/email-service";
 import { BrandingService } from "./services/branding-service";
+import {
+  CommissionProgramService,
+  CouponService,
+  type ProgramType,
+} from "./services/commission-program-service";
 import { StripeService } from "./services/stripe-service";
 import { StripeSyncService } from "./services/stripe-sync-service";
+import {
+  PaymentService,
+  type AssignedFilter,
+  type SourceFilter,
+} from "./services/payment-service";
 import { FraudService } from "./services/fraud-service";
 import { PartnerDashboardService } from "./services/partner-dashboard-service";
 import { PayoutService } from "./services/payout-service";
@@ -478,6 +488,7 @@ const app = new Hono<HonoAppContext>()
       customerStatus: parsed.data.customerStatus,
       eventId: parsed.data.eventId,
       conversionCountry: convCf?.country as string | undefined,
+      mrr: parsed.data.mrr,
     });
 
     if (!result.isDuplicate) {
@@ -547,7 +558,43 @@ const app = new Hono<HonoAppContext>()
         borderRadius: "soft",
         logo: null,
         backgroundImage: null,
+        wordmark: null,
+        backgroundMode: "cream",
+        layout: "split",
+        showSocialProof: true,
+        showFaq: true,
+        showEarningsCalculator: false,
+        showTermsAcceptance: true,
+        socialProofText: null,
+        socialProofAvatars: null,
+        faqs: null,
+        samplePlanName: null,
+        samplePlanPrice: null,
+        commissionProgram: null,
       });
+    }
+
+    // Resolve commission program (rate / type / duration) for the calculator
+    let commissionProgram: {
+      name: string;
+      rate: number;
+      type: string;
+      durationMonths: number | null;
+    } | null = null;
+    if (result.branding.defaultCommissionProgramId) {
+      const programService = new CommissionProgramService(db);
+      const program = await programService.getById(
+        result.branding.projectId,
+        result.branding.defaultCommissionProgramId,
+      );
+      if (program) {
+        commissionProgram = {
+          name: program.name,
+          rate: program.rate,
+          type: program.type,
+          durationMonths: program.durationMonths,
+        };
+      }
     }
 
     // Build public-facing response (don't expose internal IDs)
@@ -565,6 +612,26 @@ const app = new Hono<HonoAppContext>()
       backgroundImage: result.branding.backgroundImage
         ? `${baseUrl}/api/uploads/${result.branding.backgroundImage}`
         : null,
+      wordmark: result.branding.wordmark,
+      backgroundMode: result.branding.backgroundMode,
+      layout: result.branding.layout,
+      showSocialProof: result.branding.showSocialProof,
+      showFaq: result.branding.showFaq,
+      showEarningsCalculator: result.branding.showEarningsCalculator,
+      showTermsAcceptance: result.branding.showTermsAcceptance,
+      socialProofText: result.branding.socialProofText,
+      socialProofAvatars: (result.branding.socialProofAvatars ?? []).map((a) => ({
+        image: a.image
+          ? a.image.startsWith("http")
+            ? a.image
+            : `${baseUrl}/api/uploads/${a.image}`
+          : null,
+        initials: a.initials,
+      })),
+      faqs: result.branding.faqs,
+      samplePlanName: result.branding.samplePlanName,
+      samplePlanPrice: result.branding.samplePlanPrice,
+      commissionProgram,
     });
   })
   // ─── Public: Partner self-registration ────────────────────────────────────
@@ -670,11 +737,25 @@ const app = new Hono<HonoAppContext>()
       const joinHashedIp = await hashIP(ip);
 
       const status = branding.autoApprove ? "active" : "pending";
+
+      let resolvedRate = branding.defaultCommissionRate;
+      if (branding.defaultCommissionProgramId) {
+        const programService = new CommissionProgramService(db);
+        const program = await programService.getById(
+          branding.projectId,
+          branding.defaultCommissionProgramId,
+        );
+        if (program) {
+          resolvedRate = program.rate / 100;
+        }
+      }
+
       const partner = await partnerService.createPartner({
         projectId: branding.projectId,
         name: parsed.data.name.trim(),
         email: parsed.data.email.trim().toLowerCase(),
-        commissionRate: branding.defaultCommissionRate,
+        commissionRate: resolvedRate,
+        commissionProgramId: branding.defaultCommissionProgramId ?? null,
         status,
         registrationIp: joinHashedIp,
       });
@@ -1281,18 +1362,57 @@ const app = new Hono<HonoAppContext>()
     const projectId = c.req.query("project");
     const statusQuery = c.req.query("status");
     const search = c.req.query("search");
+    const channel = c.req.query("channel");
     const status = parsePartnerStatusFilter(statusQuery);
 
     const db = c.get("db");
     const partnerService = new PartnerService(db);
-    const partnersList = await partnerService.getPartnersByUser(user.id, {
+    let partnersList = await partnerService.getPartnersByUser(user.id, {
       projectId,
       status,
       search: search ?? undefined,
     });
+
+    if (channel && channel !== "all") {
+      partnersList = partnersList.filter((p) =>
+        channel === "unset" ? !p.channel : p.channel === channel,
+      );
+    }
+
+    const metrics = await partnerService.getListMetrics(
+      partnersList.map((p) => p.id),
+    );
+    const enriched = partnersList.map((p) => ({
+      ...p,
+      metrics: metrics.get(p.id) ?? {
+        refs: 0,
+        clicks: 0,
+        conv: 0,
+        epc: 0,
+        mrr: 0,
+      },
+    }));
+
     const stats = await partnerService.getPartnerStats(user.id, projectId);
 
-    return c.json({ partners: partnersList, stats });
+    return c.json({ partners: enriched, stats });
+  })
+  .get("/api/partners/:id/detail", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const id = c.req.param("id");
+    const db = c.get("db");
+    const partnerService = new PartnerService(db);
+    const partner = await partnerService.getPartnerById(id);
+    if (!partner) return c.json({ error: "Not found" }, 404);
+    // Ownership check via project
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(partner.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    const detail = await partnerService.getPartnerDetail(id);
+    return c.json(detail);
   })
   .post("/api/partners", async (c) => {
     const user = c.get("user");
@@ -1438,7 +1558,24 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Partner not found" }, 404);
     }
 
-    const partner = await partnerService.updatePartner(id, parsed.data);
+    // If commissionProgramId is set, also sync commissionRate from the program
+    const updates: Parameters<typeof partnerService.updatePartner>[1] = {
+      ...parsed.data,
+    };
+    if (parsed.data.commissionProgramId) {
+      const programService = new CommissionProgramService(db);
+      const program = await programService.getById(
+        existing.projectId,
+        parsed.data.commissionProgramId,
+      );
+      if (program) {
+        updates.commissionRate = program.rate / 100;
+      }
+    } else if (parsed.data.commissionProgramId === null) {
+      // Explicitly clearing program — leave commissionRate alone (admin can edit it directly)
+    }
+
+    const partner = await partnerService.updatePartner(id, updates);
     if (!partner) return c.json({ error: "Partner not found" }, 404);
 
     if (parsed.data.status === "active" && existing.status !== "active") {
@@ -2008,6 +2145,99 @@ const app = new Hono<HonoAppContext>()
 
     return c.json(result);
   })
+  // ─── Payments ──────────────────────────────────────────────────────────────
+  .get("/api/projects/:id/payments", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+    const paymentService = new PaymentService(db);
+    const result = await paymentService.list(projectId, {
+      assigned: (c.req.query("assigned") as AssignedFilter) ?? undefined,
+      source: (c.req.query("source") as SourceFilter) ?? undefined,
+      search: c.req.query("search") ?? undefined,
+    });
+    return c.json(result);
+  })
+  .patch("/api/payments/:id", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const id = c.req.param("id");
+    const db = c.get("db");
+    const paymentService = new PaymentService(db);
+    const existing = await paymentService.getById(id);
+    if (!existing) return c.json({ error: "Not found" }, 404);
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(existing.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    const body = (await c.req.json().catch(() => ({}))) as {
+      partnerId?: string | null;
+      flagReason?: string | null;
+    };
+    const updates: { partnerId?: string | null; flagReason?: string | null } = {};
+    if (body.partnerId !== undefined) updates.partnerId = body.partnerId;
+    if (body.flagReason !== undefined) updates.flagReason = body.flagReason;
+    const updated = await paymentService.update(id, updates);
+    return c.json({ payment: updated });
+  })
+  .delete("/api/payments/:id", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const id = c.req.param("id");
+    const db = c.get("db");
+    const paymentService = new PaymentService(db);
+    const existing = await paymentService.getById(id);
+    if (!existing) return c.json({ ok: true });
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(existing.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    await paymentService.delete(id);
+    return c.json({ ok: true });
+  })
+  .post("/api/projects/:id/payments/sync", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+    const encryptionKey = c.env.STRIPE_ENCRYPTION_KEY;
+    if (!encryptionKey) {
+      return c.json({ error: "Encryption not configured" }, 500);
+    }
+    const stripeService = new StripeService(
+      db,
+      encryptionKey,
+      c.env.SALT ?? "",
+    );
+    const conn = await stripeService.getConnection(projectId);
+    if (!conn) {
+      return c.json(
+        { error: "Stripe not connected for this project" },
+        412,
+      );
+    }
+    const syncService = new StripeSyncService(db, stripeService);
+    try {
+      const result = await syncService.syncPayments(projectId);
+      return c.json(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Sync failed";
+      return c.json({ error: msg }, 500);
+    }
+  })
   // ─── Stripe Metadata Mappings ───────────────────────────────────────────────
   .get("/api/projects/:id/stripe/mappings", async (c) => {
     const user = c.get("user");
@@ -2318,6 +2548,14 @@ const app = new Hono<HonoAppContext>()
             backgroundImage: branding.backgroundImage
               ? `${baseUrl}/api/uploads/${branding.backgroundImage}`
               : null,
+            socialProofAvatars: (branding.socialProofAvatars ?? []).map((a) => ({
+              image: a.image
+                ? a.image.startsWith("http")
+                  ? a.image
+                  : `${baseUrl}/api/uploads/${a.image}`
+                : null,
+              initials: a.initials,
+            })),
           }
         : null,
       // Use the same origin as the current request for joinUrl; APP_BASE_URL can
@@ -2354,9 +2592,160 @@ const app = new Hono<HonoAppContext>()
         backgroundImage: branding.backgroundImage
           ? `${baseUrl}/api/uploads/${branding.backgroundImage}`
           : null,
+        socialProofAvatars: (branding.socialProofAvatars ?? []).map((a) => ({
+          image: a.image
+            ? a.image.startsWith("http")
+              ? a.image
+              : `${baseUrl}/api/uploads/${a.image}`
+            : null,
+          initials: a.initials,
+        })),
       },
       joinUrl: `${baseUrl}/join/${project.slug}`,
     });
+  })
+  // ─── Commission Programs ─────────────────────────────────────────────────
+  .get("/api/projects/:id/commission-programs", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+    const service = new CommissionProgramService(db);
+    const programs = await service.list(projectId);
+    return c.json({ programs });
+  })
+  .post("/api/projects/:id/commission-programs", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+    const body = (await c.req.json()) as {
+      code: string;
+      name: string;
+      type: ProgramType;
+      rate: number;
+      durationMonths?: number | null;
+      flatAmount?: number | null;
+      description?: string | null;
+      minPayout?: number;
+      isDefault?: boolean;
+      payoutCadence?: "monthly_day" | "monthly_ordinal" | "weekly" | null;
+      payoutDayOfMonth?: number | null;
+      payoutDayOfWeek?: number | null;
+      payoutOrdinal?: number | null;
+    };
+    if (!body.code || !body.name || typeof body.rate !== "number") {
+      return c.json({ error: "code, name, and rate are required" }, 400);
+    }
+    const service = new CommissionProgramService(db);
+    try {
+      const program = await service.create(projectId, body);
+      return c.json({ program }, 201);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to create";
+      return c.json({ error: msg }, 400);
+    }
+  })
+  .patch("/api/projects/:id/commission-programs/:programId", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const projectId = c.req.param("id");
+    const programId = c.req.param("programId");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+    const body = await c.req.json();
+    const service = new CommissionProgramService(db);
+    const program = await service.update(projectId, programId, body);
+    if (!program) return c.json({ error: "Program not found" }, 404);
+    return c.json({ program });
+  })
+  .delete("/api/projects/:id/commission-programs/:programId", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const projectId = c.req.param("id");
+    const programId = c.req.param("programId");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+    const service = new CommissionProgramService(db);
+    await service.archive(projectId, programId);
+    return c.json({ ok: true });
+  })
+  // ─── Coupons ─────────────────────────────────────────────────────────────
+  .get("/api/projects/:id/coupons", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+    const service = new CouponService(db);
+    const couponList = await service.list(projectId);
+    return c.json({ coupons: couponList });
+  })
+  .post("/api/projects/:id/coupons", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+    const body = (await c.req.json()) as {
+      code: string;
+      partnerId: string;
+      commissionProgramId?: string | null;
+      customerDiscount?: string | null;
+      stripeCoupon?: string | null;
+    };
+    if (!body.code || !body.partnerId) {
+      return c.json({ error: "code and partnerId are required" }, 400);
+    }
+    const service = new CouponService(db);
+    try {
+      const coupon = await service.create(projectId, body);
+      return c.json({ coupon }, 201);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to create";
+      return c.json({ error: msg }, 400);
+    }
+  })
+  .delete("/api/projects/:id/coupons/:couponId", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const projectId = c.req.param("id");
+    const couponId = c.req.param("couponId");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+    const service = new CouponService(db);
+    await service.delete(projectId, couponId);
+    return c.json({ ok: true });
   })
   // ─── Image Upload ──────────────────────────────────────────────────────────
   .post("/api/upload", async (c) => {

@@ -21,13 +21,13 @@ import { Badge } from "@/components/ui/badge";
 
 function Landing() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-card/50 to-blue-50/30">
+    <div className="min-h-screen bg-background">
       {/* Navigation */}
-      <nav className="mx-auto max-w-4xl rounded-full shadow-sm shadow-primary/10 backdrop-blur-md bg-white/50 sticky top-4 z-50">
+      <nav className="mx-auto max-w-4xl border-b border-border bg-background sticky top-0 z-50">
         <div className="mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center">
+              <div className="w-8 h-8 bg-primary rounded-md flex items-center justify-center">
                 <BarChart3 className="w-5 h-5 text-white" />
               </div>
               <span className="hidden md:inline-block text-xl font-semibold text-primary">
@@ -57,13 +57,13 @@ function Landing() {
         <div className="max-w-7xl mx-auto text-center">
           <Badge
             variant="default"
-            className="rounded-full mb-6 px-4 py-1.5 shadow-sm shadow-primary/90"
+            className="rounded-full mb-6 px-4 py-1.5"
           >
             <Zap className="w-3 h-3 mr-1" />
             We have a free plan 
           </Badge>
 
-          <h1 className="text-4xl md:text-6xl lg:text-7xl font-semibold mb-6 bg-gradient-to-r from-foreground via-foreground to-foreground/80 bg-clip-text text-transparent leading-tight">
+          <h1 className="text-4xl md:text-6xl lg:text-7xl font-semibold mb-6 text-foreground leading-tight">
             Unlock{" "}
             <span className="text-primary font-[family-name:var(--font-heading)] italic">
               Affiliate Marketing
@@ -104,7 +104,7 @@ function Landing() {
                 <Star
                   strokeWidth={1.5}
                   fill="currentColor"
-                  className="w-4 h-4 text-yellow-600"
+                  className="w-4 h-4 text-warning"
                   key={i}
                 />
               ))}
@@ -119,11 +119,11 @@ function Landing() {
         <div className="max-w-6xl mx-auto">
           <div className="relative">
             {/* Screenshot Container */}
-            <div className="bg-background max-h-[500px] backdrop-blur-xl rounded-3xl overflow-hidden relative p-6 sm:p-8">
+            <div className="bg-card max-h-[500px] border rounded-md overflow-hidden relative p-6 sm:p-8">
               <div className="space-y-4">
                 {/* Browser Chrome Mockup */}
                 <div className="w-full">
-                  <div className="flex items-center gap-3 bg-background/80 backdrop-blur-sm rounded-full px-4 py-2.5 border border-border/40">
+                  <div className="flex items-center gap-3 bg-muted rounded-md px-4 py-2.5 border border-border">
                     <div className="flex shrink-0 space-x-1.5" aria-hidden>
                       <div className="w-3 h-3 bg-red-500 rounded-full" />
                       <div className="w-3 h-3 bg-yellow-500 rounded-full" />
@@ -142,9 +142,8 @@ function Landing() {
                 />
               </div>
 
-              {/* Transparent fade effect */}
-              <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-transparent via-transparent/20 to-transparent pointer-events-none mask-gradient"></div>
-              <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-background via-background/60 to-transparent pointer-events-none"></div>
+              {/* Fade overlay */}
+              <div className="absolute inset-x-0 bottom-0 h-40 bg-background/80 pointer-events-none"></div>
             </div>
           </div>
         </div>
@@ -165,9 +164,9 @@ function Landing() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {/* Unified Dashboard */}
-            <Card className="bg-card/40 shadow-xs shadow-primary/5 backdrop-blur-xl rounded-3xl transition-all duration-300 col-span-1 md:col-span-2">
+            <Card className="col-span-1 md:col-span-2">
               <CardHeader>
-                <div className="w-12 h-12 bg-card rounded-2xl flex items-center justify-center mb-4">
+                <div className="w-12 h-12 bg-muted rounded-md flex items-center justify-center mb-4">
                   <BarChart3 className="w-6 h-6 text-primary" />
                 </div>
                 <CardTitle className="text-xl">Unified Dashboard</CardTitle>
@@ -178,10 +177,10 @@ function Landing() {
               </CardHeader>
             </Card>
 
-            <Card className="bg-card/40 shadow-xs shadow-primary/10 backdrop-blur-xl rounded-3xl transition-all duration-300">
+            <Card>
               <CardHeader>
-                <div className="w-12 h-12 bg-gradient-to-r from-green-500/20 to-emerald-600/20 rounded-2xl flex items-center justify-center mb-4">
-                  <TrendingUp className="w-6 h-6 text-green-600" />
+                <div className="w-12 h-12 bg-positive/10 rounded-md flex items-center justify-center mb-4">
+                  <TrendingUp className="w-6 h-6 text-positive" />
                 </div>
                 <CardTitle>Trends and Insights</CardTitle>
                 <CardDescription>
@@ -191,10 +190,10 @@ function Landing() {
             </Card>
 
             {/* Fraud Detection */}
-            <Card className="bg-card/40 backdrop-blur-xl rounded-3xl transition-all duration-300">
+            <Card>
               <CardHeader>
-                <div className="w-12 h-12 bg-gradient-to-r from-red-500/20 to-orange-600/20 rounded-2xl flex items-center justify-center mb-4">
-                  <Shield className="w-6 h-6 text-red-600" />
+                <div className="w-12 h-12 bg-negative/10 rounded-md flex items-center justify-center mb-4">
+                  <Shield className="w-6 h-6 text-negative" />
                 </div>
                 <CardTitle>Fraud Detection</CardTitle>
                 <CardDescription>
@@ -204,10 +203,10 @@ function Landing() {
               </CardHeader>
             </Card>
 
-            <Card className="bg-card/40 backdrop-blur-xl rounded-3xl transition-all duration-300 col-span-1 md:col-span-2">
+            <Card className="col-span-1 md:col-span-2">
               <CardHeader>
-                <div className="w-12 h-12 bg-gradient-to-r from-yellow-500/20 to-orange-600/20 rounded-2xl flex items-center justify-center mb-4">
-                  <Palette className="w-6 h-6 text-yellow-600" />
+                <div className="w-12 h-12 bg-warning/10 rounded-md flex items-center justify-center mb-4">
+                  <Palette className="w-6 h-6 text-warning" />
                 </div>
                 <CardTitle className="text-xl">
                   Branded partner portal
@@ -223,17 +222,17 @@ function Landing() {
           {/* Large Feature Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
             {/* Mass Payouts */}
-            <Card className="bg-card/40 shadow-xs shadow-primary/10 backdrop-blur-xl rounded-3xl transition-all duration-300">
+            <Card>
               <CardHeader className="pb-6">
                 <div className="flex items-center mb-4">
-                  <div className="w-12 h-12 bg-zinc-200 rounded-lg flex items-center justify-center">
+                  <div className="w-12 h-12 bg-muted rounded-md flex items-center justify-center">
                     <img
                       src="/logos/paypal.svg"
                       alt="PayPal"
                       className="w-full h-full"
                     />
                   </div>
-                  <div className="w-12 h-12 bg-green-100 shadow-xs rounded-xl flex items-center justify-center -ml-3">
+                  <div className="w-12 h-12 bg-positive/10 rounded-md flex items-center justify-center -ml-3">
                     <img
                       src="/logos/wise.png"
                       alt="Wise"
@@ -249,17 +248,17 @@ function Landing() {
             </Card>
 
             {/* Payment Integrations */}
-            <Card className="bg-card/40 shadow-xs shadow-primary/10 backdrop-blur-xl rounded-3xl transition-all duration-300">
+            <Card>
               <CardHeader className="pb-6">
                 <div className="flex items-center mb-4">
-                  <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
+                  <div className="w-10 h-10 bg-primary rounded-md flex items-center justify-center">
                     <img
                       src="/logos/paddle.svg"
                       alt="Paddle"
                       className="w-8 h-8"
                     />
                   </div>
-                  <div className="w-12 h-12 shadow-xs rounded-xl flex items-center justify-center -ml-3">
+                  <div className="w-12 h-12 rounded-md flex items-center justify-center -ml-3">
                     <img
                       src="/logos/stripe.svg"
                       alt="Stripe"
@@ -282,7 +281,7 @@ function Landing() {
       </section>
 
       {/* Pricing Section */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-transparent to-accent/5" id="pricing">
+      <section className="py-20 px-4 sm:px-6 lg:px-8" id="pricing">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl mb-4">
@@ -298,7 +297,7 @@ function Landing() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
             {/* FREE Plan */}
-            <Card className="bg-card/40 rounded-3xl backdrop-blur-xl transition-all duration-300 relative flex flex-col">
+            <Card className="relative flex flex-col">
               <CardHeader className="text-center pb-6">
                 <CardTitle className="text-2xl">Starter</CardTitle>
                 <CardDescription>Perfect for getting started</CardDescription>
@@ -315,34 +314,34 @@ function Landing() {
               <CardContent className="space-y-3 flex-grow flex flex-col">
                 <div className="flex-grow space-y-3">
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">1 admin seat</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">
                       Unlimited affiliates & clicks
                     </span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Default % commission only</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">CSV payout export</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">"Powered-by" footer</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Community Slack support</span>
                   </div>
                 </div>
                 <Link to="/signup?plan=free">
-                <Button className="w-full mt-6" variant="outline">
+                <Button className="w-full mt-6" variant="secondary">
                   Start Free
                 </Button>
                 </Link>
@@ -350,7 +349,7 @@ function Landing() {
             </Card>
 
             {/* GROWTH Plan */}
-            <Card className="bg-card/40 bg-gradient-to-r from-primary/10 via-yellow-50/30 to-primary/10 rounded-3xl backdrop-blur-xl border-border hover:border-primary transition-all duration-300 relative flex flex-col">
+            <Card className="border-primary/30 relative flex flex-col">
               <Badge className="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-primary rounded-full text-white">
                 Best value
               </Badge>
@@ -373,43 +372,43 @@ function Landing() {
                     Everything in Free, plus:
                   </p>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">3 admin seats</span>
                     <Badge>Coming Soon</Badge>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Multiple commission rules</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Coupon codes</span>
                     <Badge>Coming Soon</Badge>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Basic fraud filters</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Remove "Powered-by"</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">
                       Zapier / webhook integrations
                     </span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Email & live-chat support</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">PayPal mass payouts</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Wise bulk payouts</span>
                   </div>
                 </div>
@@ -420,7 +419,7 @@ function Landing() {
             </Card>
 
             {/* SCALE Plan */}
-            <Card className="bg-card/40 rounded-3xl backdrop-blur-xl transition-all duration-300 relative flex flex-col">
+            <Card className="relative flex flex-col">
               <CardHeader className="text-center pb-6">
                 <CardTitle className="text-2xl">Scale</CardTitle>
                 <CardDescription>For established businesses</CardDescription>
@@ -440,43 +439,43 @@ function Landing() {
                     Everything in Growth, plus:
                   </p>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">10 admin seats</span>
                     <Badge>Coming Soon</Badge>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Tiered commission levels</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">
                       Automated / scheduled payouts
                     </span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Custom domain</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">White-label branding</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Priority support (24h SLA)</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Advanced fraud monitoring</span>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="w-4 h-4 text-positive" />
                     <span className="text-sm">Refund sync</span>
                   </div>
                 </div>
                 <Link to="/signup?plan=scale">
-                <Button variant="outline" className="w-full mt-6">
+                <Button variant="secondary" className="w-full mt-6">
                   Start 14-day free trial
                 </Button>
                 </Link>
@@ -486,7 +485,7 @@ function Landing() {
 
           {/* ENTERPRISE Plan - Full Width */}
           <div className="mt-8 max-w-5xl mx-auto">
-            <Card className="bg-card/40 w-full rounded-3xl backdrop-blur-xl transition-all duration-300">
+            <Card className="w-full">
               <CardContent className="py-8 px-8">
                 <div className="flex flex-col md:flex-row items-center justify-between">
                   <div className="text-center md:text-left mb-6 md:mb-0">
@@ -506,31 +505,31 @@ function Landing() {
                   <div className="flex-1 md:ml-8">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
                       <div className="flex items-center space-x-3">
-                        <Check className="w-4 h-4 text-green-600" />
+                        <Check className="w-4 h-4 text-positive" />
                         <span className="text-sm">
                           SSO (SAML/Okta) & advanced RBAC
                         </span>
                       </div>
                       <div className="flex items-center space-x-3">
-                        <Check className="w-4 h-4 text-green-600" />
+                        <Check className="w-4 h-4 text-positive" />
                         <span className="text-sm">
                           Dedicated infra & 99.9% SLA
                         </span>
                       </div>
                       <div className="flex items-center space-x-3">
-                        <Check className="w-4 h-4 text-green-600" />
+                        <Check className="w-4 h-4 text-positive" />
                         <span className="text-sm">
                           Multi-touch attribution & BI export
                         </span>
                       </div>
                       <div className="flex items-center space-x-3">
-                        <Check className="w-4 h-4 text-green-600" />
+                        <Check className="w-4 h-4 text-positive" />
                         <span className="text-sm">
                           White-glove onboarding, account manager
                         </span>
                       </div>
                       <div className="flex items-center space-x-3 md:col-span-2">
-                        <Check className="w-4 h-4 text-green-600" />
+                        <Check className="w-4 h-4 text-positive" />
                         <span className="text-sm">
                           Annual invoicing, security review
                         </span>
@@ -555,7 +554,7 @@ function Landing() {
       {/* CTA Section */}
       <section className="py-20 px-4 sm:px-6 lg:px-8">
         <div className="max-w-5xl mx-auto text-center">
-          <Card className="rounded-4xl bg-gradient-to-r from-primary/10 via-yellow-50/30 to-primary/10 backdrop-blur-xl ">
+          <Card className="border-primary/20">
             <CardContent className="py-16 px-8">
               <h2 className="text-3xl md:text-4xl mb-4 font-heading italic">
                 Ready to grow your revenue?
@@ -581,11 +580,11 @@ function Landing() {
 
       {/* Footer */}
       <footer className="py-12">
-        <div className="bg-card/60 p-8 shadow-sm mx-auto max-w-5xl rounded-4xl border-border/40 backdrop-blur-xl">
+        <div className="bg-card p-8 mx-auto max-w-5xl rounded-md border border-border">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
             <div className="col-span-1 md:col-span-2">
               <div className="flex items-center space-x-2 mb-4">
-                <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center">
+                <div className="w-8 h-8 bg-primary rounded-md flex items-center justify-center">
                   <BarChart3 className="w-5 h-5 text-white" />
                 </div>
                 <span className="text-xl font-bold">UnlockAffiliate</span>

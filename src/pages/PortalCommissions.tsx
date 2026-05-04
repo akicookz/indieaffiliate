@@ -43,7 +43,7 @@ function PortalCommissions() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-2xl border border-border bg-card/50 p-8">
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-md border border-border bg-card p-8">
         <p className="text-sm text-destructive">{error.message}</p>
       </div>
     );
@@ -51,9 +51,9 @@ function PortalCommissions() {
 
   function getStatusBadge(status: string) {
     const styles: Record<string, string> = {
-      pending: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-      approved: "bg-blue-500/15 text-blue-700 dark:text-blue-400",
-      paid: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+      pending: "bg-warning/15 text-warning",
+      approved: "bg-info/15 text-info",
+      paid: "bg-positive/15 text-positive",
       rejected: "bg-destructive/15 text-destructive",
     };
     return (
@@ -92,26 +92,26 @@ function PortalCommissions() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-card/50 border border-border rounded-2xl p-4 shadow-xs">
+        <div className="bg-card border border-border rounded-md p-4">
           <p className="text-sm text-muted-foreground">Total</p>
           <p className="text-2xl font-medium mt-1 text-foreground">${totals.total.toFixed(2)}</p>
         </div>
-        <div className="bg-card/50 border border-border rounded-2xl p-4 shadow-xs">
+        <div className="bg-card border border-border rounded-md p-4">
           <p className="text-sm text-muted-foreground">Pending</p>
-          <p className="text-2xl font-medium mt-1 text-amber-700 dark:text-amber-400">${totals.pending.toFixed(2)}</p>
+          <p className="text-2xl font-medium mt-1 text-warning">${totals.pending.toFixed(2)}</p>
         </div>
-        <div className="bg-card/50 border border-border rounded-2xl p-4 shadow-xs">
+        <div className="bg-card border border-border rounded-md p-4">
           <p className="text-sm text-muted-foreground">Approved</p>
-          <p className="text-2xl font-medium mt-1 text-blue-700 dark:text-blue-400">${totals.approved.toFixed(2)}</p>
+          <p className="text-2xl font-medium mt-1 text-info">${totals.approved.toFixed(2)}</p>
         </div>
-        <div className="bg-card/50 border border-border rounded-2xl p-4 shadow-xs">
+        <div className="bg-card border border-border rounded-md p-4">
           <p className="text-sm text-muted-foreground">Paid</p>
-          <p className="text-2xl font-medium mt-1 text-emerald-700 dark:text-emerald-400">${totals.paid.toFixed(2)}</p>
+          <p className="text-2xl font-medium mt-1 text-positive">${totals.paid.toFixed(2)}</p>
         </div>
       </div>
 
       {/* Commission Table */}
-      <div className="bg-card/50 border border-border rounded-2xl p-6 shadow-xs">
+      <div className="bg-card border border-border rounded-md p-6">
         <Table>
           <TableHeader>
             <TableRow>

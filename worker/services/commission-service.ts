@@ -26,6 +26,7 @@ export class CommissionService {
     eventId?: string;
     eventDate?: Date;
     conversionCountry?: string;
+    mrr?: number;
   }): Promise<{ customerId: string; commissionId: string; commissionAmount: number; isDuplicate?: boolean }> {
     const fraudService = new FraudService(this.db);
 
@@ -133,6 +134,36 @@ export class CommissionService {
     // Calculate commission
     const commissionAmount = data.revenue * partner.commissionRate;
 
+    // Resolve commission program (snapshot on the row) — partner first, then branding default fallback handled at call site / left null here
+    const programId = partner.commissionProgramId ?? null;
+
+    // Compute monthIndex for this customer × program (1-based)
+    let monthIndex = 1;
+    if (programId) {
+      const monthCountRows = await this.db
+        .select({ c: sql<number>`count(*)` })
+        .from(commissions)
+        .where(
+          and(
+            eq(commissions.partnerId, data.partnerId),
+            eq(commissions.customerId, customerId),
+            eq(commissions.commissionProgramId, programId),
+          ),
+        );
+      monthIndex = (monthCountRows[0]?.c ?? 0) + 1;
+    } else {
+      const monthCountRows = await this.db
+        .select({ c: sql<number>`count(*)` })
+        .from(commissions)
+        .where(
+          and(
+            eq(commissions.partnerId, data.partnerId),
+            eq(commissions.customerId, customerId),
+          ),
+        );
+      monthIndex = (monthCountRows[0]?.c ?? 0) + 1;
+    }
+
     // Insert commission record
     const commissionId = crypto.randomUUID();
     const commissionRow: NewCommissionRow = {
@@ -146,6 +177,9 @@ export class CommissionService {
       externalEventId: data.eventId ?? null,
       eventDate: data.eventDate ?? null,
       fraudFlag,
+      commissionProgramId: programId,
+      monthIndex,
+      mrr: data.mrr ?? null,
     };
     await this.db.insert(commissions).values(commissionRow);
 

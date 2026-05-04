@@ -68,7 +68,7 @@ function Notifications() {
           </p>
         </div>
         <Button
-          variant="outline"
+          variant="secondary"
           onClick={() => readAllMutation.mutate()}
           disabled={readAllMutation.isPending || unreadCount === 0}
         >
@@ -94,7 +94,7 @@ function Notifications() {
         </CardHeader>
         <CardContent className="space-y-4">
           {notifications.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-12 text-center">
+            <div className="flex flex-col items-center justify-center rounded-md border border-dashed py-12 text-center">
               <BellRing className="mb-3 h-10 w-10 text-muted-foreground" />
               <p className="font-medium">No notifications yet</p>
               <p className="text-sm text-muted-foreground">
@@ -105,7 +105,7 @@ function Notifications() {
             notifications.map((item) => (
               <div
                 key={item.id}
-                className={`rounded-xl border p-4 transition-colors ${item.isRead ? "bg-background" : "bg-primary/5 border-primary/20"}`}
+                className={`rounded-md border p-4 transition-colors ${item.isRead ? "bg-background" : "bg-primary/5 border-primary/20"}`}
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-2">
@@ -128,7 +128,7 @@ function Notifications() {
                   <div className="flex shrink-0 flex-col gap-2">
                     {!item.isRead && (
                       <Button
-                        variant="outline"
+                        variant="secondary"
                         size="sm"
                         onClick={() => readOneMutation.mutate(item.id)}
                         disabled={readOneMutation.isPending}

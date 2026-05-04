@@ -379,7 +379,7 @@ function ProjectSettings() {
     <div className="space-y-6 bg-background max-w-7xl mx-auto px-4">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-muted rounded-2xl flex items-center justify-center">
+        <div className="w-10 h-10 bg-muted rounded-md flex items-center justify-center">
           <Settings className="w-5 h-5 text-muted-foreground" />
         </div>
         <div>
@@ -393,7 +393,7 @@ function ProjectSettings() {
       <div className="grid gap-6 lg:grid-cols-2 w-full">
         <div className="space-y-6">
           {/* Project Info */}
-          <div className="shadow-xs bg-card/50 rounded-2xl p-6 space-y-4">
+          <div className="bg-card border rounded-md p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-foreground">Project Details</h3>
               {isProjectDirty && (
@@ -452,7 +452,7 @@ function ProjectSettings() {
                 {isProjectDirty && (
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     onClick={handleResetProjectDetails}
                     disabled={updateProjectMutation.isPending}
@@ -465,7 +465,7 @@ function ProjectSettings() {
           </div>
 
           {/* API Keys */}
-          <div className="shadow-xs bg-card/50 rounded-2xl p-6 space-y-4">
+          <div className="bg-card border rounded-md p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Key className="w-4 h-4 text-muted-foreground" />
@@ -473,7 +473,7 @@ function ProjectSettings() {
               </div>
               {!showNewKeyForm && (
                 <Button
-                  variant="outline"
+                  variant="secondary"
                   size="sm"
                   onClick={() => {
                     setShowNewKeyForm(true);
@@ -492,7 +492,7 @@ function ProjectSettings() {
 
             {/* Generated key banner */}
             {generatedKey && (
-              <div className="bg-primary/10 border border-primary/20 rounded-xl p-4 space-y-2">
+              <div className="bg-primary/10 border border-primary/20 rounded-md p-4 space-y-2">
                 <p className="text-sm font-medium text-foreground">
                   Save this key now — it won't be shown again:
                 </p>
@@ -500,9 +500,9 @@ function ProjectSettings() {
                   <code className="flex-1 text-xs bg-muted/50 px-3 py-2 rounded-lg font-mono break-all">
                     {generatedKey}
                   </code>
-                  <Button variant="outline" size="sm" onClick={handleCopyKey}>
+                  <Button variant="secondary" size="sm" onClick={handleCopyKey}>
                     {copiedKey ? (
-                      <Check className="w-3 h-3 text-green-600" />
+                      <Check className="w-3 h-3 text-positive" />
                     ) : (
                       <Copy className="w-3 h-3" />
                     )}
@@ -556,7 +556,7 @@ function ProjectSettings() {
                 {apiKeysData.keys.map((key) => (
                   <div
                     key={key.id}
-                    className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3"
+                    className="flex items-center justify-between bg-muted/30 rounded-md px-4 py-3"
                   >
                     <div className="space-y-0.5">
                       <p className="text-sm font-medium">{key.name}</p>
@@ -594,7 +594,7 @@ function ProjectSettings() {
           </div>
 
           {/* Stripe Integration */}
-          <div className="shadow-xs bg-card/50 rounded-2xl p-6 space-y-4">
+          <div className="bg-card border rounded-md p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <svg
@@ -610,8 +610,8 @@ function ProjectSettings() {
                 </h3>
               </div>
               {stripeData?.connected && (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-600 bg-green-50 dark:bg-green-950/30 px-2.5 py-1 rounded-full">
-                  <span className="w-1.5 h-1.5 bg-green-500 rounded-full" />
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-positive bg-positive/10 px-2.5 py-1 rounded-full">
+                  <span className="w-1.5 h-1.5 bg-positive rounded-full" />
                   Connected
                 </span>
               )}
@@ -630,7 +630,7 @@ function ProjectSettings() {
                 </p>
 
                 {/* Sync status */}
-                <div className="bg-muted/30 rounded-xl px-4 py-3 space-y-1">
+                <div className="bg-muted/30 rounded-md px-4 py-3 space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">
                       Sync Status
@@ -657,7 +657,7 @@ function ProjectSettings() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" asChild>
+                  <Button variant="secondary" size="sm" asChild>
                     <Link to="/app/import">
                       <Upload className="w-3 h-3 mr-1.5" />
                       Go to Import
@@ -717,7 +717,7 @@ function ProjectSettings() {
                       }}
                     />
                     <Button
-                      variant="outline"
+                      variant="secondary"
                       size="sm"
                       className="h-8"
                       onClick={handleAddMetadataKey}
@@ -785,21 +785,21 @@ function ProjectSettings() {
                   with read access to charges, customers, and subscriptions.
                 </p>
 
-                <div className="bg-muted/30 rounded-xl px-4 py-3 space-y-2">
+                <div className="bg-muted/30 rounded-md px-4 py-3 space-y-2">
                   <p className="text-xs font-medium text-foreground">
                     Required restricted key permissions:
                   </p>
                   <ul className="text-xs text-muted-foreground space-y-1">
                     <li className="flex items-center gap-2">
-                      <Check className="w-3 h-3 text-green-600 shrink-0" />
+                      <Check className="w-3 h-3 text-positive shrink-0" />
                       Charges — Read
                     </li>
                     <li className="flex items-center gap-2">
-                      <Check className="w-3 h-3 text-green-600 shrink-0" />
+                      <Check className="w-3 h-3 text-positive shrink-0" />
                       Customers — Read
                     </li>
                     <li className="flex items-center gap-2">
-                      <Check className="w-3 h-3 text-green-600 shrink-0" />
+                      <Check className="w-3 h-3 text-positive shrink-0" />
                       Subscriptions — Read
                     </li>
                   </ul>
@@ -860,7 +860,7 @@ function ProjectSettings() {
             )}
           </div>
 
-          <div className="shadow-xs bg-card/50 rounded-2xl  p-6 space-y-4 border border-destructive/20">
+          <div className="bg-card border rounded-md p-6 space-y-4 border-destructive/20">
             <h3 className="text-sm font-medium text-destructive">Danger Zone</h3>
             <p className="text-sm text-muted-foreground">
               Deleting this project will permanently remove all associated partners,
@@ -884,7 +884,7 @@ function ProjectSettings() {
 
         {/* Tracking Snippet */}
         <div className="space-y-6 lg:sticky lg:top-6 self-start">
-          <div className="shadow-xs bg-card/50 rounded-2xl p-6 space-y-4">
+          <div className="bg-card border rounded-md p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Code className="w-4 h-4 text-muted-foreground" />
@@ -892,10 +892,10 @@ function ProjectSettings() {
                   Tracking Snippet
                 </h3>
               </div>
-              <Button variant="outline" size="sm" onClick={handleCopySnippet}>
+              <Button variant="secondary" size="sm" onClick={handleCopySnippet}>
                 {copiedSnippet ? (
                   <>
-                    <Check className="w-3 h-3 mr-1.5 text-green-600" />
+                    <Check className="w-3 h-3 mr-1.5 text-positive" />
                     Copied
                   </>
                 ) : (
@@ -914,7 +914,7 @@ function ProjectSettings() {
               </code>{" "}
               query parameters.
             </p>
-            <pre className="bg-muted/50 border border-border rounded-xl p-4 text-xs overflow-x-auto font-mono">
+            <pre className="bg-muted/50 border border-border rounded-md p-4 text-xs overflow-x-auto font-mono">
               {trackingSnippet}
             </pre>
           </div>

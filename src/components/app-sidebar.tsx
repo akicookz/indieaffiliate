@@ -1,11 +1,10 @@
 import * as React from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
-  Home,
+  LayoutGrid,
   Users,
   HandHeart,
   CreditCard,
-  ShieldAlert,
-  LineChart,
   PanelLeftClose,
   PanelLeft,
 } from "lucide-react";
@@ -24,43 +23,36 @@ import {
 import { Button } from "@/components/ui/button";
 import { useSession } from "@/lib/auth-client";
 
-const navMain = [
-  {
-    title: "Home",
-    url: "/app",
-    icon: Home,
-    isActive: true,
-  },
-  {
-    title: "Partners",
-    url: "/app/partners",
-    icon: HandHeart,
-  },
-  {
-    title: "Referred Customers",
-    url: "/app/customers",
-    icon: Users,
-  },
-  {
-    title: "Payouts",
-    url: "/app/payouts",
-    icon: CreditCard,
-  },
-  {
-    title: "Analytics",
-    url: "/app/analytics",
-    icon: LineChart,
-  },
-  {
-    title: "Fraud Detection",
-    url: "/app/fraud-flags",
-    icon: ShieldAlert,
-  },
-];
+interface NavCounts {
+  partners?: number;
+  payouts?: number;
+}
+
+function useNavCounts(): NavCounts {
+  const { data } = useQuery({
+    queryKey: ["nav-counts"],
+    queryFn: async (): Promise<NavCounts> => {
+      try {
+        const res = await fetch("/api/dashboard");
+        if (!res.ok) return {};
+        const json = await res.json();
+        return {
+          partners: json?.activePartners,
+          payouts: json?.pendingCommissionsCount,
+        };
+      } catch {
+        return {};
+      }
+    },
+    staleTime: 60_000,
+  });
+  return data ?? {};
+}
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { data: session } = useSession();
   const { toggleSidebar } = useSidebar();
+  const counts = useNavCounts();
 
   const user = {
     name: session?.user?.name ?? "User",
@@ -68,12 +60,28 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     avatar: session?.user?.image ?? "",
   };
 
+  const workspaceNav = [
+    { title: "Overview", url: "/app", icon: LayoutGrid },
+    {
+      title: "Partners",
+      url: "/app/partners",
+      icon: HandHeart,
+      count: counts.partners,
+    },
+    { title: "Payments", url: "/app/payments", icon: Users },
+    {
+      title: "Payouts",
+      url: "/app/payouts",
+      icon: CreditCard,
+      count: counts.payouts,
+    },
+  ];
+
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
-        {/* Expanded: label + close button */}
         <div className="flex items-center justify-between px-2 h-8 group-data-[collapsible=icon]:hidden">
-          <span className="text-xs font-medium text-sidebar-foreground/70">Platform</span>
+          <span className="text-eyebrow-muted">Workspace</span>
           <Button
             variant="ghost"
             size="icon"
@@ -84,7 +92,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <PanelLeftClose className="size-4" />
           </Button>
         </div>
-        {/* Collapsed: open button */}
         <div className="hidden group-data-[collapsible=icon]:flex items-center justify-center py-1">
           <Button
             variant="ghost"
@@ -98,7 +105,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={navMain} />
+        <NavMain items={workspaceNav} />
         <NavProjects />
       </SidebarContent>
       <SidebarFooter>

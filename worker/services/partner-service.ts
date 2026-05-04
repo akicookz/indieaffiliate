@@ -1,8 +1,13 @@
 import { type DrizzleD1Database } from "drizzle-orm/d1";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray, desc } from "drizzle-orm";
 import {
   partners,
   projects,
+  customers,
+  commissions,
+  clicks,
+  commissionPrograms,
+  payouts,
   type PartnerRow,
   type NewPartnerRow,
 } from "../db";
@@ -95,13 +100,321 @@ export class PartnerService {
 
   async updatePartner(
     id: string,
-    updates: Partial<Pick<PartnerRow, "name" | "email" | "status" | "commissionRate" | "payoutLink" | "referralCode">>,
+    updates: Partial<
+      Pick<
+        PartnerRow,
+        | "name"
+        | "email"
+        | "status"
+        | "commissionRate"
+        | "commissionProgramId"
+        | "channel"
+        | "payoutLink"
+        | "referralCode"
+      >
+    >,
   ): Promise<PartnerRow | null> {
     await this.db
       .update(partners)
       .set(updates)
       .where(eq(partners.id, id));
     return this.getPartnerById(id);
+  }
+
+  /**
+   * Returns the rich payload for the partner detail drawer:
+   * stats, monthly MRR, attributed subscriptions, tab counts.
+   */
+  async getPartnerDetail(id: string): Promise<{
+    partner: PartnerRow & {
+      commissionProgram: {
+        id: string;
+        name: string;
+        rate: number;
+        type: string;
+        durationMonths: number | null;
+        payoutCadence: string | null;
+        payoutDayOfMonth: number | null;
+        payoutDayOfWeek: number | null;
+        payoutOrdinal: number | null;
+      } | null;
+    };
+    stats: {
+      lifetimeEarned: number;
+      customerCount: number;
+      pendingPayout: number;
+      conversionRate: number;
+      clicks: number;
+      refs: number;
+      epc: number;
+    };
+    monthlyMrr: { month: string; mrr: number; pending: number }[];
+    subscriptions: {
+      customerId: string;
+      customerName: string;
+      startedAt: string | null;
+      mrr: number | null;
+      perMoEarn: number | null;
+      monthIndex: number;
+      durationMonths: number | null;
+      earned: number;
+      total: number | null;
+      programType: string | null;
+    }[];
+    payoutCount: number;
+    commissionCount: number;
+  } | null> {
+    const partner = await this.getPartnerById(id);
+    if (!partner) return null;
+
+    let program: {
+      id: string;
+      name: string;
+      rate: number;
+      type: string;
+      durationMonths: number | null;
+      payoutCadence: string | null;
+      payoutDayOfMonth: number | null;
+      payoutDayOfWeek: number | null;
+      payoutOrdinal: number | null;
+    } | null = null;
+    if (partner.commissionProgramId) {
+      const programRows = await this.db
+        .select()
+        .from(commissionPrograms)
+        .where(eq(commissionPrograms.id, partner.commissionProgramId))
+        .limit(1);
+      if (programRows[0]) {
+        program = {
+          id: programRows[0].id,
+          name: programRows[0].name,
+          rate: programRows[0].rate,
+          type: programRows[0].type,
+          durationMonths: programRows[0].durationMonths,
+          payoutCadence: programRows[0].payoutCadence,
+          payoutDayOfMonth: programRows[0].payoutDayOfMonth,
+          payoutDayOfWeek: programRows[0].payoutDayOfWeek,
+          payoutOrdinal: programRows[0].payoutOrdinal,
+        };
+      }
+    }
+
+    // Stats
+    const earnedRow = await this.db
+      .select({
+        lifetime: sql<number>`coalesce(sum(case when ${commissions.status} in ('approved','paid') then ${commissions.amount} else 0 end),0)`,
+        pending: sql<number>`coalesce(sum(case when ${commissions.status} = 'approved' then ${commissions.amount} else 0 end),0)`,
+        custCount: sql<number>`count(distinct ${commissions.customerId})`,
+        commissionCount: sql<number>`count(*)`,
+      })
+      .from(commissions)
+      .where(eq(commissions.partnerId, id));
+
+    const clicksRow = await this.db
+      .select({
+        total: sql<number>`count(*)`,
+        unique: sql<number>`coalesce(sum(case when ${clicks.isUnique} then 1 else 0 end),0)`,
+      })
+      .from(clicks)
+      .where(eq(clicks.partnerId, id));
+
+    const refRow = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(customers)
+      .where(eq(customers.partnerId, id));
+
+    const payoutRow = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(payouts)
+      .where(eq(payouts.partnerId, id));
+
+    const lifetimeEarned = earnedRow[0]?.lifetime ?? 0;
+    const pendingPayout = earnedRow[0]?.pending ?? 0;
+    const customerCount = earnedRow[0]?.custCount ?? 0;
+    const commissionCount = earnedRow[0]?.commissionCount ?? 0;
+    const totalClicks = clicksRow[0]?.unique ?? 0;
+    const refs = refRow[0]?.count ?? 0;
+    const conversionRate = totalClicks > 0 ? (refs / totalClicks) * 100 : 0;
+    const epc = totalClicks > 0 ? lifetimeEarned / totalClicks : 0;
+    const payoutCount = payoutRow[0]?.count ?? 0;
+
+    // Monthly MRR — last 12 months of commission events
+    const monthRows = await this.db
+      .select({
+        month: sql<string>`strftime('%Y-%m', ${commissions.eventDate}, 'unixepoch')`,
+        mrr: sql<number>`coalesce(sum(${commissions.amount}),0)`,
+        pending: sql<number>`coalesce(sum(case when ${commissions.status} in ('pending','approved') then ${commissions.amount} else 0 end),0)`,
+      })
+      .from(commissions)
+      .where(
+        and(
+          eq(commissions.partnerId, id),
+          sql`${commissions.eventDate} is not null`,
+        ),
+      )
+      .groupBy(sql`strftime('%Y-%m', ${commissions.eventDate}, 'unixepoch')`)
+      .orderBy(sql`strftime('%Y-%m', ${commissions.eventDate}, 'unixepoch')`);
+
+    const monthlyMrr = monthRows.map((r) => ({
+      month: r.month,
+      mrr: r.mrr,
+      pending: r.pending,
+    }));
+
+    // Subscriptions — one row per customer × program
+    const subsRows = await this.db
+      .select({
+        customerId: commissions.customerId,
+        customerName: customers.name,
+        customerEmail: customers.email,
+        firstEvent: sql<number | null>`min(${commissions.eventDate})`,
+        mrr: sql<number | null>`max(${commissions.mrr})`,
+        monthCount: sql<number>`coalesce(max(${commissions.monthIndex}), count(*))`,
+        earned: sql<number>`coalesce(sum(${commissions.amount}),0)`,
+        commissionProgramId: sql<string | null>`max(${commissions.commissionProgramId})`,
+      })
+      .from(commissions)
+      .innerJoin(customers, eq(customers.id, commissions.customerId))
+      .where(eq(commissions.partnerId, id))
+      .groupBy(commissions.customerId)
+      .orderBy(desc(sql`min(${commissions.eventDate})`));
+
+    // Pull all referenced programs in one shot
+    const subProgramIds = Array.from(
+      new Set(
+        subsRows.map((r) => r.commissionProgramId).filter((v): v is string => !!v),
+      ),
+    );
+    const subProgramRows = subProgramIds.length
+      ? await this.db
+          .select()
+          .from(commissionPrograms)
+          .where(inArray(commissionPrograms.id, subProgramIds))
+      : [];
+    const subProgramMap = new Map(subProgramRows.map((p) => [p.id, p]));
+
+    const subscriptions = subsRows.map((r) => {
+      const subProgram = r.commissionProgramId
+        ? (subProgramMap.get(r.commissionProgramId) ?? null)
+        : null;
+      const rateFrac = subProgram ? subProgram.rate / 100 : partner.commissionRate;
+      const perMoEarn = r.mrr != null ? r.mrr * rateFrac : null;
+      let total: number | null = null;
+      if (r.mrr != null) {
+        if (subProgram?.type === "recurring" && subProgram.durationMonths) {
+          total = r.mrr * rateFrac * subProgram.durationMonths;
+        } else if (subProgram?.type === "lifetime") {
+          total = r.mrr * rateFrac * 12;
+        } else if (subProgram?.type === "one-time") {
+          total = r.mrr * rateFrac;
+        }
+      }
+      return {
+        customerId: r.customerId,
+        customerName: r.customerName ?? r.customerEmail,
+        startedAt: r.firstEvent
+          ? new Date(r.firstEvent * 1000).toISOString().slice(0, 10)
+          : null,
+        mrr: r.mrr,
+        perMoEarn,
+        monthIndex: r.monthCount,
+        durationMonths: subProgram?.durationMonths ?? null,
+        earned: r.earned,
+        total,
+        programType: subProgram?.type ?? null,
+      };
+    });
+
+    return {
+      partner: { ...partner, commissionProgram: program },
+      stats: {
+        lifetimeEarned,
+        customerCount,
+        pendingPayout,
+        conversionRate,
+        clicks: totalClicks,
+        refs,
+        epc,
+      },
+      monthlyMrr,
+      subscriptions,
+      payoutCount,
+      commissionCount,
+    };
+  }
+
+  /**
+   * Lightweight per-row enrichment for the list page: REFS / CLICKS / CONV / EPC / MRR.
+   * Returns a Map keyed by partnerId.
+   */
+  async getListMetrics(
+    partnerIds: string[],
+  ): Promise<
+    Map<
+      string,
+      {
+        refs: number;
+        clicks: number;
+        conv: number;
+        epc: number;
+        mrr: number;
+      }
+    >
+  > {
+    const out = new Map<
+      string,
+      { refs: number; clicks: number; conv: number; epc: number; mrr: number }
+    >();
+    if (partnerIds.length === 0) return out;
+
+    const refsRows = await this.db
+      .select({
+        partnerId: customers.partnerId,
+        refs: sql<number>`count(*)`,
+      })
+      .from(customers)
+      .where(inArray(customers.partnerId, partnerIds))
+      .groupBy(customers.partnerId);
+
+    const clicksRows = await this.db
+      .select({
+        partnerId: clicks.partnerId,
+        unique: sql<number>`coalesce(sum(case when ${clicks.isUnique} then 1 else 0 end),0)`,
+      })
+      .from(clicks)
+      .where(inArray(clicks.partnerId, partnerIds))
+      .groupBy(clicks.partnerId);
+
+    const earnedRows = await this.db
+      .select({
+        partnerId: commissions.partnerId,
+        earned: sql<number>`coalesce(sum(case when ${commissions.status} in ('approved','paid') then ${commissions.amount} else 0 end),0)`,
+        mrr: sql<number>`coalesce(sum(case when ${commissions.status} != 'rejected' and strftime('%Y-%m', ${commissions.eventDate}, 'unixepoch') = strftime('%Y-%m','now') then coalesce(${commissions.mrr},0) else 0 end),0)`,
+      })
+      .from(commissions)
+      .where(inArray(commissions.partnerId, partnerIds))
+      .groupBy(commissions.partnerId);
+
+    const refMap = new Map(refsRows.map((r) => [r.partnerId, r.refs]));
+    const clickMap = new Map(clicksRows.map((r) => [r.partnerId, r.unique]));
+    const earnedMap = new Map(
+      earnedRows.map((r) => [r.partnerId, { earned: r.earned, mrr: r.mrr }]),
+    );
+
+    for (const id of partnerIds) {
+      const refs = refMap.get(id) ?? 0;
+      const clicksCount = clickMap.get(id) ?? 0;
+      const e = earnedMap.get(id) ?? { earned: 0, mrr: 0 };
+      out.set(id, {
+        refs,
+        clicks: clicksCount,
+        conv: clicksCount > 0 ? (refs / clicksCount) * 100 : 0,
+        epc: clicksCount > 0 ? e.earned / clicksCount : 0,
+        mrr: e.mrr,
+      });
+    }
+
+    return out;
   }
 
   async getPartnerByEmail(

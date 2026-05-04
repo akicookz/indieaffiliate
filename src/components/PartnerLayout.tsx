@@ -48,7 +48,7 @@ function PartnerLayout() {
   return (
     <div className="min-h-screen bg-background">
       {/* Top Navigation */}
-      <header className="border-b border-border bg-card/50 backdrop-blur-xl sticky top-0 z-50">
+      <header className="border-b border-border bg-background sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
             <Link to="/portal" className="flex items-center space-x-2">
@@ -56,11 +56,11 @@ function PartnerLayout() {
                 <img
                   src={branding.logo}
                   alt=""
-                  className="w-8 h-8 rounded-xl object-contain bg-card border border-border"
+                  className="w-8 h-8 rounded-md object-contain bg-card border border-border"
                 />
               ) : (
                 <div
-                  className="w-8 h-8 rounded-xl flex items-center justify-center"
+                  className="w-8 h-8 rounded-md flex items-center justify-center"
                   style={{ backgroundColor: brandColor }}
                 >
                   <BarChart3 className="w-5 h-5 text-white" />

@@ -347,7 +347,7 @@ function StripeCustomerTable({
 
       {/* Assign Partner action bar */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center justify-between bg-muted/50 border border-border rounded-xl px-4 py-2.5">
+        <div className="flex items-center justify-between bg-muted/50 border border-border rounded-md px-4 py-2.5">
           <span className="text-sm text-foreground">
             {selectedIds.size} customer{selectedIds.size !== 1 ? "s" : ""} selected
           </span>
@@ -526,7 +526,7 @@ function StripeCustomerTable({
       {hasMore && !debouncedQuery && (
         <div className="flex justify-center">
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => loadMoreMutation.mutate()}
             disabled={loadMoreMutation.isPending}
@@ -553,21 +553,21 @@ function StripeCustomerTable({
 
       {/* Assign error */}
       {assignMutation.error && (
-        <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-3 flex items-center gap-2">
+        <div className="bg-destructive/10 border border-destructive/20 rounded-md p-3 flex items-center gap-2">
           <span className="text-sm text-destructive">{assignMutation.error.message}</span>
         </div>
       )}
 
       {/* Success toast */}
       {successMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-green-50 dark:bg-green-950/50 border border-green-200 dark:border-green-800 rounded-xl px-4 py-3 shadow-lg flex items-center gap-2 animate-in slide-in-from-bottom-2">
-          <Check className="w-4 h-4 text-green-600 shrink-0" />
-          <span className="text-sm text-green-800 dark:text-green-200">
+        <div className="fixed bottom-6 right-6 z-50 bg-positive/10 border border-positive/20 rounded-md px-4 py-3 flex items-center gap-2 animate-in slide-in-from-bottom-2">
+          <Check className="w-4 h-4 text-positive shrink-0" />
+          <span className="text-sm text-positive">
             {successMessage}
           </span>
           <button
             onClick={() => setSuccessMessage(null)}
-            className="text-green-600 hover:text-green-800 dark:hover:text-green-300 ml-2"
+            className="text-positive hover:text-positive/80 ml-2"
             aria-label="Dismiss"
           >
             <X className="w-3.5 h-3.5" />
@@ -639,7 +639,7 @@ function StripeCustomerTable({
             <div className="flex justify-end gap-2">
               <Button
                 type="button"
-                variant="outline"
+                variant="secondary"
                 onClick={() => setCreateDialogOpen(false)}
               >
                 Cancel

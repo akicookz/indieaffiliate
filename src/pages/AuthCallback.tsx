@@ -154,7 +154,7 @@ function AuthCallback() {
 
     return (
         <div className="min-h-screen bg-background flex items-center justify-center px-4">
-            <Card className="w-full max-w-md rounded-2xl bg-card/50 border-border/50 shadow-xs backdrop-blur-xl">
+            <Card className="w-full max-w-md rounded-md bg-card border-border/50">
                 <CardHeader className="text-center">
                     <CardTitle className="text-xl">
                         {status === "loading" ? "Signing you in" : "Sign-in failed"}
@@ -178,7 +178,7 @@ function AuthCallback() {
                         </div>
                     ) : (
                         <div className="space-y-4">
-                            <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/40 p-4">
+                            <div className="flex items-start gap-3 rounded-md border border-border/60 bg-background/40 p-4">
                                 <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
                                 <div className="space-y-1">
                                     <div className="text-sm font-medium">Error</div>
@@ -194,7 +194,7 @@ function AuthCallback() {
                                         Back to login
                                     </Link>
                                 </Button>
-                                <Button asChild variant="outline" className="w-full">
+                                <Button asChild variant="secondary" className="w-full">
                                     <a href={window.location.href}>Retry callback</a>
                                 </Button>
                             </div>

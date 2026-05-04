@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import PageHeader from "@/components/PageHeader";
 import {
   AreaChart,
   Area,
   XAxis,
   YAxis,
-  CartesianGrid,
   PieChart,
   Pie,
   Cell,
@@ -146,11 +146,11 @@ function getGreeting() {
 function getStatusIcon(status: string) {
   switch (status) {
     case "paid":
-      return <CheckCircle className="w-4 h-4 text-green-600" />;
+      return <CheckCircle className="w-4 h-4 text-positive" />;
     case "trialing":
-      return <Clock className="w-4 h-4 text-blue-600" />;
+      return <Clock className="w-4 h-4 text-info" />;
     case "cancelled":
-      return <AlertTriangle className="w-4 h-4 text-red-600" />;
+      return <AlertTriangle className="w-4 h-4 text-negative" />;
     default:
       return <UserPlus className="w-4 h-4 text-muted-foreground" />;
   }
@@ -330,7 +330,7 @@ function Dashboard() {
               </Select>
             </div>
           )}
-          <Button variant="outline" asChild>
+          <Button variant="secondary" asChild>
             <Link to="/app/import">
               <Upload className="w-4 h-4 mr-2" />
               Import
@@ -341,7 +341,7 @@ function Dashboard() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="shadow-xs bg-card/50 rounded-2xl p-5 space-y-1">
+        <div className="bg-card border rounded-md p-5 space-y-1">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Revenue</p>
           <p className="text-2xl font-semibold text-foreground">
             ${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
@@ -352,13 +352,13 @@ function Dashboard() {
           </div>
         </div>
 
-        <div className="shadow-xs bg-card/50 rounded-2xl p-5 space-y-1">
+        <div className="bg-card border rounded-md p-5 space-y-1">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active Partners</p>
           <p className="text-2xl font-semibold text-foreground">{activePartners}</p>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <HandHeart className="w-3.5 h-3.5" />
             {pendingPartners > 0 ? (
-              <Link to="/app/partners?status=pending" className="text-yellow-700 dark:text-yellow-400 hover:underline">
+              <Link to="/app/partners?status=pending" className="text-warning hover:underline">
                 +{pendingPartners} pending review
               </Link>
             ) : (
@@ -367,7 +367,7 @@ function Dashboard() {
           </div>
         </div>
 
-        <div className="shadow-xs bg-card/50 rounded-2xl p-5 space-y-1">
+        <div className="bg-card border rounded-md p-5 space-y-1">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Conversion Rate</p>
           <p className="text-2xl font-semibold text-foreground">{conversionRate}%</p>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -376,7 +376,7 @@ function Dashboard() {
           </div>
         </div>
 
-        <div className="shadow-xs bg-card/50 rounded-2xl p-5 space-y-1">
+        <div className="bg-card border rounded-md p-5 space-y-1">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Pending Commissions</p>
           <p className="text-2xl font-semibold text-foreground">
             ${pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -393,7 +393,7 @@ function Dashboard() {
       {/* Revenue Chart + Partner Breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Revenue Chart */}
-        <div className="shadow-xs bg-card/50 rounded-2xl p-6 lg:col-span-2">
+        <div className="bg-card border rounded-md p-6 lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="text-sm font-medium text-foreground">Attributed revenue</h3>
@@ -403,7 +403,6 @@ function Dashboard() {
           {analyticsData?.revenueByDay && analyticsData.revenueByDay.length > 0 ? (
             <ChartContainer config={revenueChartConfig} className="h-72 w-full">
               <AreaChart data={analyticsData.revenueByDay} accessibilityLayer>
-                <CartesianGrid vertical={false} />
                 <XAxis
                   dataKey="date"
                   tickLine={false}
@@ -436,7 +435,7 @@ function Dashboard() {
                   fill="var(--color-revenue)"
                   fillOpacity={0.1}
                   stroke="var(--color-revenue)"
-                  strokeWidth={2}
+                  strokeWidth={1.5}
                 />
                 <Area
                   type="monotone"
@@ -444,19 +443,19 @@ function Dashboard() {
                   fill="var(--color-commissions)"
                   fillOpacity={0.1}
                   stroke="var(--color-commissions)"
-                  strokeWidth={2}
+                  strokeWidth={1.5}
                 />
               </AreaChart>
             </ChartContainer>
           ) : (
-            <div className="h-72 flex items-center justify-center border-2 border-dashed border-border/30 rounded-xl">
+            <div className="h-72 flex items-center justify-center border-2 border-dashed border-border/30 rounded-md">
               <p className="text-muted-foreground text-sm">No revenue data yet</p>
             </div>
           )}
         </div>
 
         {/* Partner Revenue Breakdown */}
-        <div className="shadow-xs bg-card/50 rounded-2xl p-6">
+        <div className="bg-card border rounded-md p-6">
           <h3 className="text-sm font-medium text-foreground mb-4">Revenue by partner</h3>
           {pieData.length > 0 ? (
             <div className="flex flex-col items-center">
@@ -496,7 +495,7 @@ function Dashboard() {
               </div>
             </div>
           ) : (
-            <div className="h-48 flex items-center justify-center border-2 border-dashed border-border/30 rounded-xl">
+            <div className="h-48 flex items-center justify-center border-2 border-dashed border-border/30 rounded-md">
               <p className="text-muted-foreground text-sm">No partner data yet</p>
             </div>
           )}
@@ -506,7 +505,7 @@ function Dashboard() {
       {/* Top Referrers + Activity Feed */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Top Partners Table */}
-        <div className="shadow-xs bg-card/50 rounded-2xl p-6 lg:col-span-2">
+        <div className="bg-card border rounded-md p-6 lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-foreground">Top partners</h3>
             <Link
@@ -567,7 +566,7 @@ function Dashboard() {
         </div>
 
         {/* Activity Feed */}
-        <div className="shadow-xs bg-card/50 rounded-2xl p-6">
+        <div className="bg-card border rounded-md p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-foreground">Recent activity</h3>
             <Link

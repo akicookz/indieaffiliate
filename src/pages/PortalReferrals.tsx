@@ -25,27 +25,27 @@ function getDisplayStatus(referral: Referral): { label: string; style: string } 
       const date = stripe.split(":").slice(1).join(":");
       return {
         label: `Cancels ${new Date(date).toLocaleDateString()}`,
-        style: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+        style: "bg-warning/15 text-warning",
       };
     }
     const stripeStyles: Record<string, { label: string; style: string }> = {
-      active: { label: "Active", style: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
-      trialing: { label: "Trialing", style: "bg-blue-500/15 text-blue-700 dark:text-blue-400" },
+      active: { label: "Active", style: "bg-positive/15 text-positive" },
+      trialing: { label: "Trialing", style: "bg-info/15 text-info" },
       past_due: { label: "Past Due", style: "bg-destructive/15 text-destructive" },
       cancelled: { label: "Cancelled", style: "bg-muted text-muted-foreground" },
       refunded: { label: "Refunded", style: "bg-violet-500/15 text-violet-700 dark:text-violet-400" },
-      paid: { label: "Paid", style: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
+      paid: { label: "Paid", style: "bg-positive/15 text-positive" },
     };
     return stripeStyles[stripe] ?? { label: stripe, style: "bg-muted text-muted-foreground" };
   }
 
   const localStyles: Record<string, { label: string; style: string }> = {
-    trialing: { label: "Trialing", style: "bg-blue-500/15 text-blue-700 dark:text-blue-400" },
-    paid: { label: "Paid", style: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" },
+    trialing: { label: "Trialing", style: "bg-info/15 text-info" },
+    paid: { label: "Paid", style: "bg-positive/15 text-positive" },
     cancelled: { label: "Cancelled", style: "bg-muted text-muted-foreground" },
     past_due: { label: "Past Due", style: "bg-destructive/15 text-destructive" },
     refunded: { label: "Refunded", style: "bg-violet-500/15 text-violet-700 dark:text-violet-400" },
-    cancels_on: { label: "Cancelling", style: "bg-amber-500/15 text-amber-700 dark:text-amber-400" },
+    cancels_on: { label: "Cancelling", style: "bg-warning/15 text-warning" },
   };
   return localStyles[referral.status] ?? { label: referral.status, style: "bg-muted text-muted-foreground" };
 }
@@ -76,7 +76,7 @@ function PortalReferrals() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-2xl border border-border bg-card/50 p-8">
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-md border border-border bg-card p-8">
         <p className="text-sm text-destructive">{error.message}</p>
       </div>
     );
@@ -96,7 +96,7 @@ function PortalReferrals() {
         </p>
       </div>
 
-      <div className="bg-card/50 border border-border rounded-2xl p-6 shadow-xs">
+      <div className="bg-card border border-border rounded-md p-6">
         <Table>
           <TableHeader>
             <TableRow>

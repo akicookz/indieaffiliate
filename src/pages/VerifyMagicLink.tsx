@@ -69,9 +69,9 @@ function VerifyMagicLink() {
   if (status === "error") {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center px-4">
-        <Card className="w-full max-w-md rounded-3xl bg-card/40 backdrop-blur-xl border-border/40 shadow-xs">
+        <Card className="w-full max-w-md rounded-md border">
           <CardHeader className="space-y-2">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-destructive/10 mx-auto">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-md bg-destructive/10 mx-auto">
               <Mail className="w-6 h-6 text-destructive" />
             </div>
             <CardTitle className="text-xl text-center">Could not sign you in</CardTitle>
@@ -97,9 +97,9 @@ function VerifyMagicLink() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4">
-      <Card className="w-full max-w-sm rounded-3xl bg-card/40 backdrop-blur-xl border-border/40 shadow-xs">
+      <Card className="w-full max-w-sm rounded-md border">
         <CardHeader className="space-y-2 text-center">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 mx-auto">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-md bg-primary/10 mx-auto">
             <Loader2 className="w-7 h-7 text-primary animate-spin" />
           </div>
           <CardTitle className="text-xl">Signing you in</CardTitle>

@@ -485,7 +485,7 @@ function Onboarding() {
       <div className="w-full max-w-4xl space-y-6">
         {/* Header with step indicator */}
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary rounded-2xl flex items-center justify-center">
+          <div className="w-10 h-10 bg-primary rounded-md flex items-center justify-center">
             <BarChart3 className="w-5 h-5 text-white" />
           </div>
           <div>
@@ -512,7 +512,7 @@ function Onboarding() {
 
         {/* ─── Last step: Choose Plan (or "You're all set" if plan already selected) ──────── */}
         {step === "plan" && subscriptionPlan != null && (
-          <div className="shadow-xs bg-card/50 rounded-2xl p-8 text-center space-y-6">
+          <div className="bg-card border rounded-md p-8 text-center space-y-6">
             <div className="flex justify-center">
               <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
                 <Check className="h-7 w-7 text-primary" />
@@ -554,7 +554,7 @@ function Onboarding() {
               <Card
                 role="button"
                 tabIndex={0}
-                className="cursor-pointer transition-all duration-200 hover:border-primary/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 active:scale-[0.99] border-2"
+                className="cursor-pointer transition-all duration-200 hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 active:scale-[0.99] border-2"
                 onClick={() => handleChoosePlan("starter")}
                 onKeyDown={(e) => {
                   if ((e.key === "Enter" || e.key === " ") && !planStepPending) {
@@ -584,7 +584,7 @@ function Onboarding() {
                     ))}
                   </ul>
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     className="w-full"
                     disabled={planStepPending}
                     onClick={(e) => {
@@ -605,7 +605,7 @@ function Onboarding() {
               <Card
                 role="button"
                 tabIndex={0}
-                className="cursor-pointer transition-all duration-200 hover:border-primary/50 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 active:scale-[0.99] border-2 border-primary/20 bg-gradient-to-b from-primary/5 to-transparent dark:from-primary/10 relative overflow-hidden"
+                className="cursor-pointer transition-all duration-200 hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 active:scale-[0.99] border-2 border-primary/20 bg-primary/5 relative overflow-hidden"
                 onClick={() => handleChoosePlan("growth")}
                 onKeyDown={(e) => {
                   if ((e.key === "Enter" || e.key === " ") && !planStepPending) {
@@ -662,7 +662,7 @@ function Onboarding() {
               <Card
                 role="button"
                 tabIndex={0}
-                className="cursor-pointer transition-all duration-200 hover:border-primary/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 active:scale-[0.99] border-2"
+                className="cursor-pointer transition-all duration-200 hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 active:scale-[0.99] border-2"
                 onClick={() => handleChoosePlan("scale")}
                 onKeyDown={(e) => {
                   if ((e.key === "Enter" || e.key === " ") && !planStepPending) {
@@ -693,7 +693,7 @@ function Onboarding() {
                     ))}
                   </ul>
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     className="w-full border-2"
                     disabled={planStepPending}
                     onClick={(e) => {
@@ -715,7 +715,7 @@ function Onboarding() {
 
         {/* ─── Step 1: Create Project ───────────────────────────────────── */}
         {step === "create" && (
-          <div className="shadow-xs bg-card/50 rounded-2xl p-6 space-y-4">
+          <div className="bg-card border rounded-md p-6 space-y-4">
             <h2 className="text-sm font-medium text-foreground">Create your first project</h2>
             <p className="text-sm text-muted-foreground">
               You can change these later in project settings.
@@ -760,7 +760,7 @@ function Onboarding() {
         {/* ─── Step 2: Configure ────────────────────────────────────────── */}
         {step === "configure" && (
           <div className="grid gap-6 lg:grid-cols-2">
-            <div className="shadow-xs bg-card/50 rounded-2xl p-6 space-y-4">
+            <div className="bg-card border rounded-md p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Code className="h-4 w-4 text-muted-foreground" />
@@ -768,10 +768,10 @@ function Onboarding() {
                     Install the tracking snippet
                   </h2>
                 </div>
-                <Button variant="outline" size="sm" onClick={handleCopySnippet}>
+                <Button variant="secondary" size="sm" onClick={handleCopySnippet}>
                   {copiedSnippet ? (
                     <>
-                      <Check className="w-3 h-3 mr-1.5 text-green-600" />
+                      <Check className="w-3 h-3 mr-1.5 text-positive" />
                       Copied
                     </>
                   ) : (
@@ -786,19 +786,19 @@ function Onboarding() {
                 Paste this into your website&apos;s &lt;head&gt;. It tracks referrals via{" "}
                 <code className="text-xs bg-muted px-1 py-0.5 rounded">?ref=CODE</code>.
               </p>
-              <pre className="bg-muted/50 border border-border rounded-xl p-4 text-xs overflow-x-auto font-mono">
+              <pre className="bg-muted/50 border border-border rounded-md p-4 text-xs overflow-x-auto font-mono">
                 {trackingSnippet}
               </pre>
             </div>
 
-            <div className="shadow-xs bg-card/50 rounded-2xl p-6 space-y-4">
+            <div className="bg-card border rounded-md p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-medium text-foreground">
                   Connect Stripe (optional)
                 </h2>
                 {stripeData?.connected && (
-                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-600 bg-green-50 dark:bg-green-950/30 px-2.5 py-1 rounded-full">
-                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full" />
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-positive bg-positive/10 px-2.5 py-1 rounded-full">
+                    <span className="w-1.5 h-1.5 bg-positive rounded-full" />
                     Connected
                   </span>
                 )}
@@ -807,21 +807,21 @@ function Onboarding() {
                 Used to auto-sync charges with referral metadata into commissions.
               </p>
 
-              <div className="bg-muted/30 rounded-xl px-4 py-3 space-y-2">
+              <div className="bg-muted/30 rounded-md px-4 py-3 space-y-2">
                 <p className="text-xs font-medium text-foreground">
                   Required restricted key permissions:
                 </p>
                 <ul className="text-xs text-muted-foreground space-y-1">
                   <li className="flex items-center gap-2">
-                    <Check className="w-3 h-3 text-green-600 shrink-0" />
+                    <Check className="w-3 h-3 text-positive shrink-0" />
                     Charges — Read
                   </li>
                   <li className="flex items-center gap-2">
-                    <Check className="w-3 h-3 text-green-600 shrink-0" />
+                    <Check className="w-3 h-3 text-positive shrink-0" />
                     Customers — Read
                   </li>
                   <li className="flex items-center gap-2">
-                    <Check className="w-3 h-3 text-green-600 shrink-0" />
+                    <Check className="w-3 h-3 text-positive shrink-0" />
                     Subscriptions — Read
                   </li>
                 </ul>
@@ -873,7 +873,7 @@ function Onboarding() {
                 <Button
                   type="submit"
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   disabled={
                     connectStripeMutation.isPending ||
                     !!stripeData?.connected ||
@@ -904,7 +904,7 @@ function Onboarding() {
         {/* ─── Step 3: Add Partners ─────────────────────────────────────── */}
         {step === "partners" && (
           <div className="space-y-6">
-            <div className="shadow-xs bg-card/50 rounded-2xl p-6 space-y-4">
+            <div className="bg-card border rounded-md p-6 space-y-4">
               <div className="flex items-center gap-2">
                 <UserPlus className="w-4 h-4 text-muted-foreground" />
                 <h2 className="text-sm font-medium text-foreground">Add Partners</h2>
@@ -1017,7 +1017,7 @@ function Onboarding() {
             </div>
 
             <div className="flex items-center justify-between">
-              <Button variant="outline" onClick={goBack}>
+              <Button variant="secondary" onClick={goBack}>
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back
               </Button>
@@ -1038,7 +1038,7 @@ function Onboarding() {
         {step === "sync" && (
           <div className="space-y-6">
             {stripeData?.connected && project ? (
-              <div className="shadow-xs bg-card/50 rounded-2xl p-6 space-y-4">
+              <div className="bg-card border rounded-md p-6 space-y-4">
                 <div className="flex items-center gap-2">
                   <StripeIcon />
                   <h2 className="text-sm font-medium text-foreground">
@@ -1058,7 +1058,7 @@ function Onboarding() {
                 />
               </div>
             ) : (
-              <div className="shadow-xs bg-card/50 rounded-2xl p-6 space-y-3">
+              <div className="bg-card border rounded-md p-6 space-y-3">
                 <div className="flex items-center gap-2">
                   <StripeIcon />
                   <h2 className="text-sm font-medium text-foreground">
@@ -1075,7 +1075,7 @@ function Onboarding() {
             )}
 
             <div className="flex items-center justify-between">
-              <Button variant="outline" onClick={goBack}>
+              <Button variant="secondary" onClick={goBack}>
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back
               </Button>

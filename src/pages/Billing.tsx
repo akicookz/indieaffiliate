@@ -108,7 +108,7 @@ function Billing() {
   return (
     <div className="space-y-6">
       {showSuccess && (
-        <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-800 dark:text-green-200 flex items-center gap-2">
+        <div className="rounded-lg border border-positive/30 bg-positive/10 px-4 py-3 text-sm text-positive flex items-center gap-2">
           <CheckCircle2 className="h-5 w-5 shrink-0" />
           Your subscription was updated successfully.
         </div>
@@ -122,12 +122,12 @@ function Billing() {
           <div className="mt-2 flex items-center gap-2 text-sm">
             {stripeConnection.connected ? (
               <>
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                <CheckCircle2 className="h-4 w-4 text-positive" />
                 <span className="text-muted-foreground">Stripe: {stripeConnection.message}</span>
               </>
             ) : (
               <>
-                <XCircle className="h-4 w-4 text-amber-600" />
+                <XCircle className="h-4 w-4 text-warning" />
                 <span className="text-muted-foreground">Stripe: {stripeConnection.message}</span>
               </>
             )}
@@ -172,7 +172,7 @@ function Billing() {
             {hasPortal && (
               <div className="space-y-2">
                 <Button
-                  variant="outline"
+                  variant="secondary"
                   className="w-full"
                   onClick={() => portalMutation.mutate()}
                   disabled={portalMutation.isPending}
@@ -217,7 +217,7 @@ function Billing() {
       {(!subscription.plan ||
         subscription.plan === "starter" ||
         subscription.plan === "growth") && (
-        <Card className="border-primary/20 bg-gradient-to-r from-primary/5 via-background to-background">
+        <Card className="border-primary/20 bg-primary/5">
           <CardHeader className="space-y-3">
             <CardTitle className="flex items-center gap-2">
               <Zap className="h-5 w-5 text-primary" />

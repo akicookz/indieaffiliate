@@ -41,7 +41,7 @@ function Login() {
       <div className="w-full max-w-sm space-y-8">
         <div className="text-center">
           <Link to="/" className="inline-flex items-center space-x-2 mb-6">
-            <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center">
+            <div className="w-8 h-8 bg-primary rounded-md flex items-center justify-center">
               <BarChart3 className="w-5 h-5 text-white" />
             </div>
             <span className="text-xl font-semibold text-primary">
@@ -62,7 +62,7 @@ function Login() {
           )}
 
           <Button
-            variant="outline"
+            variant="secondary"
             className="w-full"
             disabled={loading !== null}
             onClick={() => handleSocialLogin("google")}
@@ -89,7 +89,7 @@ function Login() {
           </Button>
 
           <Button
-            variant="outline"
+            variant="secondary"
             className="w-full"
             disabled={loading !== null}
             onClick={() => handleSocialLogin("github")}

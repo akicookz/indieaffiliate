@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 
 import Layout from "./components/Layout";
 import AuthGuard from "./components/AuthGuard";
@@ -14,8 +14,7 @@ import RedirectMagicLinkVerify from "./pages/RedirectMagicLinkVerify";
 import AuthCallback from "./pages/AuthCallback";
 import Onboarding from "./pages/Onboarding";
 import Dashboard from "./pages/Dashboard";
-import Analytics from "./pages/Analytics";
-import Customers from "./pages/Customers";
+import Payments from "./pages/Payments";
 import Partners from "./pages/Partners";
 import Payouts from "./pages/Payouts";
 import FraudFlags from "./pages/FraudFlags";
@@ -27,6 +26,7 @@ import Import from "./pages/Import";
 import Notifications from "./pages/Notifications";
 import Webhooks from "./pages/Webhooks";
 import PartnerPageDesigner from "./pages/PartnerPageDesigner";
+import Commissions from "./pages/Commissions";
 import JoinPartnerProgram from "./pages/JoinPartnerProgram";
 import PortalDashboard from "./pages/PortalDashboard";
 import PortalReferrals from "./pages/PortalReferrals";
@@ -66,8 +66,8 @@ function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="analytics" element={<Analytics />} />
-        <Route path="customers" element={<Customers />} />
+        <Route path="payments" element={<Payments />} />
+        <Route path="customers" element={<Navigate to="/app/payments" replace />} />
         <Route path="partners" element={<Partners />} />
         <Route path="payouts" element={<Payouts />} />
         <Route path="fraud-flags" element={<FraudFlags />} />
@@ -79,6 +79,7 @@ function App() {
         <Route path="projects/:slug/settings" element={<ProjectSettings />} />
         <Route path="projects/:slug/webhooks" element={<Webhooks />} />
         <Route path="projects/:slug/partner-page" element={<PartnerPageDesigner />} />
+        <Route path="projects/:slug/commissions" element={<Commissions />} />
         <Route path="*" element={<NotFound />} />
       </Route>
       {/* Partner Portal */}

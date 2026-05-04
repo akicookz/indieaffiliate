@@ -116,7 +116,7 @@ function FieldMapper({ mappings, onMappingsChange, importType }: FieldMapperProp
         {mappings.map((mapping) => (
           <div
             key={mapping.csvHeader}
-            className="flex items-center gap-3 bg-muted/30 rounded-xl px-4 py-3"
+            className="flex items-center gap-3 bg-muted/30 rounded-md px-4 py-3"
           >
             <div className="flex-1 min-w-0">
               <code className="text-xs font-mono bg-muted px-2 py-1 rounded">
@@ -164,7 +164,7 @@ function FieldMapper({ mappings, onMappingsChange, importType }: FieldMapperProp
       </div>
 
       {missingRequired.length > 0 && (
-        <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-3">
+        <div className="bg-destructive/10 border border-destructive/20 rounded-md p-3">
           <p className="text-xs text-destructive font-medium">
             Missing required mappings:
           </p>

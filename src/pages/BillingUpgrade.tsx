@@ -97,7 +97,7 @@ function BillingUpgrade() {
         </Badge>
       </div>
 
-      <Card className="border-primary/20 bg-gradient-to-r from-primary/5 via-background to-background">
+      <Card className="border-primary/20 bg-primary/5">
         <CardContent className="flex flex-col gap-4 py-6 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
             <p className="text-sm font-medium">Current plan</p>
@@ -112,14 +112,14 @@ function BillingUpgrade() {
             <button
               type="button"
               onClick={() => setCheckoutInterval("month")}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${checkoutInterval === "month" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${checkoutInterval === "month" ? "bg-background text-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
               Monthly
             </button>
             <button
               type="button"
               onClick={() => setCheckoutInterval("year")}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${checkoutInterval === "year" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${checkoutInterval === "year" ? "bg-background text-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
               Annual
             </button>
@@ -128,7 +128,7 @@ function BillingUpgrade() {
       </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="relative overflow-hidden border-2 border-primary/20 bg-gradient-to-b from-primary/5 to-transparent dark:from-primary/10">
+        <Card className="relative overflow-hidden border-2 border-primary/20 bg-primary/5">
           <div className="absolute right-4 top-4">
             <Badge variant="secondary" className="gap-1 font-medium">
               <Sparkles className="h-3 w-3" />
@@ -222,7 +222,7 @@ function BillingUpgrade() {
               </div>
             )}
             <Button
-              variant="outline"
+              variant="secondary"
               className="w-full border-2"
               onClick={() => checkoutMutation.mutate("scale")}
               disabled={checkoutMutation.isPending || currentPlan === "scale"}

@@ -1,7 +1,15 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { Settings, Plus, ChevronRight, Palette, Webhook } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
+import {
+  Settings,
+  Plus,
+  ChevronRight,
+  Palette,
+  Webhook,
+  Sliders,
+  Plug,
+} from "lucide-react";
 
 import {
   SidebarMenu,
@@ -29,25 +37,16 @@ interface Project {
 }
 
 const subMenuItems = [
-  {
-    name: "Partner Page",
-    url: "partner-page",
-    icon: <Palette className="w-4 h-4" />,
-  },
-  {
-    name: "Webhooks",
-    url: "webhooks",
-    icon: <Webhook className="w-4 h-4" />,
-  },
-  {
-    name: "Settings",
-    url: "settings",
-    icon: <Settings className="w-4 h-4" />,
-  },
+  { name: "Commissions", url: "commissions", icon: Sliders },
+  { name: "Partner page", url: "partner-page", icon: Palette },
+  { name: "Webhooks", url: "webhooks", icon: Webhook },
+  { name: "Integrations & API", url: "settings", icon: Plug },
+  { name: "Settings", url: "settings", icon: Settings },
 ];
 
 export function NavProjects() {
   const queryClient = useQueryClient();
+  const location = useLocation();
   const [showNewForm, setShowNewForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
 
@@ -89,42 +88,51 @@ export function NavProjects() {
   return (
     <SidebarGroup className="group-data-[collapsible=icon]:hidden">
       <SidebarGroupLabel>Projects</SidebarGroupLabel>
-
-      <SidebarMenu className="gap-3">
-        {projectsList.map((item) => (
-          <Collapsible key={item.id} asChild className="group/collapsible">
-            <SidebarMenuItem>
-              <CollapsibleTrigger asChild>
-                <SidebarMenuButton tooltip={item.name}>
-                  <div className="flex items-center gap-2">
-                    <div className="flex px-1 py-0.5 bg-card border border-border text-sm font-mono items-center justify-center rounded-full font-medium">
-                      {item.name.slice(0, 2)}
+      <SidebarMenu>
+        {projectsList.map((project) => {
+          const isOpen = location.pathname.includes(`/projects/${project.slug}`);
+          return (
+            <Collapsible
+              key={project.id}
+              asChild
+              defaultOpen={isOpen}
+              className="group/collapsible"
+            >
+              <SidebarMenuItem>
+                <CollapsibleTrigger asChild>
+                  <SidebarMenuButton tooltip={project.name}>
+                    <div className="size-5 rounded bg-muted text-foreground flex items-center justify-center font-mono text-[10px] font-medium shrink-0">
+                      {project.name.slice(0, 2).toUpperCase()}
                     </div>
-                    <span className="text-sm font-medium">{item.name}</span>
-                  </div>
-                  <ChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
-                </SidebarMenuButton>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <SidebarMenuSub className="gap-2">
-                  {subMenuItems.map((subItem) => (
-                    <SidebarMenuSubItem key={subItem.name}>
-                      <SidebarMenuSubButton asChild>
-                        <Link to={`/app/projects/${item.slug}/${subItem.url}`}>
-                          {subItem.icon}
-                          <span>{subItem.name}</span>
-                        </Link>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                  ))}
-                </SidebarMenuSub>
-              </CollapsibleContent>
-            </SidebarMenuItem>
-          </Collapsible>
-        ))}
+                    <span className="text-sm font-medium">{project.name}</span>
+                    <ChevronRight className="ml-auto size-4 text-muted-foreground transition-transform duration-150 ease-out group-data-[state=open]/collapsible:rotate-90" />
+                  </SidebarMenuButton>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <SidebarMenuSub>
+                    {subMenuItems.map((subItem) => {
+                      const href = `/app/projects/${project.slug}/${subItem.url}`;
+                      const isActive = location.pathname === href;
+                      return (
+                        <SidebarMenuSubItem key={subItem.name}>
+                          <SidebarMenuSubButton asChild isActive={isActive}>
+                            <Link to={href}>
+                              <subItem.icon />
+                              <span>{subItem.name}</span>
+                            </Link>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      );
+                    })}
+                  </SidebarMenuSub>
+                </CollapsibleContent>
+              </SidebarMenuItem>
+            </Collapsible>
+          );
+        })}
 
         {showNewForm ? (
-          <form onSubmit={handleCreateProject} className="flex gap-2 px-2">
+          <form onSubmit={handleCreateProject} className="flex gap-2 px-2 mt-2">
             <Input
               value={newProjectName}
               onChange={(e) => setNewProjectName(e.target.value)}
@@ -142,13 +150,13 @@ export function NavProjects() {
           </form>
         ) : (
           <Button
-            variant="default"
+            variant="ghost"
             size="sm"
-            className="mt-2"
+            className="mt-2 justify-start text-muted-foreground hover:text-foreground"
             onClick={() => setShowNewForm(true)}
           >
             <Plus className="w-4 h-4" />
-            New Project
+            New project
           </Button>
         )}
       </SidebarMenu>

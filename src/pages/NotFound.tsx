@@ -26,7 +26,7 @@ function NotFound() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4">
-      <Card className="w-full max-w-lg rounded-3xl bg-card/40 backdrop-blur-xl border-border/40 shadow-xs">
+      <Card className="w-full max-w-lg rounded-md bg-card border-border/40">
         <CardHeader className="space-y-2">
           <CardTitle className="text-2xl">Page not found</CardTitle>
           <p className="text-sm text-muted-foreground">
@@ -38,7 +38,7 @@ function NotFound() {
           </p>
         </CardHeader>
         <CardContent className="space-y-2">
-          <Button variant="outline" onClick={handleGoBack} className="gap-2 w-full sm:w-auto">
+          <Button variant="secondary" onClick={handleGoBack} className="gap-2 w-full sm:w-auto">
             <ArrowLeft className="w-4 h-4" />
             Go back
           </Button>

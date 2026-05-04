@@ -46,7 +46,7 @@ function PortalPayouts() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-2xl border border-border bg-card/50 p-8">
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-md border border-border bg-card p-8">
         <p className="text-sm text-destructive">{error.message}</p>
       </div>
     );
@@ -54,8 +54,8 @@ function PortalPayouts() {
 
   function getStatusBadge(status: string) {
     const styles: Record<string, string> = {
-      scheduled: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-      paid: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+      scheduled: "bg-warning/15 text-warning",
+      paid: "bg-positive/15 text-positive",
       failed: "bg-destructive/15 text-destructive",
     };
     return (
@@ -92,22 +92,22 @@ function PortalPayouts() {
 
       {/* Summary */}
       <div className="grid grid-cols-2 gap-4">
-        <div className="bg-card/50 border border-border rounded-2xl p-4 shadow-xs">
+        <div className="bg-card border border-border rounded-md p-4">
           <p className="text-sm text-muted-foreground">Total Paid</p>
-          <p className="text-2xl font-medium mt-1 text-emerald-700 dark:text-emerald-400">
+          <p className="text-2xl font-medium mt-1 text-positive">
             ${totals.paid.toFixed(2)}
           </p>
         </div>
-        <div className="bg-card/50 border border-border rounded-2xl p-4 shadow-xs">
+        <div className="bg-card border border-border rounded-md p-4">
           <p className="text-sm text-muted-foreground">Upcoming</p>
-          <p className="text-2xl font-medium mt-1 text-amber-700 dark:text-amber-400">
+          <p className="text-2xl font-medium mt-1 text-warning">
             ${totals.scheduled.toFixed(2)}
           </p>
         </div>
       </div>
 
       {/* Payouts Table */}
-      <div className="bg-card/50 border border-border rounded-2xl p-6 shadow-xs">
+      <div className="bg-card border border-border rounded-md p-6">
         <Table>
           <TableHeader>
             <TableRow>

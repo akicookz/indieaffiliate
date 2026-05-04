@@ -15,6 +15,7 @@ import {
   Copy,
   Check,
 } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
 import {
   Select,
   SelectContent,
@@ -87,10 +88,10 @@ interface Project {
 
 function getStatusBadge(status: string) {
   const styles: Record<string, string> = {
-    pending: "bg-yellow-100 text-yellow-800",
-    approved: "bg-blue-100 text-blue-800",
-    paid: "bg-green-100 text-green-800",
-    rejected: "bg-red-100 text-red-800",
+    pending: "bg-warning/10 text-warning",
+    approved: "bg-info/10 text-info",
+    paid: "bg-positive/10 text-positive",
+    rejected: "bg-negative/10 text-negative",
   };
 
   return (
@@ -111,12 +112,12 @@ function formatCurrency(amount: number) {
 function getCustomerStatusBadge(status: string | null) {
   if (!status) return null;
   const styles: Record<string, string> = {
-    paid: "bg-green-100 text-green-800 border-green-200",
-    trialing: "bg-blue-100 text-blue-800 border-blue-200",
-    cancelled: "bg-red-100 text-red-800 border-red-200",
-    past_due: "bg-orange-100 text-orange-800 border-orange-200",
-    refunded: "bg-purple-100 text-purple-800 border-purple-200",
-    cancels_on: "bg-yellow-100 text-yellow-800 border-yellow-200",
+    paid: "bg-positive/10 text-positive border-positive/20",
+    trialing: "bg-info/10 text-info border-info/20",
+    cancelled: "bg-negative/10 text-negative border-negative/20",
+    past_due: "bg-warning/10 text-warning border-warning/20",
+    refunded: "bg-muted text-muted-foreground border-border",
+    cancels_on: "bg-warning/10 text-warning border-warning/20",
   };
   const labels: Record<string, string> = {
     paid: "Active",
@@ -130,7 +131,7 @@ function getCustomerStatusBadge(status: string | null) {
   return (
     <span
       className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${
-        styles[status] ?? "bg-gray-100 text-gray-800 border-gray-200"
+        styles[status] ?? "bg-muted text-muted-foreground border-border"
       }`}
     >
       {labels[status] ?? status}
@@ -182,14 +183,14 @@ function CopyNoteButton({ partner }: { partner: PartnerGroup }) {
 
   return (
     <Button
-      variant="outline"
+      variant="secondary"
       size="sm"
       className="h-7 text-xs"
       onClick={handleCopy}
     >
       {copied ? (
         <>
-          <Check className="w-3 h-3 mr-1 text-green-600" />
+          <Check className="w-3 h-3 mr-1 text-positive" />
           Copied
         </>
       ) : (
@@ -270,7 +271,7 @@ function PartnerRow({
         <TableCell>
           {partner.pendingCount > 0 ? (
             <div className="text-sm">
-              <span className="font-medium text-yellow-700 dark:text-yellow-400">
+              <span className="font-medium text-warning">
                 {formatCurrency(partner.pendingAmount)}
               </span>
               <span className="text-muted-foreground ml-1">({partner.pendingCount})</span>
@@ -282,7 +283,7 @@ function PartnerRow({
         <TableCell>
           {partner.approvedCount > 0 ? (
             <div className="text-sm">
-              <span className="font-medium text-blue-700 dark:text-blue-400">
+              <span className="font-medium text-info">
                 {formatCurrency(partner.approvedAmount)}
               </span>
               <span className="text-muted-foreground ml-1">({partner.approvedCount})</span>
@@ -294,7 +295,7 @@ function PartnerRow({
         <TableCell>
           {partner.paidCount > 0 ? (
             <div className="text-sm">
-              <span className="font-medium text-green-700 dark:text-green-400">
+              <span className="font-medium text-positive">
                 {formatCurrency(partner.paidAmount)}
               </span>
               <span className="text-muted-foreground ml-1">({partner.paidCount})</span>
@@ -307,34 +308,34 @@ function PartnerRow({
           <div className="flex gap-1">
             {pendingIds.length > 0 && (
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 className="h-7 text-xs"
                 onClick={() => onBulkAction(pendingIds, "approve")}
                 disabled={isMutating}
               >
-                <CheckCircle className="w-3 h-3 mr-1 text-green-600" />
+                <CheckCircle className="w-3 h-3 mr-1 text-positive" />
                 Approve All ({pendingIds.length})
               </Button>
             )}
             {approvedIds.length > 0 && (
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 className="h-7 text-xs"
                 onClick={() => onBulkAction(approvedIds, "pay")}
                 disabled={isMutating}
               >
-                <DollarSign className="w-3 h-3 mr-1 text-blue-600" />
+                <DollarSign className="w-3 h-3 mr-1 text-info" />
                 Mark All Paid ({approvedIds.length})
               </Button>
             )}
             <CopyNoteButton partner={partner} />
             {flaggedPendingIds.length > 0 && (
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
-                className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                className="h-7 text-xs text-negative hover:text-negative hover:bg-negative/10"
                 onClick={() => onBulkAction(flaggedPendingIds, "reject")}
                 disabled={isMutating}
               >
@@ -393,7 +394,7 @@ function PartnerRow({
               <div className="flex items-center gap-1.5">
                 {getStatusBadge(commission.status)}
                 {commission.fraudFlag && (
-                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-700 border border-red-200" title={commission.fraudFlag}>
+                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-negative/10 text-negative border border-negative/20" title={commission.fraudFlag}>
                     <AlertTriangle className="w-3 h-3" />
                     {commission.fraudFlag.replace(/_/g, " ")}
                   </span>
@@ -409,7 +410,7 @@ function PartnerRow({
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+                        className="h-6 w-6 p-0 text-positive hover:text-positive hover:bg-positive/10"
                         onClick={() => onSingleAction(commission.id, "approved")}
                         disabled={isMutating}
                         aria-label="Approve"
@@ -422,7 +423,7 @@ function PartnerRow({
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-6 px-1 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          className="h-6 px-1 text-negative hover:text-negative hover:bg-negative/10"
                           disabled={isMutating}
                           aria-label="Reject"
                         >
@@ -432,7 +433,7 @@ function PartnerRow({
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem
                           onClick={() => onFlagCustomer(commission.customerId, "self_referral")}
-                          className="text-orange-600 font-medium"
+                          className="text-warning font-medium"
                         >
                           Self Referral (block future)
                         </DropdownMenuItem>
@@ -458,7 +459,7 @@ function PartnerRow({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-6 px-2 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                    className="h-6 px-2 text-xs text-info hover:text-info hover:bg-info/10"
                     onClick={() => onSingleAction(commission.id, "paid")}
                     disabled={isMutating}
                   >
@@ -743,7 +744,7 @@ function Payouts() {
       </div>
 
       {/* Partner payouts table */}
-      <div className="shadow-xs bg-card/50 rounded-2xl p-6">
+      <div className="bg-card border rounded-md p-6">
         <h3 className="text-sm font-medium text-foreground mb-4">
           Partner payouts ledger
         </h3>

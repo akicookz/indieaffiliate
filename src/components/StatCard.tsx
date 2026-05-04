@@ -14,28 +14,22 @@ export default function StatCard({
   change?: number;
 }) {
   return (
-    <div className="bg-card shadow-xs shadow-card border border-card/20 rounded-2xl p-4">
-      <div className="flex items-start justify-between">
-        <div className="flex-1">
-          <div className="flex items-center space-x-3 mb-4">
-            <Icon className="h-4 w-4 text-muted-foreground" />
-            <h3 className="text-sm font-medium text-muted-foreground">
-              {title}
-            </h3>
-          </div>
-          <p className="text-3xl font-medium text-foreground mb-2">{value}</p>
-        </div>
+    <div className="bg-card border rounded-md p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-eyebrow">{title}</span>
+      </div>
+      <div className="flex items-end justify-between">
+        <p className="text-hero-number text-foreground">{value}</p>
         {change !== undefined && isPositive !== undefined && (
-          <div className="text-right">
-            <span
-              className={`text-sm font-medium ${
-                isPositive ? "text-green-600" : "text-red-600"
-              }`}
-            >
-              {isPositive ? "+" : ""}
-              {change}%
-            </span>
-          </div>
+          <span
+            className={`text-sm font-medium tabular-nums ${
+              isPositive ? "text-positive" : "text-negative"
+            }`}
+          >
+            {isPositive ? "+" : ""}
+            {change}%
+          </span>
         )}
       </div>
     </div>
