@@ -9,11 +9,47 @@ import { payments, type PaymentRow } from "../db";
 export type Kind = "subscription" | "one_time";
 export type AssignedFilter = "all" | "assigned";
 
+type ParsedQuery =
+  | { kind: "metadata"; key: string; value: string | null }
+  | { kind: "text"; text: string };
+
+function parseQuery(raw: string | undefined): ParsedQuery | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const eqIdx = trimmed.indexOf("=");
+  if (eqIdx > 0) {
+    const key = trimmed.slice(0, eqIdx).trim();
+    const value = trimmed.slice(eqIdx + 1).trim();
+    if (key) return { kind: "metadata", key, value: value || null };
+  }
+  return { kind: "text", text: trimmed };
+}
+
+// Stripe Search query strings are double-quoted; escape user input so a stray
+// quote can't break the query or be used to inject extra clauses.
+function escapeQuery(raw: string): string {
+  return raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function dedupeById<T extends { id: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const r of rows) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    out.push(r);
+  }
+  return out;
+}
+
 export interface LiveListOptions {
   limit: number;
   cursor?: string;
-  metadataKey?: string;
-  metadataValue?: string;
+  /** Free-text search: parses "key=value" as metadata search; otherwise matches name/email/metadata. */
+  query?: string;
+  /** Project-configured metadata keys (e.g. ["referral_code"]) used for free-text metadata matching. */
+  referralCodeKeys?: string[];
 }
 
 interface StripeCustomer {
@@ -203,30 +239,18 @@ export class PaymentLiveService {
     apiKey: string,
     opts: LiveListOptions,
   ): Promise<{ data: StripeSubscription[]; hasMore: boolean; nextCursor: string | null }> {
-    if (opts.metadataKey) {
-      // Search API supports metadata key-exists; value filter applied in-memory.
-      const query = `-metadata["${opts.metadataKey}"]:null`;
-      const params = new URLSearchParams({ query, limit: String(opts.limit) });
-      // Stripe Search uses a token-based `page` cursor, not starting_after.
-      if (opts.cursor) params.set("page", opts.cursor);
-      const r = await fetch(
-        `https://api.stripe.com/v1/subscriptions/search?${params}`,
-        { headers: { Authorization: `Bearer ${apiKey}` } },
+    const parsed = parseQuery(opts.query);
+    if (parsed) {
+      const data = await this.searchSubscriptions(
+        apiKey,
+        parsed,
+        opts.referralCodeKeys ?? [],
+        opts.limit,
       );
-      if (!r.ok) throw new Error(`Stripe subscriptions/search ${r.status}`);
-      const json = (await r.json()) as {
-        data: StripeSubscription[];
-        has_more: boolean;
-        next_page?: string;
-      };
-      let data = json.data;
-      if (opts.metadataValue) {
-        const v = opts.metadataValue.toLowerCase();
-        data = data.filter(
-          (s) => (s.metadata?.[opts.metadataKey!] ?? "").toLowerCase() === v,
-        );
-      }
-      return { data, hasMore: json.has_more, nextCursor: json.next_page ?? null };
+      // Search results are not paginated here — the Search API has its own
+      // tokenized cursor and combining it across multiple parallel queries
+      // doesn't compose. Bound results to `limit` and surface a single page.
+      return { data, hasMore: false, nextCursor: null };
     }
 
     const params = new URLSearchParams({
@@ -253,28 +277,15 @@ export class PaymentLiveService {
     apiKey: string,
     opts: LiveListOptions,
   ): Promise<{ data: StripeCharge[]; hasMore: boolean; nextCursor: string | null }> {
-    if (opts.metadataKey) {
-      const query = `-metadata["${opts.metadataKey}"]:null`;
-      const params = new URLSearchParams({ query, limit: String(opts.limit) });
-      if (opts.cursor) params.set("page", opts.cursor);
-      const r = await fetch(
-        `https://api.stripe.com/v1/charges/search?${params}`,
-        { headers: { Authorization: `Bearer ${apiKey}` } },
+    const parsed = parseQuery(opts.query);
+    if (parsed) {
+      const data = await this.searchCharges(
+        apiKey,
+        parsed,
+        opts.referralCodeKeys ?? [],
+        opts.limit,
       );
-      if (!r.ok) throw new Error(`Stripe charges/search ${r.status}`);
-      const json = (await r.json()) as {
-        data: StripeCharge[];
-        has_more: boolean;
-        next_page?: string;
-      };
-      let data = json.data;
-      if (opts.metadataValue) {
-        const v = opts.metadataValue.toLowerCase();
-        data = data.filter(
-          (c) => (c.metadata?.[opts.metadataKey!] ?? "").toLowerCase() === v,
-        );
-      }
-      return { data, hasMore: json.has_more, nextCursor: json.next_page ?? null };
+      return { data, hasMore: false, nextCursor: null };
     }
 
     const params = new URLSearchParams({ limit: String(opts.limit) });
@@ -291,6 +302,165 @@ export class PaymentLiveService {
       hasMore: json.has_more,
       nextCursor: json.has_more && last ? last.id : null,
     };
+  }
+
+  // ─── Search helpers ─────────────────────────────────────────────────────
+
+  private async searchSubscriptions(
+    apiKey: string,
+    parsed: ParsedQuery,
+    referralCodeKeys: string[],
+    limit: number,
+  ): Promise<StripeSubscription[]> {
+    if (parsed.kind === "metadata") {
+      const subs = await this.runSubscriptionSearch(
+        apiKey,
+        `-metadata["${parsed.key}"]:null`,
+        limit,
+      );
+      const v = parsed.value?.toLowerCase();
+      return v
+        ? subs.filter(
+            (s) => (s.metadata?.[parsed.key] ?? "").toLowerCase() === v,
+          )
+        : subs;
+    }
+
+    // Free-text: customers (by name/email) → subs by customer + subs by metadata
+    const term = escapeQuery(parsed.text);
+    const [customerIds, byMetadata] = await Promise.all([
+      this.searchCustomerIdsByNameEmail(apiKey, term, limit),
+      this.searchSubscriptionsByMetadataValue(apiKey, referralCodeKeys, term, limit),
+    ]);
+    const byCustomer =
+      customerIds.length > 0
+        ? await this.runSubscriptionSearch(
+            apiKey,
+            customerIds.map((id) => `customer:"${id}"`).join(" OR "),
+            limit,
+          )
+        : [];
+    return dedupeById([...byCustomer, ...byMetadata]).slice(0, limit);
+  }
+
+  private async searchCharges(
+    apiKey: string,
+    parsed: ParsedQuery,
+    referralCodeKeys: string[],
+    limit: number,
+  ): Promise<StripeCharge[]> {
+    if (parsed.kind === "metadata") {
+      const charges = await this.runChargeSearch(
+        apiKey,
+        `-metadata["${parsed.key}"]:null`,
+        limit,
+      );
+      const v = parsed.value?.toLowerCase();
+      return v
+        ? charges.filter(
+            (c) => (c.metadata?.[parsed.key] ?? "").toLowerCase() === v,
+          )
+        : charges;
+    }
+
+    const term = escapeQuery(parsed.text);
+    const [customerIds, byMetadata] = await Promise.all([
+      this.searchCustomerIdsByNameEmail(apiKey, term, limit),
+      this.searchChargesByMetadataValue(apiKey, referralCodeKeys, term, limit),
+    ]);
+    const byCustomer =
+      customerIds.length > 0
+        ? await this.runChargeSearch(
+            apiKey,
+            customerIds.map((id) => `customer:"${id}"`).join(" OR "),
+            limit,
+          )
+        : [];
+    return dedupeById([...byCustomer, ...byMetadata]).slice(0, limit);
+  }
+
+  private async runSubscriptionSearch(
+    apiKey: string,
+    query: string,
+    limit: number,
+  ): Promise<StripeSubscription[]> {
+    const params = new URLSearchParams({
+      query,
+      limit: String(limit),
+      "expand[]": "data.items.data.price",
+    });
+    const r = await fetch(
+      `https://api.stripe.com/v1/subscriptions/search?${params}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    );
+    if (!r.ok) {
+      console.error(
+        `Stripe subscriptions/search failed (${r.status}):`,
+        await r.text().catch(() => ""),
+      );
+      return [];
+    }
+    const json = (await r.json()) as { data: StripeSubscription[] };
+    return json.data;
+  }
+
+  private async runChargeSearch(
+    apiKey: string,
+    query: string,
+    limit: number,
+  ): Promise<StripeCharge[]> {
+    const params = new URLSearchParams({ query, limit: String(limit) });
+    const r = await fetch(
+      `https://api.stripe.com/v1/charges/search?${params}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    );
+    if (!r.ok) {
+      console.error(
+        `Stripe charges/search failed (${r.status}):`,
+        await r.text().catch(() => ""),
+      );
+      return [];
+    }
+    const json = (await r.json()) as { data: StripeCharge[] };
+    return json.data;
+  }
+
+  private async searchCustomerIdsByNameEmail(
+    apiKey: string,
+    term: string,
+    limit: number,
+  ): Promise<string[]> {
+    const query = `email~"${term}" OR name~"${term}"`;
+    const params = new URLSearchParams({ query, limit: String(limit) });
+    const r = await fetch(
+      `https://api.stripe.com/v1/customers/search?${params}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    );
+    if (!r.ok) return [];
+    const json = (await r.json()) as { data: Array<{ id: string }> };
+    return json.data.map((c) => c.id);
+  }
+
+  private async searchSubscriptionsByMetadataValue(
+    apiKey: string,
+    keys: string[],
+    term: string,
+    limit: number,
+  ): Promise<StripeSubscription[]> {
+    if (keys.length === 0) return [];
+    const query = keys.map((k) => `metadata["${k}"]:"${term}"`).join(" OR ");
+    return this.runSubscriptionSearch(apiKey, query, limit);
+  }
+
+  private async searchChargesByMetadataValue(
+    apiKey: string,
+    keys: string[],
+    term: string,
+    limit: number,
+  ): Promise<StripeCharge[]> {
+    if (keys.length === 0) return [];
+    const query = keys.map((k) => `metadata["${k}"]:"${term}"`).join(" OR ");
+    return this.runChargeSearch(apiKey, query, limit);
   }
 
   private async batchFetchCustomers(

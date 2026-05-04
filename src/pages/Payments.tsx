@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   useMutation,
@@ -16,6 +16,7 @@ import {
   ChevronRight,
   X,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import PageHeader from "@/components/PageHeader";
 import {
   Select,
@@ -149,14 +150,29 @@ function Payments() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [kind, setKind] = useState<Kind>("subscription");
   const [assignedFilter, setAssignedFilter] = useState<AssignedFilter>("all");
-  const [metaKey, setMetaKey] = useState("");
-  const [metaValue, setMetaValue] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState(50);
   // Cursor stack lets us go back: pop the previous cursor on Prev.
   const [cursorStack, setCursorStack] = useState<string[]>([]);
   const [importOpen, setImportOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const currentCursor = cursorStack[cursorStack.length - 1];
+
+  // Debounce search input → committed `search` (which is in the queryKey).
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setCursorStack([]);
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [searchInput]);
 
   const { data: projectsData } = useQuery({
     queryKey: ["projects"],
@@ -176,8 +192,7 @@ function Payments() {
       projectId,
       kind,
       assignedFilter,
-      metaKey,
-      metaValue,
+      search,
       pageSize,
       currentCursor ?? "first",
     ],
@@ -187,8 +202,7 @@ function Payments() {
       params.set("assigned", assignedFilter);
       params.set("limit", String(pageSize));
       if (currentCursor) params.set("cursor", currentCursor);
-      if (metaKey.trim()) params.set("metadataKey", metaKey.trim());
-      if (metaValue.trim()) params.set("metadataValue", metaValue.trim());
+      if (search) params.set("query", search);
       const r = await fetch(
         `/api/projects/${projectId}/payments?${params.toString()}`,
       );
@@ -216,48 +230,68 @@ function Payments() {
     [partners],
   );
 
-  const assignMutation = useMutation({
-    mutationFn: async (input: {
-      row: LivePaymentRow;
-      partnerId: string;
-    }) => {
-      const r = await fetch(`/api/projects/${projectId}/payments/assign`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source: "stripe",
-          externalPaymentId: input.row.externalPaymentId,
-          kind: input.row.kind,
-          partnerId: input.partnerId,
-          customerEmail: input.row.customer.email,
-          customerName: input.row.customer.name,
-          planName:
-            input.row.kind === "subscription"
-              ? input.row.plan?.name ?? null
-              : input.row.description ?? null,
-          mrr:
-            input.row.kind === "subscription"
-              ? input.row.plan?.unitAmount != null
-                ? input.row.plan.unitAmount / 100
-                : null
-              : input.row.amount != null
-                ? input.row.amount / 100
-                : null,
-          startedAt: input.row.startedAt ?? input.row.created ?? null,
-          status: input.row.status ?? null,
-          subscriptionAnchorAt:
-            input.row.kind === "subscription"
-              ? input.row.billingCycleAnchor ?? null
+  async function assignOne(row: LivePaymentRow, partnerId: string) {
+    const r = await fetch(`/api/projects/${projectId}/payments/assign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "stripe",
+        externalPaymentId: row.externalPaymentId,
+        kind: row.kind,
+        partnerId,
+        customerEmail: row.customer.email,
+        customerName: row.customer.name,
+        planName:
+          row.kind === "subscription"
+            ? row.plan?.name ?? null
+            : row.description ?? null,
+        mrr:
+          row.kind === "subscription"
+            ? row.plan?.unitAmount != null
+              ? row.plan.unitAmount / 100
+              : null
+            : row.amount != null
+              ? row.amount / 100
               : null,
-        }),
-      });
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error ?? "Assign failed");
+        startedAt: row.startedAt ?? row.created ?? null,
+        status: row.status ?? null,
+        subscriptionAnchorAt:
+          row.kind === "subscription" ? row.billingCycleAnchor ?? null : null,
+      }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error((err as { error?: string }).error ?? "Assign failed");
+    }
+    return r.json();
+  }
+
+  const assignMutation = useMutation({
+    mutationFn: (input: { row: LivePaymentRow; partnerId: string }) =>
+      assignOne(input.row, input.partnerId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["payments-live", projectId] });
+    },
+  });
+
+  const bulkAssignMutation = useMutation({
+    mutationFn: async (partnerId: string) => {
+      const targets = rows.filter((r) => selectedIds.has(r.externalPaymentId));
+      // Run in parallel; collect any failures so the user sees a partial-error message.
+      const results = await Promise.allSettled(
+        targets.map((row) => assignOne(row, partnerId)),
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed > 0) {
+        throw new Error(
+          `${failed} of ${targets.length} assignments failed`,
+        );
       }
-      return r.json();
+      return { count: targets.length };
     },
     onSuccess: () => {
+      setSelectedIds(new Set());
+      setBulkOpen(false);
       queryClient.invalidateQueries({ queryKey: ["payments-live", projectId] });
     },
   });
@@ -281,8 +315,42 @@ function Payments() {
   const hasMore = data?.hasMore ?? false;
   const nextCursor = data?.nextCursor;
 
+  // Drop any selections that aren't in the current page (after filter/search/page change).
+  useEffect(() => {
+    if (selectedIds.size === 0 || !data) return;
+    const visible = new Set(data.data.map((r) => r.externalPaymentId));
+    let changed = false;
+    const next = new Set<string>();
+    for (const id of selectedIds) {
+      if (visible.has(id)) next.add(id);
+      else changed = true;
+    }
+    if (changed) setSelectedIds(next);
+  }, [data, selectedIds]);
+
+  const allSelected = rows.length > 0 && selectedIds.size === rows.length;
+  const someSelected = selectedIds.size > 0 && !allSelected;
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(rows.map((r) => r.externalPaymentId)));
+    }
+  }
+
   function applyFilter(next: () => void) {
     setCursorStack([]); // reset pagination on any filter change
+    setSelectedIds(new Set());
     next();
   }
 
@@ -378,47 +446,85 @@ function Payments() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
               <Input
-                value={metaKey}
-                onChange={(e) => setMetaKey(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") applyFilter(() => {});
-                }}
-                placeholder="Metadata key (e.g. referral_code)"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Search name, email, or metadata (e.g. referral_code=lvm-skool)"
                 className="pl-9 h-9"
               />
+              {searchInput && (
+                <button
+                  type="button"
+                  onClick={() => setSearchInput("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear search"
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
             </div>
-            <div className="relative flex-1">
-              <Input
-                value={metaValue}
-                onChange={(e) => setMetaValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") applyFilter(() => {});
-                }}
-                placeholder="Metadata value (optional — empty = key exists)"
-                className="h-9"
-              />
-            </div>
-            {(metaKey || metaValue) && (
+          </div>
+        </div>
+
+        {/* Bulk action bar */}
+        {selectedIds.size > 0 && (
+          <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-border bg-muted/40">
+            <span className="text-sm text-foreground">
+              {selectedIds.size} selected
+            </span>
+            <div className="flex items-center gap-2">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() =>
-                  applyFilter(() => {
-                    setMetaKey("");
-                    setMetaValue("");
-                  })
-                }
+                onClick={() => setSelectedIds(new Set())}
               >
-                <X className="size-3.5" />
+                Clear
               </Button>
-            )}
+              <Popover open={bulkOpen} onOpenChange={setBulkOpen}>
+                <PopoverTrigger asChild>
+                  <Button size="sm" disabled={bulkAssignMutation.isPending}>
+                    {bulkAssignMutation.isPending ? (
+                      <>
+                        <Loader2 className="size-3.5 animate-spin" />
+                        Assigning…
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus className="size-3.5" />
+                        Assign Partner
+                      </>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PartnerPickerContent
+                  partners={partners}
+                  currentId={null}
+                  onPick={(partnerId) => {
+                    if (partnerId) bulkAssignMutation.mutate(partnerId);
+                  }}
+                />
+              </Popover>
+            </div>
           </div>
-        </div>
+        )}
+
+        {bulkAssignMutation.error && (
+          <div className="mx-4 my-2 p-2 rounded-md bg-destructive/10 text-destructive text-xs border border-destructive/30">
+            {(bulkAssignMutation.error as Error).message}
+          </div>
+        )}
 
         {/* Table */}
         <Table className="px-2 pb-2">
           <TableHeader className="[&_tr]:border-0">
             <TableRow className="hover:bg-transparent">
+              <TableHead className="text-eyebrow-muted h-12 px-4 w-10">
+                <Checkbox
+                  checked={allSelected || (someSelected && "indeterminate")}
+                  onCheckedChange={toggleSelectAll}
+                  aria-label="Select all"
+                  disabled={rows.length === 0}
+                />
+              </TableHead>
               <TableHead className="text-eyebrow-muted h-12 px-4">Customer</TableHead>
               <TableHead className="text-eyebrow-muted h-12 px-4">External ID</TableHead>
               <TableHead className="text-eyebrow-muted h-12 px-4">
@@ -437,20 +543,20 @@ function Payments() {
           <TableBody>
             {(isLoading || isFetching) && rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-12 text-muted-foreground text-sm">
+                <TableCell colSpan={8} className="text-center py-12 text-muted-foreground text-sm">
                   Loading from Stripe…
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-16">
+                <TableCell colSpan={8} className="text-center py-16">
                   <p className="text-sm text-muted-foreground mb-1">
                     No {kind === "subscription" ? "subscriptions" : "one-time charges"} found.
                   </p>
-                  {(metaKey || metaValue) && (
+                  {search && (
                     <p className="text-xs text-muted-foreground">
-                      Try clearing the metadata filter.
+                      Try clearing the search.
                     </p>
                   )}
                 </TableCell>
@@ -460,11 +566,20 @@ function Payments() {
               const partner = p.assignment
                 ? partnerById.get(p.assignment.partnerId)
                 : null;
+              const checked = selectedIds.has(p.externalPaymentId);
               return (
                 <TableRow
                   key={p.externalPaymentId}
+                  data-state={checked ? "selected" : undefined}
                   className="border-0 [&>td]:py-4 [&>td]:px-4"
                 >
+                  <TableCell>
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={() => toggleSelect(p.externalPaymentId)}
+                      aria-label={`Select ${p.customer.name ?? p.customer.email ?? p.externalPaymentId}`}
+                    />
+                  </TableCell>
                   <TableCell>
                     <div className="font-medium text-foreground">
                       {p.customer.name || p.customer.email || "—"}

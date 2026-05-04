@@ -2243,8 +2243,7 @@ const app = new Hono<HonoAppContext>()
       100,
     );
     const cursor = c.req.query("cursor") || undefined;
-    const metadataKey = c.req.query("metadataKey") || undefined;
-    const metadataValue = c.req.query("metadataValue") || undefined;
+    const query = c.req.query("query") || undefined;
     const assigned: LiveAssignedFilter =
       c.req.query("assigned") === "assigned" ? "assigned" : "all";
 
@@ -2258,22 +2257,19 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Stripe not connected for this project" }, 412);
     }
 
+    const mappings = await stripeService.getMetadataMappings(projectId);
     const liveService = new PaymentLiveService(db);
     try {
+      const opts = {
+        limit,
+        cursor,
+        query,
+        referralCodeKeys: mappings.referralCodeKeys,
+      };
       const result =
         kind === "subscription"
-          ? await liveService.listSubscriptions(
-              apiKey,
-              projectId,
-              { limit, cursor, metadataKey, metadataValue },
-              assigned,
-            )
-          : await liveService.listOneTimeCharges(
-              apiKey,
-              projectId,
-              { limit, cursor, metadataKey, metadataValue },
-              assigned,
-            );
+          ? await liveService.listSubscriptions(apiKey, projectId, opts, assigned)
+          : await liveService.listOneTimeCharges(apiKey, projectId, opts, assigned);
       return c.json(result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "List failed";
