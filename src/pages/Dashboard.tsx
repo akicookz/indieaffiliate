@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import PageHeader from "@/components/PageHeader";
 import {
   AreaChart,
   Area,

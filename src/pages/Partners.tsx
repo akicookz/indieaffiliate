@@ -148,7 +148,7 @@ function downloadCsv(rows: PartnerListRow[]) {
       r.metrics.epc.toFixed(2),
       r.metrics.mrr.toFixed(2),
       r.status,
-    ].map((v) => `"${String(v).replaceAll('"', '""')}"`);
+    ].map((v) => `"${String(v).replace(/"/g, '""')}"`);
     lines.push(cells.join(","));
   }
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });

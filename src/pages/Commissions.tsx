@@ -15,7 +15,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -74,86 +73,7 @@ interface Coupon {
   status: "live" | "paused";
 }
 
-const SEED_COMMISSIONS: Commission[] = [
-  {
-    id: "1",
-    code: "rec-30-3",
-    name: "Standard recurring",
-    type: "recurring",
-    rate: 30,
-    durationMonths: 3,
-    description:
-      "Partner earns 30% of every payment for the first 3 months after referral converts.",
-    minPayout: 50,
-    partners: 5,
-    gtvMonth: 84_300,
-  },
-  {
-    id: "2",
-    code: "rec-25-flat",
-    name: "Lifetime 25%",
-    type: "lifetime",
-    rate: 25,
-    description:
-      "Partner earns 25% of every payment for as long as the customer remains active.",
-    minPayout: 100,
-    partners: 1,
-    gtvMonth: 41_300,
-  },
-  {
-    id: "3",
-    code: "rec-20-flat",
-    name: "Starter program",
-    type: "recurring",
-    rate: 20,
-    durationMonths: 6,
-    description:
-      "Partner earns 20% of every payment for the first 6 months after referral converts.",
-    minPayout: 25,
-    partners: 3,
-    gtvMonth: 2_100,
-  },
-  {
-    id: "4",
-    code: "one-50",
-    name: "Launch bonus",
-    type: "one-time",
-    rate: 50,
-    description: "Partner earns a flat $50 on conversion. No recurring payout.",
-    minPayout: 25,
-    partners: 0,
-    gtvMonth: 0,
-  },
-];
 
-const SEED_COUPONS: Coupon[] = [
-  {
-    id: "c1",
-    code: "IHW20",
-    partnerName: "Indie Hackers Weekly",
-    partnerEmail: "hello@ihweekly.io",
-    partnerInitials: "IH",
-    partnerColor: "bg-blue-500",
-    customerDiscount: "15% off year 1",
-    stripeCoupon: "coupon_ihw20",
-    redemptions: 187,
-    mrrAttributed: 18_420,
-    status: "live",
-  },
-  {
-    id: "c2",
-    code: "MAYA15",
-    partnerName: "Maya Chen",
-    partnerEmail: "maya@mayachen.dev",
-    partnerInitials: "MC",
-    partnerColor: "bg-amber-500",
-    customerDiscount: "15% off year 1",
-    stripeCoupon: "coupon_maya15",
-    redemptions: 81,
-    mrrAttributed: 7_590,
-    status: "live",
-  },
-];
 
 function typeColor(type: RuleType): string {
   switch (type) {

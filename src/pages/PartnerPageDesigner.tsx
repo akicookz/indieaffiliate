@@ -395,21 +395,6 @@ function PartnerPageDesigner() {
     [uploadMutation],
   );
 
-  function updateAvatarInitials(idx: number, value: string) {
-    setAvatarSlots((prev) => {
-      const next = [...prev];
-      const v = value.toUpperCase().slice(0, 2);
-      next[idx] = {
-        ...next[idx],
-        initials: v || null,
-        // Setting initials clears any image
-        imageKey: v ? null : next[idx].imageKey,
-        imageUrl: v ? null : next[idx].imageUrl,
-      };
-      return next;
-    });
-  }
-
   function clearAvatar(idx: number) {
     setAvatarSlots((prev) => {
       const next = [...prev];

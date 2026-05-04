@@ -15,7 +15,6 @@ import {
   Copy,
   Check,
 } from "lucide-react";
-import PageHeader from "@/components/PageHeader";
 import {
   Select,
   SelectContent,

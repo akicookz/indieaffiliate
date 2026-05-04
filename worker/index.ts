@@ -2213,7 +2213,7 @@ const app = new Hono<HonoAppContext>()
     if (!project || project.userId !== user.id) {
       return c.json({ error: "Project not found" }, 404);
     }
-    const encryptionKey = c.env.STRIPE_ENCRYPTION_KEY;
+    const encryptionKey = c.env.ENCRYPTION_KEY;
     if (!encryptionKey) {
       return c.json({ error: "Encryption not configured" }, 500);
     }
