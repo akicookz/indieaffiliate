@@ -109,6 +109,14 @@ export class PaymentService {
     mrr?: number | null;
     startedAt?: Date | null;
     status?: string | null;
+    // Assignment-time snapshots. Required fields when assigning a Stripe row
+    // to a partner; left null for CSV imports.
+    partnerId?: string | null;
+    commissionProgramId?: string | null;
+    programType?: "recurring" | "lifetime" | "one-time" | null;
+    durationMonths?: number | null;
+    rate?: number | null;
+    subscriptionAnchorAt?: Date | null;
   }): Promise<{ row: PaymentRow; inserted: boolean }> {
     const existing = await this.db
       .select()
@@ -133,6 +141,25 @@ export class PaymentService {
           mrr: input.mrr ?? existing[0].mrr,
           startedAt: input.startedAt ?? existing[0].startedAt,
           status: input.status ?? existing[0].status,
+          partnerId:
+            input.partnerId !== undefined ? input.partnerId : existing[0].partnerId,
+          commissionProgramId:
+            input.commissionProgramId !== undefined
+              ? input.commissionProgramId
+              : existing[0].commissionProgramId,
+          programType:
+            input.programType !== undefined
+              ? input.programType
+              : existing[0].programType,
+          durationMonths:
+            input.durationMonths !== undefined
+              ? input.durationMonths
+              : existing[0].durationMonths,
+          rate: input.rate !== undefined ? input.rate : existing[0].rate,
+          subscriptionAnchorAt:
+            input.subscriptionAnchorAt !== undefined
+              ? input.subscriptionAnchorAt
+              : existing[0].subscriptionAnchorAt,
         })
         .where(eq(payments.id, existing[0].id));
       const fresh = await this.getById(existing[0].id);
@@ -152,9 +179,31 @@ export class PaymentService {
       mrr: input.mrr ?? null,
       startedAt: input.startedAt ?? null,
       status: input.status ?? null,
+      partnerId: input.partnerId ?? null,
+      commissionProgramId: input.commissionProgramId ?? null,
+      programType: input.programType ?? null,
+      durationMonths: input.durationMonths ?? null,
+      rate: input.rate ?? null,
+      subscriptionAnchorAt: input.subscriptionAnchorAt ?? null,
     };
     await this.db.insert(payments).values(row);
     const fresh = await this.getById(id);
     return { row: fresh!, inserted: true };
+  }
+
+  async deleteByExternalId(
+    projectId: string,
+    source: string,
+    externalPaymentId: string,
+  ): Promise<void> {
+    await this.db
+      .delete(payments)
+      .where(
+        and(
+          eq(payments.projectId, projectId),
+          eq(payments.source, source),
+          eq(payments.externalPaymentId, externalPaymentId),
+        ),
+      );
   }
 }

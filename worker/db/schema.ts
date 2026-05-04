@@ -150,6 +150,17 @@ export const payments = sqliteTable(
     startedAt: integer("started_at", { mode: "timestamp" }),
     status: text("status"),
     flagReason: text("flag_reason"),
+    // Snapshots taken at assignment time so program edits don't retroactively
+    // change recurring-payout calculations for existing assignments.
+    commissionProgramId: text("commission_program_id"),
+    programType: text("program_type", {
+      enum: ["recurring", "lifetime", "one-time"],
+    }),
+    durationMonths: integer("duration_months"),
+    rate: real("rate"),
+    // Stripe `subscription.billing_cycle_anchor` — the anchor we derive
+    // monthIndex from for recurring commissions.
+    subscriptionAnchorAt: integer("subscription_anchor_at", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" })
       .default(sql`(unixepoch())`)
       .notNull(),

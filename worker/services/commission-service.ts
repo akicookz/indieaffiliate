@@ -2,6 +2,7 @@ import { type DrizzleD1Database } from "drizzle-orm/d1";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import {
   commissions,
+  commissionPrograms,
   customers,
   partners,
   projects,
@@ -27,6 +28,18 @@ export class CommissionService {
     eventDate?: Date;
     conversionCountry?: string;
     mrr?: number;
+    // Caller-supplied snapshot fields. If `monthIndex` is provided, we use it
+    // as-is; otherwise we fall back to counting prior commissions (legacy
+    // behaviour for the public conversion API and full-history backfills).
+    monthIndex?: number;
+    commissionProgramId?: string | null;
+    rate?: number;
+    // Force the commission status. Used by approve/deny on derived payouts so
+    // the row materialises in its final state instead of pending review.
+    forceStatus?: "approved" | "rejected";
+    // Caller-supplied fraud/denial reason (e.g. "denied_by_owner"). Slots
+    // straight into the fraudFlag column without going through auto-detection.
+    forceFraudFlag?: string;
   }): Promise<{ customerId: string; commissionId: string; commissionAmount: number; isDuplicate?: boolean }> {
     const fraudService = new FraudService(this.db);
 
@@ -131,38 +144,56 @@ export class CommissionService {
       });
     }
 
+    // Resolve rate + program snapshot. Caller can override (assign-time
+    // snapshot) so program edits don't retroactively change earned amounts.
+    const rate = data.rate ?? partner.commissionRate;
+    const programId =
+      data.commissionProgramId !== undefined
+        ? data.commissionProgramId
+        : partner.commissionProgramId ?? null;
+
     // Calculate commission
-    const commissionAmount = data.revenue * partner.commissionRate;
+    const commissionAmount = data.revenue * rate;
 
-    // Resolve commission program (snapshot on the row) — partner first, then branding default fallback handled at call site / left null here
-    const programId = partner.commissionProgramId ?? null;
-
-    // Compute monthIndex for this customer × program (1-based)
-    let monthIndex = 1;
-    if (programId) {
-      const monthCountRows = await this.db
-        .select({ c: sql<number>`count(*)` })
-        .from(commissions)
-        .where(
-          and(
-            eq(commissions.partnerId, data.partnerId),
-            eq(commissions.customerId, customerId),
-            eq(commissions.commissionProgramId, programId),
-          ),
-        );
-      monthIndex = (monthCountRows[0]?.c ?? 0) + 1;
-    } else {
-      const monthCountRows = await this.db
-        .select({ c: sql<number>`count(*)` })
-        .from(commissions)
-        .where(
-          and(
-            eq(commissions.partnerId, data.partnerId),
-            eq(commissions.customerId, customerId),
-          ),
-        );
-      monthIndex = (monthCountRows[0]?.c ?? 0) + 1;
+    // monthIndex: caller wins. Otherwise count prior commissions for this
+    // customer × program — preserves legacy behaviour for the public
+    // conversion API and historical backfills.
+    let monthIndex = data.monthIndex;
+    if (monthIndex === undefined) {
+      if (programId) {
+        const monthCountRows = await this.db
+          .select({ c: sql<number>`count(*)` })
+          .from(commissions)
+          .where(
+            and(
+              eq(commissions.partnerId, data.partnerId),
+              eq(commissions.customerId, customerId),
+              eq(commissions.commissionProgramId, programId),
+            ),
+          );
+        monthIndex = (monthCountRows[0]?.c ?? 0) + 1;
+      } else {
+        const monthCountRows = await this.db
+          .select({ c: sql<number>`count(*)` })
+          .from(commissions)
+          .where(
+            and(
+              eq(commissions.partnerId, data.partnerId),
+              eq(commissions.customerId, customerId),
+            ),
+          );
+        monthIndex = (monthCountRows[0]?.c ?? 0) + 1;
+      }
     }
+
+    // Caller-supplied fraud flag wins (used for denials).
+    if (data.forceFraudFlag) fraudFlag = data.forceFraudFlag;
+
+    // Status precedence: caller-forced > fraud-detected > default pending.
+    // Forced status from a privileged action (approve/deny) overrides fraud
+    // flags so denials land as "rejected" with the right reason.
+    const commissionStatus: "pending" | "approved" | "rejected" =
+      data.forceStatus ?? (fraudFlag ? "rejected" : "pending");
 
     // Insert commission record
     const commissionId = crypto.randomUUID();
@@ -172,8 +203,8 @@ export class CommissionService {
       customerId,
       projectId: data.projectId,
       amount: commissionAmount,
-      rate: partner.commissionRate,
-      status: fraudFlag ? "rejected" : "pending",
+      rate,
+      status: commissionStatus,
       externalEventId: data.eventId ?? null,
       eventDate: data.eventDate ?? null,
       fraudFlag,
@@ -286,7 +317,16 @@ export class CommissionService {
   async getCommissionsByUser(
     userId: string,
     filters?: { projectId?: string; status?: string },
-  ): Promise<(CommissionRow & { partnerName: string; partnerEmail: string; customerEmail: string; projectName: string })[]> {
+  ): Promise<(CommissionRow & {
+    partnerName: string;
+    partnerEmail: string;
+    customerEmail: string;
+    projectName: string;
+    programName: string | null;
+    programType: "recurring" | "lifetime" | "one-time" | null;
+    durationMonths: number | null;
+    monthsRemaining: number | null;
+  })[]> {
     const userProjects = await this.db
       .select({ id: projects.id, name: projects.name })
       .from(projects)
@@ -333,13 +373,50 @@ export class CommissionService {
       : [];
     const customerMap = new Map(customerRows.map((c) => [c.id, c.email]));
 
-    return rows.map((row) => ({
-      ...row,
-      partnerName: partnerMap.get(row.partnerId)?.name ?? "Unknown",
-      partnerEmail: partnerMap.get(row.partnerId)?.email ?? "",
-      customerEmail: customerMap.get(row.customerId) ?? "Unknown",
-      projectName: projectMap.get(row.projectId) ?? "Unknown",
-    }));
+    const programIds = [
+      ...new Set(
+        rows
+          .map((r) => r.commissionProgramId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const programRows = programIds.length > 0
+      ? await this.db
+          .select({
+            id: commissionPrograms.id,
+            name: commissionPrograms.name,
+            type: commissionPrograms.type,
+            durationMonths: commissionPrograms.durationMonths,
+          })
+          .from(commissionPrograms)
+          .where(inArray(commissionPrograms.id, programIds))
+      : [];
+    const programMap = new Map(programRows.map((p) => [p.id, p]));
+
+    return rows.map((row) => {
+      const program = row.commissionProgramId
+        ? programMap.get(row.commissionProgramId) ?? null
+        : null;
+      const monthsRemaining =
+        program?.type === "recurring" &&
+        program.durationMonths != null &&
+        row.monthIndex != null
+          ? Math.max(0, program.durationMonths - row.monthIndex)
+          : null;
+      return {
+        ...row,
+        partnerName: partnerMap.get(row.partnerId)?.name ?? "Unknown",
+        partnerEmail: partnerMap.get(row.partnerId)?.email ?? "",
+        customerEmail: customerMap.get(row.customerId) ?? "Unknown",
+        projectName: projectMap.get(row.projectId) ?? "Unknown",
+        programName: program?.name ?? null,
+        programType:
+          (program?.type as "recurring" | "lifetime" | "one-time" | null) ??
+          null,
+        durationMonths: program?.durationMonths ?? null,
+        monthsRemaining,
+      };
+    });
   }
 
   /**
@@ -441,6 +518,28 @@ export class CommissionService {
       : [];
     const customerMap = new Map(customerRows.map((c) => [c.id, c]));
 
+    // Fetch program info to surface programType + durationMonths so the FE
+    // can render "Month X of N · {remaining} left" on each commission row.
+    const programIds = [
+      ...new Set(
+        rows
+          .map((r) => r.commissionProgramId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const programRows = programIds.length > 0
+      ? await this.db
+          .select({
+            id: commissionPrograms.id,
+            name: commissionPrograms.name,
+            type: commissionPrograms.type,
+            durationMonths: commissionPrograms.durationMonths,
+          })
+          .from(commissionPrograms)
+          .where(inArray(commissionPrograms.id, programIds))
+      : [];
+    const programMap = new Map(programRows.map((p) => [p.id, p]));
+
     // Group commissions by partner
     const grouped = new Map<string, typeof rows>();
     for (const row of rows) {
@@ -490,6 +589,15 @@ export class CommissionService {
         rejectedAmount,
         commissions: partnerCommissions.map((c) => {
           const customer = customerMap.get(c.customerId);
+          const program = c.commissionProgramId
+            ? programMap.get(c.commissionProgramId) ?? null
+            : null;
+          const monthsRemaining =
+            program?.type === "recurring" &&
+            program.durationMonths != null &&
+            c.monthIndex != null
+              ? Math.max(0, program.durationMonths - c.monthIndex)
+              : null;
           return {
             id: c.id,
             customerId: c.customerId,
@@ -504,6 +612,13 @@ export class CommissionService {
             projectName: projectMap.get(c.projectId) ?? "Unknown",
             eventDate: c.eventDate,
             createdAt: c.createdAt,
+            monthIndex: c.monthIndex,
+            durationMonths: program?.durationMonths ?? null,
+            monthsRemaining,
+            programType:
+              (program?.type as "recurring" | "lifetime" | "one-time" | null) ??
+              null,
+            programName: program?.name ?? null,
           };
         }),
       };

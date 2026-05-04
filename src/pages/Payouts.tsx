@@ -52,6 +52,82 @@ interface CommissionDetail {
   projectName: string;
   eventDate: string | null;
   createdAt: string;
+  monthIndex: number | null;
+  durationMonths: number | null;
+  monthsRemaining: number | null;
+  programType: "recurring" | "lifetime" | "one-time" | null;
+  programName: string | null;
+}
+
+interface PendingPayoutRow {
+  paymentId: string;
+  partnerId: string;
+  partnerName: string;
+  partnerEmail: string;
+  customerEmail: string | null;
+  customerName: string | null;
+  source: "stripe";
+  kind: "subscription" | "one_time";
+  subscriptionId?: string;
+  eventId: string;
+  eventDate: number;
+  revenue: number;
+  mrr: number | null;
+  rate: number;
+  commissionAmount: number;
+  programType: "recurring" | "lifetime" | "one-time";
+  programName: string;
+  monthIndex: number | null;
+  durationMonths: number | null;
+  monthsRemaining: number | null;
+  isFinalMonth: boolean;
+}
+
+function MonthBadge({
+  programType,
+  monthIndex,
+  durationMonths,
+  monthsRemaining,
+  isFinalMonth,
+}: {
+  programType: "recurring" | "lifetime" | "one-time" | null;
+  monthIndex: number | null;
+  durationMonths: number | null;
+  monthsRemaining: number | null;
+  isFinalMonth?: boolean;
+}) {
+  if (programType === "lifetime") {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-info/10 text-info border border-info/20">
+        Lifetime
+      </span>
+    );
+  }
+  if (programType === "one-time") {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground border border-border">
+        One-time
+      </span>
+    );
+  }
+  if (programType === "recurring" && monthIndex != null && durationMonths != null) {
+    return (
+      <div className="inline-flex items-center gap-1">
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-info/10 text-info border border-info/20">
+          Month {monthIndex} of {durationMonths}
+          {monthsRemaining != null && monthsRemaining > 0 && (
+            <span className="ml-1 text-info/70">· {monthsRemaining} left</span>
+          )}
+        </span>
+        {isFinalMonth && (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning/10 text-warning border border-warning/20">
+            Final month
+          </span>
+        )}
+      </div>
+    );
+  }
+  return null;
 }
 
 interface PartnerGroup {
@@ -384,9 +460,23 @@ function PartnerRow({
             </TableCell>
             {/* Commission amount @ rate */}
             <TableCell>
-              <span className="text-sm font-medium">
-                {formatCurrency(commission.amount)} <span className="text-muted-foreground font-normal">@ {Math.round(commission.rate * 100)}%</span>
-              </span>
+              <div className="flex flex-col gap-1">
+                <span className="text-sm font-medium">
+                  {formatCurrency(commission.amount)} <span className="text-muted-foreground font-normal">@ {Math.round(commission.rate * 100)}%</span>
+                </span>
+                <MonthBadge
+                  programType={commission.programType}
+                  monthIndex={commission.monthIndex}
+                  durationMonths={commission.durationMonths}
+                  monthsRemaining={commission.monthsRemaining}
+                  isFinalMonth={
+                    commission.programType === "recurring" &&
+                    commission.monthIndex != null &&
+                    commission.durationMonths != null &&
+                    commission.monthIndex === commission.durationMonths
+                  }
+                />
+              </div>
             </TableCell>
             {/* Status + fraud flag */}
             <TableCell>
@@ -723,6 +813,13 @@ function Payouts() {
         </div>
       </div>
 
+      {/* Pending Review — derived live from Stripe; nothing persisted until
+          the user approves or denies. Shown only when a single project is
+          selected (the endpoint is project-scoped). */}
+      {selectedProject !== "all" && (
+        <PendingReviewSection projectId={selectedProject} />
+      )}
+
       {/* Stat Cards */}
       <div className="grid grid-cols-3 gap-6">
         <StatCard
@@ -786,6 +883,193 @@ function Payouts() {
           </TableBody>
         </Table>
       </div>
+    </div>
+  );
+}
+
+function PendingReviewSection({ projectId }: { projectId: string }) {
+  const queryClient = useQueryClient();
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["payouts-pending", projectId],
+    queryFn: async (): Promise<{ data: PendingPayoutRow[] }> => {
+      const r = await fetch(`/api/projects/${projectId}/payouts/pending`);
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(
+          (err as { error?: string }).error ?? "Failed to load pending payouts",
+        );
+      }
+      return r.json();
+    },
+  });
+
+  const actionMutation = useMutation({
+    mutationFn: async (input: {
+      action: "approve" | "deny";
+      row: PendingPayoutRow;
+    }) => {
+      const r = await fetch(
+        `/api/projects/${projectId}/payouts/${input.action}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            paymentId: input.row.paymentId,
+            eventId: input.row.eventId,
+            monthIndex: input.row.monthIndex,
+            revenue: input.row.revenue,
+            mrr: input.row.mrr,
+            eventDate: input.row.eventDate,
+          }),
+        },
+      );
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(
+          (err as { error?: string }).error ?? `${input.action} failed`,
+        );
+      }
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["payouts-pending", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["commissions-by-partner"] });
+      queryClient.invalidateQueries({ queryKey: ["commissions"] });
+    },
+  });
+
+  if (error) {
+    // Stripe-not-connected returns 412; render a friendly inline note.
+    return (
+      <div className="bg-card border rounded-md p-4 text-sm text-muted-foreground">
+        {(error as Error).message}
+      </div>
+    );
+  }
+
+  const rows = data?.data ?? [];
+
+  return (
+    <div className="bg-card border rounded-md p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-medium text-foreground">
+            Pending review
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Live from Stripe. Each row is one paid invoice or charge — approve
+            or deny to record the commission.
+          </p>
+        </div>
+        {isLoading && (
+          <span className="text-xs text-muted-foreground">Loading…</span>
+        )}
+      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Partner</TableHead>
+            <TableHead>Customer</TableHead>
+            <TableHead>Plan</TableHead>
+            <TableHead>Period</TableHead>
+            <TableHead className="text-right">Revenue</TableHead>
+            <TableHead className="text-right">Commission</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {!isLoading && rows.length === 0 && (
+            <TableRow>
+              <TableCell
+                colSpan={7}
+                className="text-center text-muted-foreground py-8"
+              >
+                Nothing pending. Assign Stripe payments to partners on the
+                Payments page to see them here.
+              </TableCell>
+            </TableRow>
+          )}
+          {rows.map((r) => (
+            <TableRow key={`${r.paymentId}-${r.eventId}`}>
+              <TableCell>
+                <div className="font-medium text-sm">{r.partnerName}</div>
+                <div className="text-xs text-muted-foreground">
+                  {r.partnerEmail}
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="text-sm">
+                  {r.customerName || r.customerEmail || "—"}
+                </div>
+                {r.customerName && r.customerEmail && (
+                  <div className="text-xs text-muted-foreground">
+                    {r.customerEmail}
+                  </div>
+                )}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {r.programName}
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {new Date(r.eventDate * 1000).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </span>
+                  <MonthBadge
+                    programType={r.programType}
+                    monthIndex={r.monthIndex}
+                    durationMonths={r.durationMonths}
+                    monthsRemaining={r.monthsRemaining}
+                    isFinalMonth={r.isFinalMonth}
+                  />
+                </div>
+              </TableCell>
+              <TableCell className="text-right tabular-nums text-sm">
+                {formatCurrency(r.revenue)}
+              </TableCell>
+              <TableCell className="text-right tabular-nums text-sm font-medium">
+                {formatCurrency(r.commissionAmount)}
+                <div className="text-[10px] text-muted-foreground font-normal">
+                  @ {Math.round(r.rate * 100)}%
+                </div>
+              </TableCell>
+              <TableCell className="text-right">
+                <div className="inline-flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs text-positive hover:text-positive hover:bg-positive/10"
+                    disabled={actionMutation.isPending}
+                    onClick={() =>
+                      actionMutation.mutate({ action: "approve", row: r })
+                    }
+                  >
+                    <CheckCircle className="w-3.5 h-3.5 mr-1" />
+                    Approve
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs text-negative hover:text-negative hover:bg-negative/10"
+                    disabled={actionMutation.isPending}
+                    onClick={() =>
+                      actionMutation.mutate({ action: "deny", row: r })
+                    }
+                  >
+                    <XCircle className="w-3.5 h-3.5 mr-1" />
+                    Deny
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 }

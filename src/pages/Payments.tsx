@@ -8,15 +8,13 @@ import {
 import {
   Search,
   Upload,
-  RefreshCw,
   Loader2,
-  MoreHorizontal,
   ExternalLink,
-  Flag,
-  Trash2,
   UserPlus,
   UserMinus,
-  DollarSign,
+  ChevronLeft,
+  ChevronRight,
+  X,
 } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import {
@@ -36,22 +34,11 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import CsvImportPanel from "@/components/CsvImportPanel";
 import { cn } from "@/lib/utils";
@@ -69,41 +56,47 @@ interface PartnerLite {
   referralCode: string;
 }
 
-interface PaymentRow {
-  id: string;
-  projectId: string;
-  partnerId: string | null;
-  source: string;
-  externalPaymentId: string;
-  kind: "subscription" | "one_time";
-  customerEmail: string | null;
-  customerName: string | null;
-  planName: string | null;
-  mrr: number | null;
-  startedAt: string | null;
-  status: string | null;
+type Kind = "subscription" | "one_time";
+type AssignedFilter = "all" | "assigned";
+
+interface AssignmentSnapshot {
+  paymentId: string;
+  partnerId: string;
+  commissionProgramId: string | null;
+  programType: "recurring" | "lifetime" | "one-time" | null;
+  durationMonths: number | null;
+  rate: number | null;
   flagReason: string | null;
 }
 
-interface PaymentsResponse {
-  payments: PaymentRow[];
-  counts: {
-    all: number;
-    unassigned: number;
-    assigned: number;
-    flagged: number;
+interface LivePaymentRow {
+  source: "stripe";
+  externalPaymentId: string;
+  kind: Kind;
+  customer: { stripeCustomerId: string | null; email: string | null; name: string | null };
+  metadata: Record<string, string>;
+  status?: string;
+  billingCycleAnchor?: number;
+  currentPeriodStart?: number;
+  currentPeriodEnd?: number;
+  startedAt?: number;
+  plan?: {
+    name: string | null;
+    unitAmount: number | null;
+    interval: string | null;
+    intervalCount: number | null;
   };
+  amount?: number;
+  created?: number;
+  description?: string | null;
+  assignment: AssignmentSnapshot | null;
 }
 
-type AssignedFilter = "all" | "unassigned" | "assigned" | "flagged";
-type SourceFilter = "all" | "stripe" | "csv";
-
-const FRAUD_REASONS = [
-  { value: "self_referral", label: "Self referral" },
-  { value: "bot_click", label: "Bot / fake traffic" },
-  { value: "suspicious_activity", label: "Suspicious activity" },
-  { value: "policy_violation", label: "Policy violation" },
-] as const;
+interface ListResponse {
+  data: LivePaymentRow[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
 
 const AVATAR_PALETTE = [
   "#3b82f6",
@@ -129,8 +122,9 @@ function initialsOf(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-function fmtMoney(n: number | null): string {
-  if (n == null) return "—";
+function fmtMoneyCents(cents: number | null | undefined): string {
+  if (cents == null) return "—";
+  const n = cents / 100;
   return n.toLocaleString("en-US", {
     style: "currency",
     currency: "USD",
@@ -138,22 +132,31 @@ function fmtMoney(n: number | null): string {
   });
 }
 
-function stripeDeepLink(p: PaymentRow): string {
-  if (p.source !== "stripe") return "#";
+function stripeDeepLink(p: LivePaymentRow): string {
   if (p.kind === "subscription") {
     return `https://dashboard.stripe.com/subscriptions/${p.externalPaymentId}`;
   }
   return `https://dashboard.stripe.com/payments/${p.externalPaymentId}`;
 }
 
+function fmtDate(unixSec: number | undefined | null): string {
+  if (!unixSec) return "—";
+  return new Date(unixSec * 1000).toISOString().slice(0, 10);
+}
+
 function Payments() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [search, setSearch] = useState("");
+  const [kind, setKind] = useState<Kind>("subscription");
   const [assignedFilter, setAssignedFilter] = useState<AssignedFilter>("all");
-  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [metaKey, setMetaKey] = useState("");
+  const [metaValue, setMetaValue] = useState("");
+  const [pageSize, setPageSize] = useState(50);
+  // Cursor stack lets us go back: pop the previous cursor on Prev.
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
   const [importOpen, setImportOpen] = useState(false);
+
+  const currentCursor = cursorStack[cursorStack.length - 1];
 
   const { data: projectsData } = useQuery({
     queryKey: ["projects"],
@@ -167,23 +170,32 @@ function Payments() {
   const fallbackProject = projects[0]?.id;
   const projectId = searchParams.get("project") ?? fallbackProject;
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching, error } = useQuery({
     queryKey: [
-      "payments",
+      "payments-live",
       projectId,
+      kind,
       assignedFilter,
-      sourceFilter,
-      search,
+      metaKey,
+      metaValue,
+      pageSize,
+      currentCursor ?? "first",
     ],
-    queryFn: async (): Promise<PaymentsResponse> => {
+    queryFn: async (): Promise<ListResponse> => {
       const params = new URLSearchParams();
-      if (assignedFilter !== "all") params.set("assigned", assignedFilter);
-      if (sourceFilter !== "all") params.set("source", sourceFilter);
-      if (search.trim()) params.set("search", search.trim());
+      params.set("kind", kind);
+      params.set("assigned", assignedFilter);
+      params.set("limit", String(pageSize));
+      if (currentCursor) params.set("cursor", currentCursor);
+      if (metaKey.trim()) params.set("metadataKey", metaKey.trim());
+      if (metaValue.trim()) params.set("metadataValue", metaValue.trim());
       const r = await fetch(
         `/api/projects/${projectId}/payments?${params.toString()}`,
       );
-      if (!r.ok) throw new Error("Failed");
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? "Failed to load");
+      }
       return r.json();
     },
     enabled: !!projectId,
@@ -204,102 +216,83 @@ function Payments() {
     [partners],
   );
 
-  const syncMutation = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`/api/projects/${projectId}/payments/sync`, {
+  const assignMutation = useMutation({
+    mutationFn: async (input: {
+      row: LivePaymentRow;
+      partnerId: string;
+    }) => {
+      const r = await fetch(`/api/projects/${projectId}/payments/assign`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: "stripe",
+          externalPaymentId: input.row.externalPaymentId,
+          kind: input.row.kind,
+          partnerId: input.partnerId,
+          customerEmail: input.row.customer.email,
+          customerName: input.row.customer.name,
+          planName:
+            input.row.kind === "subscription"
+              ? input.row.plan?.name ?? null
+              : input.row.description ?? null,
+          mrr:
+            input.row.kind === "subscription"
+              ? input.row.plan?.unitAmount != null
+                ? input.row.plan.unitAmount / 100
+                : null
+              : input.row.amount != null
+                ? input.row.amount / 100
+                : null,
+          startedAt: input.row.startedAt ?? input.row.created ?? null,
+          status: input.row.status ?? null,
+          subscriptionAnchorAt:
+            input.row.kind === "subscription"
+              ? input.row.billingCycleAnchor ?? null
+              : null,
+        }),
       });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
-        throw new Error((err as { error?: string }).error ?? "Sync failed");
+        throw new Error((err as { error?: string }).error ?? "Assign failed");
       }
       return r.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["payments", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["payments-live", projectId] });
     },
   });
 
-  const assignMutation = useMutation({
-    mutationFn: async (input: { id: string; partnerId: string | null }) => {
-      const r = await fetch(`/api/payments/${input.id}`, {
-        method: "PATCH",
+  const unassignMutation = useMutation({
+    mutationFn: async (externalPaymentId: string) => {
+      const r = await fetch(`/api/projects/${projectId}/payments/unassign`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ partnerId: input.partnerId }),
+        body: JSON.stringify({ externalPaymentId }),
       });
-      if (!r.ok) throw new Error("Failed");
+      if (!r.ok) throw new Error("Unassign failed");
       return r.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["payments", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["payments-live", projectId] });
     },
   });
 
-  const flagMutation = useMutation({
-    mutationFn: async (input: { id: string; flagReason: string | null }) => {
-      const r = await fetch(`/api/payments/${input.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ flagReason: input.flagReason }),
-      });
-      if (!r.ok) throw new Error("Failed");
-      return r.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["payments", projectId] });
-    },
-  });
+  const rows = data?.data ?? [];
+  const hasMore = data?.hasMore ?? false;
+  const nextCursor = data?.nextCursor;
 
-  const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const r = await fetch(`/api/payments/${id}`, { method: "DELETE" });
-      if (!r.ok) throw new Error("Failed");
-      return r.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["payments", projectId] });
-    },
-  });
-
-  async function bulkAssign(partnerId: string | null) {
-    await Promise.all(
-      Array.from(selectedIds).map((id) =>
-        assignMutation.mutateAsync({ id, partnerId }),
-      ),
-    );
-    setSelectedIds(new Set());
+  function applyFilter(next: () => void) {
+    setCursorStack([]); // reset pagination on any filter change
+    next();
   }
-
-  const payments = data?.payments ?? [];
-  const counts = data?.counts ?? { all: 0, unassigned: 0, assigned: 0, flagged: 0 };
-  const allSelected =
-    payments.length > 0 && selectedIds.size === payments.length;
-
-  function toggleAll() {
-    if (allSelected) setSelectedIds(new Set());
-    else setSelectedIds(new Set(payments.map((p) => p.id)));
-  }
-  function toggleOne(id: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  const subtitle = `${counts.all} payments · ${counts.assigned} attributed · ${counts.flagged} flagged`;
-
-  const tabs: { value: AssignedFilter; label: string }[] = [
-    { value: "all", label: `All` },
-    { value: "unassigned", label: `Unassigned (${counts.unassigned})` },
-    { value: "assigned", label: `Assigned (${counts.assigned})` },
-    { value: "flagged", label: `Flagged (${counts.flagged})` },
-  ];
 
   return (
     <div className="p-6">
-      <PageHeader eyebrow="BILLING" title="Payments" subtitle={subtitle}>
+      <PageHeader
+        eyebrow="BILLING"
+        title="Payments"
+        subtitle="Live from Stripe — assign payments to partners to start tracking commissions."
+      >
         {projects.length > 1 && (
           <Select
             value={projectId ?? ""}
@@ -324,19 +317,6 @@ function Payments() {
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => syncMutation.mutate()}
-          disabled={syncMutation.isPending || !projectId}
-        >
-          {syncMutation.isPending ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="size-3.5" />
-          )}
-          {syncMutation.isPending ? "Syncing…" : "Sync from Stripe"}
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
           onClick={() => setImportOpen(true)}
           disabled={!projectId}
         >
@@ -345,32 +325,23 @@ function Payments() {
         </Button>
       </PageHeader>
 
-      {syncMutation.isError && (
-        <div className="mb-4 p-3 rounded-md bg-warning/10 text-warning text-sm border border-warning/30">
-          {(syncMutation.error as Error).message}
+      {error && (
+        <div className="mb-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm border border-destructive/30">
+          {(error as Error).message}
         </div>
       )}
 
       <div className="bg-card border rounded-md">
         {/* Toolbar */}
         <div className="flex flex-col lg:flex-row gap-3 p-4">
-          <div className="relative flex-1 min-w-0">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search customer, email, sub_id…"
-              className="pl-9 h-9"
-            />
-          </div>
           <div className="inline-flex items-center p-1 bg-muted rounded-md gap-1">
-            {tabs.map((t) => {
-              const active = t.value === assignedFilter;
+            {(["subscription", "one_time"] as const).map((k) => {
+              const active = k === kind;
               return (
                 <button
-                  key={t.value}
+                  key={k}
                   type="button"
-                  onClick={() => setAssignedFilter(t.value)}
+                  onClick={() => applyFilter(() => setKind(k))}
                   className={cn(
                     "px-3 h-7 text-sm font-medium rounded transition-colors",
                     active
@@ -378,19 +349,19 @@ function Payments() {
                       : "text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  {t.label}
+                  {k === "subscription" ? "Subscriptions" : "One-time"}
                 </button>
               );
             })}
           </div>
           <div className="inline-flex items-center p-1 bg-muted rounded-md gap-1">
-            {(["all", "stripe", "csv"] as const).map((s) => {
-              const active = sourceFilter === s;
+            {(["all", "assigned"] as const).map((a) => {
+              const active = a === assignedFilter;
               return (
                 <button
-                  key={s}
+                  key={a}
                   type="button"
-                  onClick={() => setSourceFilter(s)}
+                  onClick={() => applyFilter(() => setAssignedFilter(a))}
                   className={cn(
                     "px-3 h-7 text-sm font-medium rounded transition-colors capitalize",
                     active
@@ -398,108 +369,121 @@ function Payments() {
                       : "text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  {s === "all" ? "All" : s}
+                  {a}
                 </button>
               );
             })}
           </div>
-        </div>
-
-        {/* Bulk action bar */}
-        {selectedIds.size > 0 && (
-          <div className="flex items-center gap-2 px-4 py-2 bg-accent/10 border-y border-border text-sm">
-            <span className="text-muted-foreground">
-              {selectedIds.size} selected
-            </span>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button size="sm" variant="secondary">
-                  <UserPlus className="size-3.5" />
-                  Assign to partner
-                </Button>
-              </PopoverTrigger>
-              <PartnerPickerContent
-                partners={partners}
-                onPick={(partnerId) => bulkAssign(partnerId)}
+          <div className="flex flex-1 gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+              <Input
+                value={metaKey}
+                onChange={(e) => setMetaKey(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyFilter(() => {});
+                }}
+                placeholder="Metadata key (e.g. referral_code)"
+                className="pl-9 h-9"
               />
-            </Popover>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => bulkAssign(null)}
-            >
-              <UserMinus className="size-3.5" />
-              Unassign
-            </Button>
-            <button
-              type="button"
-              className="ml-auto text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => setSelectedIds(new Set())}
-            >
-              Clear
-            </button>
+            </div>
+            <div className="relative flex-1">
+              <Input
+                value={metaValue}
+                onChange={(e) => setMetaValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyFilter(() => {});
+                }}
+                placeholder="Metadata value (optional — empty = key exists)"
+                className="h-9"
+              />
+            </div>
+            {(metaKey || metaValue) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  applyFilter(() => {
+                    setMetaKey("");
+                    setMetaValue("");
+                  })
+                }
+              >
+                <X className="size-3.5" />
+              </Button>
+            )}
           </div>
-        )}
+        </div>
 
         {/* Table */}
         <Table className="px-2 pb-2">
           <TableHeader className="[&_tr]:border-0">
             <TableRow className="hover:bg-transparent">
-              <TableHead className="h-12 w-10 px-4">
-                <Checkbox checked={allSelected} onCheckedChange={toggleAll} />
-              </TableHead>
               <TableHead className="text-eyebrow-muted h-12 px-4">Customer</TableHead>
               <TableHead className="text-eyebrow-muted h-12 px-4">External ID</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4">Plan</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4">Source</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4">Started</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4 text-right">MRR</TableHead>
+              <TableHead className="text-eyebrow-muted h-12 px-4">
+                {kind === "subscription" ? "Plan" : "Description"}
+              </TableHead>
+              <TableHead className="text-eyebrow-muted h-12 px-4">
+                {kind === "subscription" ? "Anchor" : "Date"}
+              </TableHead>
+              <TableHead className="text-eyebrow-muted h-12 px-4 text-right">
+                {kind === "subscription" ? "MRR" : "Amount"}
+              </TableHead>
               <TableHead className="text-eyebrow-muted h-12 px-4">Attributed to</TableHead>
-              <TableHead className="h-12 w-10 px-4" />
+              <TableHead className="text-eyebrow-muted h-12 px-4 w-10" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading && (
+            {(isLoading || isFetching) && rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-12 text-muted-foreground text-sm">
-                  Loading…
+                <TableCell colSpan={7} className="text-center py-12 text-muted-foreground text-sm">
+                  Loading from Stripe…
                 </TableCell>
               </TableRow>
             )}
-            {!isLoading && payments.length === 0 && (
+            {!isLoading && rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-16">
-                  <p className="text-sm text-muted-foreground mb-3">
-                    No payments yet.
+                <TableCell colSpan={7} className="text-center py-16">
+                  <p className="text-sm text-muted-foreground mb-1">
+                    No {kind === "subscription" ? "subscriptions" : "one-time charges"} found.
                   </p>
-                  <p className="text-xs text-muted-foreground">
-                    Click <strong>Sync from Stripe</strong> to pull
-                    subscriptions and one-time charges.
-                  </p>
+                  {(metaKey || metaValue) && (
+                    <p className="text-xs text-muted-foreground">
+                      Try clearing the metadata filter.
+                    </p>
+                  )}
                 </TableCell>
               </TableRow>
             )}
-            {payments.map((p) => {
-              const partner = p.partnerId ? partnerById.get(p.partnerId) : null;
-              const checked = selectedIds.has(p.id);
+            {rows.map((p) => {
+              const partner = p.assignment
+                ? partnerById.get(p.assignment.partnerId)
+                : null;
               return (
                 <TableRow
-                  key={p.id}
+                  key={p.externalPaymentId}
                   className="border-0 [&>td]:py-4 [&>td]:px-4"
                 >
                   <TableCell>
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={() => toggleOne(p.id)}
-                    />
-                  </TableCell>
-                  <TableCell>
                     <div className="font-medium text-foreground">
-                      {p.customerName || p.customerEmail || "—"}
+                      {p.customer.name || p.customer.email || "—"}
                     </div>
-                    {p.customerName && p.customerEmail && (
+                    {p.customer.name && p.customer.email && (
                       <div className="text-xs text-muted-foreground">
-                        {p.customerEmail}
+                        {p.customer.email}
+                      </div>
+                    )}
+                    {Object.keys(p.metadata).length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {Object.entries(p.metadata).slice(0, 3).map(([k, v]) => (
+                          <span
+                            key={k}
+                            className="text-[10px] bg-muted px-1.5 py-0.5 rounded font-mono text-muted-foreground"
+                          >
+                            {k}={v}
+                          </span>
+                        ))}
                       </div>
                     )}
                   </TableCell>
@@ -509,37 +493,26 @@ function Payments() {
                     </code>
                   </TableCell>
                   <TableCell className="text-sm">
-                    {p.planName ?? "—"}
-                    {p.kind === "one_time" && (
-                      <span className="ml-2 text-[10px] uppercase tracking-wide text-muted-foreground">
-                        One-time
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {p.source === "stripe" ? (
-                      <span className="inline-flex items-center gap-1.5 text-sm">
-                        <DollarSign className="size-3 text-accent" />
-                        Stripe
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 text-sm">
-                        <Upload className="size-3 text-muted-foreground" />
-                        CSV
-                      </span>
+                    {p.kind === "subscription"
+                      ? p.plan?.name ?? "—"
+                      : p.description ?? "—"}
+                    {p.kind === "subscription" && p.status && (
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mt-0.5">
+                        {p.status}
+                      </div>
                     )}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground tabular-nums">
-                    {p.startedAt
-                      ? new Date(p.startedAt).toISOString().slice(0, 10)
-                      : "—"}
+                    {p.kind === "subscription"
+                      ? fmtDate(p.billingCycleAnchor)
+                      : fmtDate(p.created)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-sm">
-                    {p.mrr != null
-                      ? p.kind === "subscription"
-                        ? `${fmtMoney(p.mrr)}/mo`
-                        : `${fmtMoney(p.mrr)} once`
-                      : "—"}
+                    {p.kind === "subscription"
+                      ? p.plan?.unitAmount != null
+                        ? `${fmtMoneyCents(p.plan.unitAmount)}/${p.plan.interval ?? "mo"}`
+                        : "—"
+                      : fmtMoneyCents(p.amount)}
                   </TableCell>
                   <TableCell>
                     <Popover>
@@ -558,6 +531,16 @@ function Payments() {
                             <span className="text-sm truncate">
                               {partner.name || partner.email}
                             </span>
+                            {p.assignment?.programType === "recurring" &&
+                              p.assignment?.durationMonths != null && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  ({p.assignment.durationMonths}mo
+                                  {p.assignment.rate != null
+                                    ? ` · ${(p.assignment.rate * 100).toFixed(0)}%`
+                                    : ""}
+                                  )
+                                </span>
+                              )}
                           </button>
                         ) : (
                           <Button size="sm" variant="secondary">
@@ -568,110 +551,82 @@ function Payments() {
                       </PopoverTrigger>
                       <PartnerPickerContent
                         partners={partners}
-                        currentId={p.partnerId}
-                        onPick={(partnerId) =>
-                          assignMutation.mutate({ id: p.id, partnerId })
-                        }
+                        currentId={p.assignment?.partnerId ?? null}
+                        onPick={(partnerId) => {
+                          if (partnerId) {
+                            assignMutation.mutate({ row: p, partnerId });
+                          } else {
+                            unassignMutation.mutate(p.externalPaymentId);
+                          }
+                        }}
                       />
                     </Popover>
-                    {p.flagReason && (
-                      <span className="ml-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-destructive">
-                        <Flag className="size-3" />
-                        {p.flagReason.replace(/_/g, " ")}
-                      </span>
-                    )}
                   </TableCell>
                   <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          aria-label="More"
-                        >
-                          <MoreHorizontal className="size-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {p.partnerId && (
-                          <DropdownMenuItem
-                            onSelect={() =>
-                              assignMutation.mutate({
-                                id: p.id,
-                                partnerId: null,
-                              })
-                            }
-                          >
-                            Unassign
-                          </DropdownMenuItem>
-                        )}
-                        <DropdownMenuSub>
-                          <DropdownMenuSubTrigger>
-                            Flag…
-                          </DropdownMenuSubTrigger>
-                          <DropdownMenuSubContent>
-                            {FRAUD_REASONS.map((r) => (
-                              <DropdownMenuItem
-                                key={r.value}
-                                onSelect={() =>
-                                  flagMutation.mutate({
-                                    id: p.id,
-                                    flagReason: r.value,
-                                  })
-                                }
-                              >
-                                {r.label}
-                              </DropdownMenuItem>
-                            ))}
-                            {p.flagReason && (
-                              <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  onSelect={() =>
-                                    flagMutation.mutate({
-                                      id: p.id,
-                                      flagReason: null,
-                                    })
-                                  }
-                                >
-                                  Clear flag
-                                </DropdownMenuItem>
-                              </>
-                            )}
-                          </DropdownMenuSubContent>
-                        </DropdownMenuSub>
-                        {p.source === "stripe" && (
-                          <DropdownMenuItem asChild>
-                            <a
-                              href={stripeDeepLink(p)}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              <ExternalLink className="size-3.5" />
-                              Open in Stripe
-                            </a>
-                          </DropdownMenuItem>
-                        )}
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          onSelect={() => {
-                            if (confirm("Remove this payment row?")) {
-                              deleteMutation.mutate(p.id);
-                            }
-                          }}
-                        >
-                          <Trash2 className="size-3.5" />
-                          Delete row
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <a
+                      href={stripeDeepLink(p)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-muted-foreground hover:text-foreground"
+                      title="Open in Stripe"
+                    >
+                      <ExternalLink className="size-3.5" />
+                    </a>
                   </TableCell>
                 </TableRow>
               );
             })}
           </TableBody>
         </Table>
+
+        {/* Pagination */}
+        <div className="flex items-center justify-between p-3 border-t border-border text-xs text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <span>Rows per page</span>
+            <Select
+              value={String(pageSize)}
+              onValueChange={(v) =>
+                applyFilter(() => setPageSize(parseInt(v, 10)))
+              }
+            >
+              <SelectTrigger className="h-7 w-16">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[25, 50, 100].map((n) => (
+                  <SelectItem key={n} value={String(n)}>
+                    {n}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={cursorStack.length === 0 || isFetching}
+              onClick={() => setCursorStack((s) => s.slice(0, -1))}
+            >
+              <ChevronLeft className="size-3.5" />
+              Prev
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!hasMore || !nextCursor || isFetching}
+              onClick={() => {
+                if (nextCursor) setCursorStack((s) => [...s, nextCursor]);
+              }}
+            >
+              {isFetching ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : null}
+              Next
+              <ChevronRight className="size-3.5" />
+            </Button>
+          </div>
+        </div>
       </div>
 
       <Sheet open={importOpen} onOpenChange={setImportOpen}>
@@ -717,7 +672,7 @@ function PartnerPickerContent({
   onPick,
 }: {
   partners: PartnerLite[];
-  currentId?: string | null;
+  currentId: string | null;
   onPick: (partnerId: string | null) => void;
 }) {
   const [q, setQ] = useState("");

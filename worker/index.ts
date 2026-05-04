@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, isNotNull, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { except } from "hono/combine";
 import { createAuth, getTrustedOrigins } from "./auth";
@@ -13,6 +13,9 @@ import {
   partnerOtps,
   notifications,
   users,
+  payments,
+  commissions,
+  commissionPrograms,
   schema,
 } from "./db";
 import { ProjectService } from "./services/project-service";
@@ -61,6 +64,12 @@ import {
   type AssignedFilter,
   type SourceFilter,
 } from "./services/payment-service";
+import {
+  PaymentLiveService,
+  monthIndexFromAnchor,
+  type Kind as LiveKind,
+  type AssignedFilter as LiveAssignedFilter,
+} from "./services/payment-live-service";
 import { FraudService } from "./services/fraud-service";
 import { PartnerDashboardService } from "./services/partner-dashboard-service";
 import { PayoutService } from "./services/payout-service";
@@ -190,6 +199,70 @@ function validate<T>(
   if (result.success) return { success: true, data: result.data as T };
   const message = result.error?.issues?.[0]?.message ?? "Validation failed";
   return { success: false, error: message };
+}
+
+// Shared handler for /payouts/approve and /payouts/deny. The only difference
+// is the resulting commission status + the `denied_by_owner` fraud flag we tag
+// on rejections so they're distinguishable from auto-detected fraud.
+async function actionPendingPayout(
+  c: import("hono").Context<HonoAppContext>,
+  status: "approved" | "rejected",
+) {
+  const user = c.get("user");
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  const projectId = c.req.param("id");
+  const db = c.get("db");
+  const projectService = new ProjectService(db);
+  const project = await projectService.getProjectById(projectId);
+  if (!project || project.userId !== user.id) {
+    return c.json({ error: "Project not found" }, 404);
+  }
+  const body = (await c.req.json().catch(() => ({}))) as {
+    paymentId?: string;
+    eventId?: string;
+    monthIndex?: number | null;
+    revenue?: number;
+    mrr?: number | null;
+    eventDate?: number;
+  };
+  if (
+    !body.paymentId ||
+    !body.eventId ||
+    typeof body.revenue !== "number" ||
+    typeof body.eventDate !== "number"
+  ) {
+    return c.json({ error: "Missing required fields" }, 400);
+  }
+
+  const paymentRows = await db
+    .select()
+    .from(payments)
+    .where(and(eq(payments.id, body.paymentId), eq(payments.projectId, projectId)))
+    .limit(1);
+  const payment = paymentRows[0];
+  if (!payment || !payment.partnerId || !payment.customerEmail) {
+    return c.json(
+      { error: "Assignment not found or missing partner/customer" },
+      404,
+    );
+  }
+
+  const commissionService = new CommissionService(db);
+  const result = await commissionService.recordConversion({
+    partnerId: payment.partnerId,
+    projectId,
+    customerEmail: payment.customerEmail.toLowerCase(),
+    revenue: body.revenue,
+    mrr: body.mrr ?? undefined,
+    eventId: body.eventId,
+    eventDate: new Date(body.eventDate * 1000),
+    monthIndex: body.monthIndex ?? undefined,
+    commissionProgramId: payment.commissionProgramId,
+    rate: payment.rate ?? undefined,
+    forceStatus: status,
+    forceFraudFlag: status === "rejected" ? "denied_by_owner" : undefined,
+  });
+  return c.json(result);
 }
 
 // CORS: never use wildcard when credentials are included (browser rejects). Reflect origin or use allow list.
@@ -2146,7 +2219,69 @@ const app = new Hono<HonoAppContext>()
     return c.json(result);
   })
   // ─── Payments ──────────────────────────────────────────────────────────────
+  // Live-pull list. Stripe rows come from the API on every request; CSV rows
+  // are still served from the DB via a separate endpoint below.
   .get("/api/projects/:id/payments", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+    const kind = c.req.query("kind") as LiveKind | undefined;
+    if (kind !== "subscription" && kind !== "one_time") {
+      return c.json(
+        { error: "kind query param required: subscription | one_time" },
+        400,
+      );
+    }
+    const limit = Math.min(
+      Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1),
+      100,
+    );
+    const cursor = c.req.query("cursor") || undefined;
+    const metadataKey = c.req.query("metadataKey") || undefined;
+    const metadataValue = c.req.query("metadataValue") || undefined;
+    const assigned: LiveAssignedFilter =
+      c.req.query("assigned") === "assigned" ? "assigned" : "all";
+
+    const stripeService = new StripeService(
+      db,
+      c.env.ENCRYPTION_KEY ?? "",
+      c.env.SALT ?? "",
+    );
+    const apiKey = await stripeService.getDecryptedKey(projectId);
+    if (!apiKey) {
+      return c.json({ error: "Stripe not connected for this project" }, 412);
+    }
+
+    const liveService = new PaymentLiveService(db);
+    try {
+      const result =
+        kind === "subscription"
+          ? await liveService.listSubscriptions(
+              apiKey,
+              projectId,
+              { limit, cursor, metadataKey, metadataValue },
+              assigned,
+            )
+          : await liveService.listOneTimeCharges(
+              apiKey,
+              projectId,
+              { limit, cursor, metadataKey, metadataValue },
+              assigned,
+            );
+      return c.json(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "List failed";
+      return c.json({ error: msg }, 500);
+    }
+  })
+  // CSV-source ledger rows (kept separate from Stripe live-pull).
+  .get("/api/projects/:id/payments/csv", async (c) => {
     const user = c.get("user");
     if (!user) return c.json({ error: "Unauthorized" }, 401);
     const projectId = c.req.param("id");
@@ -2159,34 +2294,120 @@ const app = new Hono<HonoAppContext>()
     const paymentService = new PaymentService(db);
     const result = await paymentService.list(projectId, {
       assigned: (c.req.query("assigned") as AssignedFilter) ?? undefined,
-      source: (c.req.query("source") as SourceFilter) ?? undefined,
+      source: "csv" satisfies SourceFilter,
       search: c.req.query("search") ?? undefined,
     });
     return c.json(result);
   })
-  .patch("/api/payments/:id", async (c) => {
+  .post("/api/projects/:id/payments/assign", async (c) => {
     const user = c.get("user");
     if (!user) return c.json({ error: "Unauthorized" }, 401);
-    const id = c.req.param("id");
+    const projectId = c.req.param("id");
     const db = c.get("db");
-    const paymentService = new PaymentService(db);
-    const existing = await paymentService.getById(id);
-    if (!existing) return c.json({ error: "Not found" }, 404);
     const projectService = new ProjectService(db);
-    const project = await projectService.getProjectById(existing.projectId);
+    const project = await projectService.getProjectById(projectId);
     if (!project || project.userId !== user.id) {
-      return c.json({ error: "Not found" }, 404);
+      return c.json({ error: "Project not found" }, 404);
     }
     const body = (await c.req.json().catch(() => ({}))) as {
-      partnerId?: string | null;
-      flagReason?: string | null;
+      source?: string;
+      externalPaymentId?: string;
+      kind?: "subscription" | "one_time";
+      partnerId?: string;
+      customerEmail?: string | null;
+      customerName?: string | null;
+      planName?: string | null;
+      mrr?: number | null;
+      startedAt?: number | null;
+      status?: string | null;
+      subscriptionAnchorAt?: number | null;
     };
-    const updates: { partnerId?: string | null; flagReason?: string | null } = {};
-    if (body.partnerId !== undefined) updates.partnerId = body.partnerId;
-    if (body.flagReason !== undefined) updates.flagReason = body.flagReason;
-    const updated = await paymentService.update(id, updates);
-    return c.json({ payment: updated });
+    if (
+      !body.externalPaymentId ||
+      !body.kind ||
+      !body.partnerId ||
+      body.source !== "stripe"
+    ) {
+      return c.json({ error: "Missing required fields" }, 400);
+    }
+
+    // Verify partner belongs to this project; resolve commission program.
+    const partnerRows = await db
+      .select()
+      .from(partners)
+      .where(
+        and(eq(partners.id, body.partnerId), eq(partners.projectId, projectId)),
+      )
+      .limit(1);
+    const partner = partnerRows[0];
+    if (!partner) return c.json({ error: "Partner not found" }, 404);
+
+    const programService = new CommissionProgramService(db);
+    let programId =
+      partner.commissionProgramId ?? null;
+    if (!programId) {
+      const brandingService = new BrandingService(db);
+      const branding = await brandingService.getByProjectId(projectId);
+      programId = branding?.defaultCommissionProgramId ?? null;
+    }
+    const program = programId
+      ? await programService.getById(projectId, programId)
+      : null;
+
+    // commissionPrograms.rate is stored as percent (e.g. 30 for 30%); the
+    // partners.commissionRate fallback is stored as a decimal (0.2). Normalize
+    // to decimal for the snapshot so approve/deny math is consistent.
+    const rate = program ? program.rate / 100 : partner.commissionRate;
+
+    const paymentService = new PaymentService(db);
+    const result = await paymentService.upsertFromExternal({
+      projectId,
+      source: "stripe",
+      externalPaymentId: body.externalPaymentId,
+      kind: body.kind,
+      customerEmail: body.customerEmail ?? null,
+      customerName: body.customerName ?? null,
+      planName: body.planName ?? null,
+      mrr: body.mrr ?? null,
+      startedAt: body.startedAt ? new Date(body.startedAt * 1000) : null,
+      status: body.status ?? null,
+      partnerId: body.partnerId,
+      commissionProgramId: program?.id ?? null,
+      programType:
+        (program?.type as "recurring" | "lifetime" | "one-time" | null) ?? null,
+      durationMonths: program?.durationMonths ?? null,
+      rate,
+      subscriptionAnchorAt: body.subscriptionAnchorAt
+        ? new Date(body.subscriptionAnchorAt * 1000)
+        : null,
+    });
+    return c.json({ payment: result.row });
   })
+  .post("/api/projects/:id/payments/unassign", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+    const projectId = c.req.param("id");
+    const db = c.get("db");
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+    const body = (await c.req.json().catch(() => ({}))) as {
+      externalPaymentId?: string;
+    };
+    if (!body.externalPaymentId) {
+      return c.json({ error: "externalPaymentId required" }, 400);
+    }
+    const paymentService = new PaymentService(db);
+    await paymentService.deleteByExternalId(
+      projectId,
+      "stripe",
+      body.externalPaymentId,
+    );
+    return c.json({ ok: true });
+  })
+  // CSV row deletion stays on its own endpoint (keyed by internal id).
   .delete("/api/payments/:id", async (c) => {
     const user = c.get("user");
     if (!user) return c.json({ error: "Unauthorized" }, 401);
@@ -2203,7 +2424,8 @@ const app = new Hono<HonoAppContext>()
     await paymentService.delete(id);
     return c.json({ ok: true });
   })
-  .post("/api/projects/:id/payments/sync", async (c) => {
+  // ─── Pending payouts (derived live; nothing persisted until approve/deny) ──
+  .get("/api/projects/:id/payouts/pending", async (c) => {
     const user = c.get("user");
     if (!user) return c.json({ error: "Unauthorized" }, 401);
     const projectId = c.req.param("id");
@@ -2213,30 +2435,223 @@ const app = new Hono<HonoAppContext>()
     if (!project || project.userId !== user.id) {
       return c.json({ error: "Project not found" }, 404);
     }
-    const encryptionKey = c.env.ENCRYPTION_KEY;
-    if (!encryptionKey) {
-      return c.json({ error: "Encryption not configured" }, 500);
-    }
+
     const stripeService = new StripeService(
       db,
-      encryptionKey,
+      c.env.ENCRYPTION_KEY ?? "",
       c.env.SALT ?? "",
     );
-    const conn = await stripeService.getConnection(projectId);
-    if (!conn) {
-      return c.json(
-        { error: "Stripe not connected for this project" },
-        412,
+    const apiKey = await stripeService.getDecryptedKey(projectId);
+    if (!apiKey) {
+      return c.json({ error: "Stripe not connected for this project" }, 412);
+    }
+
+    // 1. All Stripe assignments for this project.
+    const assignments = await db
+      .select()
+      .from(payments)
+      .where(
+        and(
+          eq(payments.projectId, projectId),
+          eq(payments.source, "stripe"),
+          isNotNull(payments.partnerId),
+        ),
       );
-    }
-    const syncService = new StripeSyncService(db, stripeService);
-    try {
-      const result = await syncService.syncPayments(projectId);
-      return c.json(result);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Sync failed";
-      return c.json({ error: msg }, 500);
-    }
+
+    // 2. All commissions for this project, indexed by externalEventId so we
+    //    can exclude already-actioned events.
+    const existingCommissions = await db
+      .select({ eventId: commissions.externalEventId })
+      .from(commissions)
+      .where(eq(commissions.projectId, projectId));
+    const actionedEventIds = new Set(
+      existingCommissions
+        .map((r) => r.eventId)
+        .filter((id): id is string => !!id),
+    );
+
+    // 3. Partner names for display.
+    const partnerIds = [...new Set(assignments.map((a) => a.partnerId!))];
+    const partnerRows = partnerIds.length
+      ? await db
+          .select({
+            id: partners.id,
+            name: partners.name,
+            email: partners.email,
+          })
+          .from(partners)
+          .where(inArray(partners.id, partnerIds))
+      : [];
+    const partnerMap = new Map(partnerRows.map((p) => [p.id, p]));
+
+    // 4. Program names for display (for assignments where snapshot has a
+    //    programId).
+    const programIds = [
+      ...new Set(
+        assignments
+          .map((a) => a.commissionProgramId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const programRows = programIds.length
+      ? await db
+          .select({
+            id: commissionPrograms.id,
+            name: commissionPrograms.name,
+          })
+          .from(commissionPrograms)
+          .where(inArray(commissionPrograms.id, programIds))
+      : [];
+    const programMap = new Map(programRows.map((p) => [p.id, p]));
+
+    const liveService = new PaymentLiveService(db);
+
+    // Derive in parallel — N concurrent Stripe calls for N subscription
+    // assignments. Acceptable at MVP scale.
+    const derivedRows = await Promise.all(
+      assignments.map(async (a) => {
+        const partner = partnerMap.get(a.partnerId!);
+        const programName =
+          a.commissionProgramId && programMap.has(a.commissionProgramId)
+            ? programMap.get(a.commissionProgramId)!.name
+            : "Default";
+        const rate = a.rate ?? 0;
+        const programType = a.programType ?? "recurring";
+
+        if (a.kind === "one_time") {
+          if (actionedEventIds.has(a.externalPaymentId)) return [];
+          const revenue = a.mrr ?? 0;
+          return [
+            {
+              paymentId: a.id,
+              partnerId: a.partnerId!,
+              partnerName: partner?.name ?? "Unknown",
+              partnerEmail: partner?.email ?? "",
+              customerEmail: a.customerEmail,
+              customerName: a.customerName,
+              source: "stripe" as const,
+              kind: "one_time" as const,
+              eventId: a.externalPaymentId,
+              eventDate: a.startedAt
+                ? Math.floor(a.startedAt.getTime() / 1000)
+                : Math.floor(Date.now() / 1000),
+              revenue,
+              mrr: a.mrr,
+              rate,
+              commissionAmount: revenue * rate,
+              programType,
+              programName,
+              monthIndex: null,
+              durationMonths: null,
+              monthsRemaining: null,
+              isFinalMonth: false,
+            },
+          ];
+        }
+
+        // kind === "subscription"
+        const invoices = await liveService.listPaidInvoicesForSubscription(
+          apiKey,
+          a.externalPaymentId,
+        );
+        const anchorSec = a.subscriptionAnchorAt
+          ? Math.floor(a.subscriptionAnchorAt.getTime() / 1000)
+          : a.startedAt
+            ? Math.floor(a.startedAt.getTime() / 1000)
+            : null;
+
+        if (programType === "one-time") {
+          // Only the earliest paid invoice counts; ignore the rest.
+          const earliest = invoices
+            .slice()
+            .sort((x, y) => x.created - y.created)[0];
+          if (!earliest || actionedEventIds.has(earliest.id)) return [];
+          const revenue = earliest.amount_paid / 100;
+          return [
+            {
+              paymentId: a.id,
+              partnerId: a.partnerId!,
+              partnerName: partner?.name ?? "Unknown",
+              partnerEmail: partner?.email ?? "",
+              customerEmail: a.customerEmail,
+              customerName: a.customerName,
+              source: "stripe" as const,
+              kind: "subscription" as const,
+              subscriptionId: a.externalPaymentId,
+              eventId: earliest.id,
+              eventDate: earliest.created,
+              revenue,
+              mrr: a.mrr,
+              rate,
+              commissionAmount: revenue * rate,
+              programType,
+              programName,
+              monthIndex: null,
+              durationMonths: null,
+              monthsRemaining: null,
+              isFinalMonth: false,
+            },
+          ];
+        }
+
+        // Recurring or lifetime: every paid invoice (capped for recurring).
+        const rows = [];
+        for (const inv of invoices) {
+          if (actionedEventIds.has(inv.id)) continue;
+          const monthIndex = anchorSec
+            ? monthIndexFromAnchor(inv.created, anchorSec)
+            : 1;
+          if (
+            programType === "recurring" &&
+            a.durationMonths != null &&
+            monthIndex > a.durationMonths
+          ) {
+            continue;
+          }
+          const revenue = inv.amount_paid / 100;
+          const monthsRemaining =
+            programType === "recurring" && a.durationMonths != null
+              ? Math.max(0, a.durationMonths - monthIndex)
+              : null;
+          rows.push({
+            paymentId: a.id,
+            partnerId: a.partnerId!,
+            partnerName: partner?.name ?? "Unknown",
+            partnerEmail: partner?.email ?? "",
+            customerEmail: a.customerEmail,
+            customerName: a.customerName,
+            source: "stripe" as const,
+            kind: "subscription" as const,
+            subscriptionId: a.externalPaymentId,
+            eventId: inv.id,
+            eventDate: inv.created,
+            revenue,
+            mrr: a.mrr,
+            rate,
+            commissionAmount: revenue * rate,
+            programType,
+            programName,
+            monthIndex: programType === "recurring" ? monthIndex : null,
+            durationMonths:
+              programType === "recurring" ? a.durationMonths : null,
+            monthsRemaining,
+            isFinalMonth:
+              programType === "recurring" &&
+              a.durationMonths != null &&
+              monthIndex === a.durationMonths,
+          });
+        }
+        return rows;
+      }),
+    );
+
+    return c.json({ data: derivedRows.flat() });
+  })
+  .post("/api/projects/:id/payouts/approve", async (c) => {
+    return await actionPendingPayout(c, "approved");
+  })
+  .post("/api/projects/:id/payouts/deny", async (c) => {
+    return await actionPendingPayout(c, "rejected");
   })
   // ─── Stripe Metadata Mappings ───────────────────────────────────────────────
   .get("/api/projects/:id/stripe/mappings", async (c) => {
