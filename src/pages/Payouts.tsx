@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -36,6 +36,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import StatCard from "@/components/StatCard";
 
 interface CommissionDetail {
@@ -184,6 +191,69 @@ function formatCurrency(amount: number) {
   return `$${amount.toFixed(2)}`;
 }
 
+function getStatusTextClass(status: string): string {
+  switch (status) {
+    case "paid":
+      return "text-positive";
+    case "approved":
+      return "text-info";
+    case "pending":
+      return "text-warning";
+    case "rejected":
+      return "text-negative";
+    default:
+      return "text-muted-foreground";
+  }
+}
+
+function StatusText({
+  status,
+  className = "",
+}: {
+  status: string;
+  className?: string;
+}) {
+  return (
+    <span
+      className={`text-xs font-medium uppercase tracking-wide ${getStatusTextClass(status)} ${className}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+function getCustomerStatusTextClass(status: string | null): string {
+  if (!status) return "";
+  switch (status) {
+    case "paid":
+      return "text-positive";
+    case "trialing":
+      return "text-info";
+    case "cancelled":
+      return "text-negative";
+    case "past_due":
+    case "cancels_on":
+      return "text-warning";
+    case "refunded":
+      return "text-muted-foreground";
+    default:
+      return "text-muted-foreground";
+  }
+}
+
+function getCustomerStatusLabel(status: string | null): string | null {
+  if (!status) return null;
+  const labels: Record<string, string> = {
+    paid: "Active",
+    trialing: "Trialing",
+    cancelled: "Cancelled",
+    past_due: "Past Due",
+    refunded: "Refunded",
+    cancels_on: "Cancels Soon",
+  };
+  return labels[status] ?? status;
+}
+
 function getCustomerStatusBadge(status: string | null) {
   if (!status) return null;
   const styles: Record<string, string> = {
@@ -214,30 +284,118 @@ function getCustomerStatusBadge(status: string | null) {
   );
 }
 
+interface MonthGroup {
+  monthKey: string;
+  monthLabel: string;
+  commissions: CommissionDetail[];
+}
+
+interface CustomerGroup {
+  customerKey: string;
+  customerId: string;
+  customerEmail: string;
+  customerStatus: string | null;
+  customerRevenue: number;
+  commissions: CommissionDetail[];
+  totalAmount: number;
+  mostRecentEventTs: number;
+}
+
+function commissionTimestamp(c: CommissionDetail): number {
+  const raw = c.eventDate ?? c.createdAt;
+  if (!raw) return 0;
+  const t = new Date(raw).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+function groupByCustomer(
+  commissions: CommissionDetail[],
+): CustomerGroup[] {
+  const byCustomer = new Map<string, CustomerGroup>();
+  for (const c of commissions) {
+    const key = c.customerId || c.customerEmail || c.id;
+    const existing = byCustomer.get(key);
+    const ts = commissionTimestamp(c);
+    if (existing) {
+      existing.commissions.push(c);
+      existing.totalAmount += c.amount;
+      if (ts > existing.mostRecentEventTs) {
+        existing.mostRecentEventTs = ts;
+      }
+      // Customer-level fields can drift if backend changes mid-list; prefer the
+      // most-recent row's snapshot so the badge matches what the user sees.
+      if (ts >= existing.mostRecentEventTs) {
+        existing.customerStatus = c.customerStatus;
+        existing.customerRevenue = c.customerRevenue;
+      }
+    } else {
+      byCustomer.set(key, {
+        customerKey: key,
+        customerId: c.customerId,
+        customerEmail: c.customerEmail,
+        customerStatus: c.customerStatus,
+        customerRevenue: c.customerRevenue,
+        commissions: [c],
+        totalAmount: c.amount,
+        mostRecentEventTs: ts,
+      });
+    }
+  }
+  for (const group of byCustomer.values()) {
+    group.commissions.sort(
+      (a, b) => commissionTimestamp(b) - commissionTimestamp(a),
+    );
+  }
+  return Array.from(byCustomer.values()).sort(
+    (a, b) => b.mostRecentEventTs - a.mostRecentEventTs,
+  );
+}
+
+function groupByMonth(commissions: CommissionDetail[]): MonthGroup[] {
+  const byMonth = new Map<
+    string,
+    { monthLabel: string; commissions: CommissionDetail[] }
+  >();
+  for (const c of commissions) {
+    const d = c.eventDate ?? c.createdAt;
+    if (!d) continue;
+    const date = new Date(d);
+    const monthKey = `${date.getFullYear()}-${String(
+      date.getMonth() + 1,
+    ).padStart(2, "0")}`;
+    const monthLabel = date.toLocaleDateString("en-US", {
+      month: "short",
+      year: "numeric",
+    });
+    const entry = byMonth.get(monthKey) ?? { monthLabel, commissions: [] };
+    entry.commissions.push(c);
+    byMonth.set(monthKey, entry);
+  }
+  return Array.from(byMonth.entries())
+    .map(([monthKey, { monthLabel, commissions }]) => ({
+      monthKey,
+      monthLabel,
+      commissions,
+    }))
+    .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+}
+
 function buildPaymentNote(partner: PartnerGroup) {
   const approved = partner.commissions.filter((c) => c.status === "approved");
   if (approved.length === 0) return "";
 
-  // Group by month, then by amount within each month
-  const byMonth = new Map<string, CommissionDetail[]>();
-  for (const c of approved) {
-    const d = c.eventDate ?? c.createdAt;
-    const month = new Date(d).toLocaleDateString("en-US", { month: "short" });
-    const list = byMonth.get(month) ?? [];
-    list.push(c);
-    byMonth.set(month, list);
-  }
-
   const projectName = approved[0]?.projectName ?? "Affiliate";
 
-  const months = Array.from(byMonth.entries()).map(([month, comms]) => {
-    const total = comms.reduce((s, c) => s + c.amount, 0);
+  const months = groupByMonth(approved).map(({ monthLabel, commissions }) => {
+    const total = commissions.reduce((s, c) => s + c.amount, 0);
     const counts = new Map<number, number>();
-    for (const c of comms) counts.set(c.amount, (counts.get(c.amount) ?? 0) + 1);
+    for (const c of commissions) {
+      counts.set(c.amount, (counts.get(c.amount) ?? 0) + 1);
+    }
     const items = Array.from(counts.entries())
       .map(([amt, n]) => `${formatCurrency(amt)} x${n}`)
       .join(", ");
-    return `${month}: ${formatCurrency(total)} (${items})`;
+    return `${monthLabel}: ${formatCurrency(total)} (${items})`;
   });
 
   return `${projectName} Affiliate payout ${formatCurrency(partner.approvedAmount)}: ${months.join(", ")} - thank you!`;
@@ -275,6 +433,444 @@ function CopyNoteButton({ partner }: { partner: PartnerGroup }) {
         </>
       )}
     </Button>
+  );
+}
+
+const NON_ACTIVE_CUSTOMER_STATUSES = new Set([
+  "cancelled",
+  "past_due",
+  "refunded",
+]);
+
+type SlotState = "paid" | "open";
+
+function ProgressDonut({
+  slots,
+  size = 36,
+  thickness = 5,
+}: {
+  slots: SlotState[];
+  size?: number;
+  thickness?: number;
+}) {
+  const n = slots.length;
+  if (n === 0) return null;
+  const radius = (size - thickness) / 2;
+  const center = size / 2;
+  const circumference = 2 * Math.PI * radius;
+  const gap = n > 1 ? Math.min(2, circumference / n / 4) : 0;
+  const segLen = Math.max(0, circumference / n - gap);
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      className="shrink-0"
+      aria-hidden="true"
+    >
+      {slots.map((state, i) => {
+        const offset = (i * circumference) / n;
+        const isPaid = state === "paid";
+        return (
+          <circle
+            key={i}
+            cx={center}
+            cy={center}
+            r={radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={thickness}
+            strokeDasharray={`${segLen} ${circumference}`}
+            strokeDashoffset={-offset}
+            transform={`rotate(-90 ${center} ${center})`}
+            className={isPaid ? "text-positive" : "text-border"}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+interface CustomerRowData {
+  customerKey: string;
+  customerId: string;
+  customerEmail: string;
+  customerStatus: string | null;
+  customerRevenue: number;
+  partnerId: string;
+  partnerName: string;
+  partnerEmail: string;
+  partnerPayoutLink: string | null;
+  programType: "recurring" | "lifetime" | "one-time" | null;
+  programName: string | null;
+  durationMonths: number | null;
+  commissions: CommissionDetail[];
+  paidCount: number;
+  approvedCount: number;
+  pendingCount: number;
+  rejectedCount: number;
+  totalAmount: number;
+  paidAmount: number;
+  approvedAmount: number;
+  pendingAmount: number;
+  slots: SlotState[];
+  mostRecentEventTs: number;
+}
+
+function buildSlots(c: CustomerRowData["commissions"], data: {
+  programType: CustomerRowData["programType"];
+  durationMonths: number | null;
+}): SlotState[] {
+  const sorted = [...c].sort(
+    (a, b) => commissionTimestamp(a) - commissionTimestamp(b),
+  );
+
+  if (data.programType === "recurring" && data.durationMonths != null) {
+    const slots: SlotState[] = Array.from({ length: data.durationMonths }, () => "open");
+    for (const comm of sorted) {
+      const idx = comm.monthIndex;
+      if (idx == null || idx < 1 || idx > data.durationMonths) continue;
+      if (comm.status === "paid") slots[idx - 1] = "paid";
+    }
+    return slots;
+  }
+
+  if (data.programType === "one-time") {
+    const anyPaid = sorted.some((x) => x.status === "paid");
+    return [anyPaid ? "paid" : "open"];
+  }
+
+  // lifetime / unknown — slots = commissions chronologically
+  return sorted.map((x) => (x.status === "paid" ? "paid" : "open"));
+}
+
+function flattenToCustomerRows(
+  partnerGroups: PartnerGroup[],
+): CustomerRowData[] {
+  const byKey = new Map<string, CustomerRowData>();
+
+  for (const partner of partnerGroups) {
+    for (const c of partner.commissions) {
+      const customerKey = `${partner.partnerId}::${c.customerId || c.customerEmail || c.id}`;
+      const ts = commissionTimestamp(c);
+      const existing = byKey.get(customerKey);
+      if (existing) {
+        existing.commissions.push(c);
+        if (ts > existing.mostRecentEventTs) {
+          existing.mostRecentEventTs = ts;
+          existing.customerStatus = c.customerStatus;
+          existing.customerRevenue = c.customerRevenue;
+          if (c.programType) existing.programType = c.programType;
+          if (c.programName) existing.programName = c.programName;
+          if (c.durationMonths != null) existing.durationMonths = c.durationMonths;
+        }
+      } else {
+        byKey.set(customerKey, {
+          customerKey,
+          customerId: c.customerId,
+          customerEmail: c.customerEmail,
+          customerStatus: c.customerStatus,
+          customerRevenue: c.customerRevenue,
+          partnerId: partner.partnerId,
+          partnerName: partner.partnerName,
+          partnerEmail: partner.partnerEmail,
+          partnerPayoutLink: partner.payoutLink,
+          programType: c.programType,
+          programName: c.programName,
+          durationMonths: c.durationMonths,
+          commissions: [c],
+          paidCount: 0,
+          approvedCount: 0,
+          pendingCount: 0,
+          rejectedCount: 0,
+          totalAmount: 0,
+          paidAmount: 0,
+          approvedAmount: 0,
+          pendingAmount: 0,
+          slots: [],
+          mostRecentEventTs: ts,
+        });
+      }
+    }
+  }
+
+  for (const row of byKey.values()) {
+    // Backfill programType/programName/durationMonths from any commission
+    // that has them — the most-recent commission may not be the one that
+    // carries the program info.
+    for (const c of row.commissions) {
+      if (!row.programType && c.programType) row.programType = c.programType;
+      if (!row.programName && c.programName) row.programName = c.programName;
+      if (row.durationMonths == null && c.durationMonths != null) {
+        row.durationMonths = c.durationMonths;
+      }
+
+      row.totalAmount += c.amount;
+      if (c.status === "paid") {
+        row.paidCount++;
+        row.paidAmount += c.amount;
+      } else if (c.status === "approved") {
+        row.approvedCount++;
+        row.approvedAmount += c.amount;
+      } else if (c.status === "pending") {
+        row.pendingCount++;
+        row.pendingAmount += c.amount;
+      } else if (c.status === "rejected") {
+        row.rejectedCount++;
+      }
+    }
+    row.commissions.sort(
+      (a, b) => commissionTimestamp(b) - commissionTimestamp(a),
+    );
+    row.slots = buildSlots(row.commissions, {
+      programType: row.programType,
+      durationMonths: row.durationMonths,
+    });
+  }
+
+  return Array.from(byKey.values()).sort(
+    (a, b) => b.mostRecentEventTs - a.mostRecentEventTs,
+  );
+}
+
+function PeriodView({
+  partners,
+  onBulkAction,
+  onSingleAction,
+  isMutating,
+}: {
+  partners: PartnerGroup[];
+  onBulkAction: (ids: string[], action: "approve" | "pay" | "reject") => void;
+  onSingleAction: (
+    id: string,
+    status: "approved" | "paid" | "rejected",
+  ) => void;
+  isMutating: boolean;
+}) {
+  const partnerNameById = new Map(
+    partners.map((p) => [p.partnerId, p.partnerName]),
+  );
+
+  type FlatRow = CommissionDetail & {
+    partnerId: string;
+    partnerName: string;
+  };
+
+  const flat: FlatRow[] = partners.flatMap((p) =>
+    p.commissions.map((c) => ({
+      ...c,
+      partnerId: p.partnerId,
+      partnerName: partnerNameById.get(p.partnerId) ?? p.partnerName,
+    })),
+  );
+
+  const months = groupByMonth(flat).map((g) => ({
+    ...g,
+    commissions: g.commissions as FlatRow[],
+  }));
+
+  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(() => {
+    const s = new Set<string>();
+    if (months[0]) s.add(months[0].monthKey);
+    return s;
+  });
+
+  function toggleMonth(monthKey: string) {
+    setExpandedMonths((prev) => {
+      const next = new Set(prev);
+      if (next.has(monthKey)) next.delete(monthKey);
+      else next.add(monthKey);
+      return next;
+    });
+  }
+
+  const grandTotal = flat.reduce((sum, c) => sum + c.amount, 0);
+
+  if (months.length === 0) {
+    return (
+      <div className="bg-card border rounded-md p-6 text-center text-sm text-muted-foreground">
+        No commissions match the current filters.
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-card border rounded-md p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-medium text-foreground">
+            By payout period
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Approved commissions grouped by month. Older first.
+          </p>
+        </div>
+        <div className="text-sm">
+          <span className="text-muted-foreground">Total in view: </span>
+          <span className="font-semibold tabular-nums">
+            {formatCurrency(grandTotal)}
+          </span>
+        </div>
+      </div>
+
+      {months.map((month) => {
+        const isExpanded = expandedMonths.has(month.monthKey);
+        const monthTotal = month.commissions.reduce(
+          (s, c) => s + c.amount,
+          0,
+        );
+        const subKeys = new Set(
+          month.commissions.map((c) => c.externalEventId ?? c.id),
+        );
+        const inactiveCount = month.commissions.filter(
+          (c) =>
+            c.customerStatus &&
+            NON_ACTIVE_CUSTOMER_STATUSES.has(c.customerStatus),
+        ).length;
+        const approvedIds = month.commissions
+          .filter((c) => c.status === "approved" && !c.fraudFlag)
+          .map((c) => c.id);
+        const monthApprovedTotal = month.commissions
+          .filter((c) => c.status === "approved")
+          .reduce((s, c) => s + c.amount, 0);
+
+        return (
+          <div
+            key={month.monthKey}
+            className="border rounded-md overflow-hidden"
+          >
+            <button
+              type="button"
+              onClick={() => toggleMonth(month.monthKey)}
+              className="w-full flex items-center gap-3 px-4 py-3 bg-muted/30 hover:bg-muted/50 text-left"
+            >
+              {isExpanded ? (
+                <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+              )}
+              <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="font-medium text-sm text-foreground">
+                    {month.monthLabel}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {month.commissions.length} commission
+                    {month.commissions.length === 1 ? "" : "s"} · {subKeys.size}{" "}
+                    sub{subKeys.size === 1 ? "" : "s"}
+                  </span>
+                  {inactiveCount > 0 && (
+                    <span className="inline-flex items-center gap-1 text-xs text-warning">
+                      <AlertTriangle className="w-3 h-3" />
+                      {inactiveCount} no longer active
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="text-sm font-semibold tabular-nums">
+                  {formatCurrency(monthTotal)}
+                </div>
+                {monthApprovedTotal !== monthTotal && (
+                  <div className="text-[10px] text-muted-foreground">
+                    {formatCurrency(monthApprovedTotal)} approved
+                  </div>
+                )}
+              </div>
+              {approvedIds.length > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 text-xs ml-2"
+                  disabled={isMutating}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const ok = window.confirm(
+                      `Mark ${approvedIds.length} commission${
+                        approvedIds.length === 1 ? "" : "s"
+                      } in ${month.monthLabel} as paid? Total: ${formatCurrency(
+                        monthApprovedTotal,
+                      )}.`,
+                    );
+                    if (ok) onBulkAction(approvedIds, "pay");
+                  }}
+                >
+                  <CreditCard className="w-3 h-3 mr-1" />
+                  Mark month paid
+                </Button>
+              )}
+            </button>
+
+            {isExpanded && (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Partner</TableHead>
+                    <TableHead>Customer</TableHead>
+                    <TableHead>Sub status</TableHead>
+                    <TableHead>Period</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {month.commissions.map((c) => (
+                    <TableRow key={c.id}>
+                      <TableCell>
+                        <Link
+                          to={`/app/customers?partner=${c.partnerId}`}
+                          className="text-sm font-medium hover:underline"
+                        >
+                          {c.partnerName}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {c.customerEmail || "—"}
+                      </TableCell>
+                      <TableCell>
+                        {getCustomerStatusBadge(c.customerStatus)}
+                      </TableCell>
+                      <TableCell>
+                        <MonthBadge
+                          programType={c.programType}
+                          monthIndex={c.monthIndex}
+                          durationMonths={c.durationMonths}
+                          monthsRemaining={c.monthsRemaining}
+                        />
+                      </TableCell>
+                      <TableCell>{getStatusBadge(c.status)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-sm font-medium">
+                        {formatCurrency(c.amount)}
+                        <div className="text-[10px] text-muted-foreground font-normal">
+                          @ {Math.round(c.rate * 100)}%
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {c.status === "approved" && !c.fraudFlag && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs"
+                            disabled={isMutating}
+                            onClick={() => onSingleAction(c.id, "paid")}
+                          >
+                            <CreditCard className="w-3 h-3 mr-1" />
+                            Mark paid
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -422,145 +1018,751 @@ function PartnerRow({
         </TableCell>
       </TableRow>
 
-      {/* Expanded commission detail rows */}
-      {isExpanded && partner.commissions.map((commission) => {
-        const eventDate = commission.eventDate
-          ? new Date(commission.eventDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-          : null;
-        const createdDate = new Date(commission.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-
-        return (
-          <TableRow key={commission.id} className="bg-muted/20">
-            <TableCell />
-            {/* Customer info + subscription status */}
-            <TableCell>
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">{commission.customerEmail}</span>
-                  {getCustomerStatusBadge(commission.customerStatus)}
-                </div>
-                {commission.customerRevenue > 0 && (
-                  <div className="flex items-center gap-1 text-[11px] text-muted-foreground/70">
-                    <CreditCard className="w-3 h-3" />
-                    {formatCurrency(commission.customerRevenue)} lifetime revenue
-                  </div>
-                )}
-              </div>
-            </TableCell>
-            {/* Event date */}
-            <TableCell>
-              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Calendar className="w-3 h-3" />
-                {eventDate ? (
-                  <span>{eventDate}</span>
-                ) : (
-                  <span className="italic">{createdDate}</span>
-                )}
-              </div>
-            </TableCell>
-            {/* Commission amount @ rate */}
-            <TableCell>
-              <div className="flex flex-col gap-1">
-                <span className="text-sm font-medium">
-                  {formatCurrency(commission.amount)} <span className="text-muted-foreground font-normal">@ {Math.round(commission.rate * 100)}%</span>
-                </span>
-                <MonthBadge
-                  programType={commission.programType}
-                  monthIndex={commission.monthIndex}
-                  durationMonths={commission.durationMonths}
-                  monthsRemaining={commission.monthsRemaining}
-                  isFinalMonth={
-                    commission.programType === "recurring" &&
-                    commission.monthIndex != null &&
-                    commission.durationMonths != null &&
-                    commission.monthIndex === commission.durationMonths
-                  }
-                />
-              </div>
-            </TableCell>
-            {/* Status + fraud flag */}
-            <TableCell>
-              <div className="flex items-center gap-1.5">
-                {getStatusBadge(commission.status)}
-                {commission.fraudFlag && (
-                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-negative/10 text-negative border border-negative/20" title={commission.fraudFlag}>
-                    <AlertTriangle className="w-3 h-3" />
-                    {commission.fraudFlag.replace(/_/g, " ")}
-                  </span>
-                )}
-              </div>
-            </TableCell>
-            {/* Actions */}
-            <TableCell onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center gap-1">
-                {commission.status === "pending" && (
-                  <>
-                    {!commission.fraudFlag && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 w-6 p-0 text-positive hover:text-positive hover:bg-positive/10"
-                        onClick={() => onSingleAction(commission.id, "approved")}
-                        disabled={isMutating}
-                        aria-label="Approve"
-                      >
-                        <CheckCircle className="w-3.5 h-3.5" />
-                      </Button>
+      {/* Expanded: grouped by customer, then by month within customer */}
+      {isExpanded &&
+        groupByCustomer(partner.commissions).map((group) => (
+          <Fragment key={group.customerKey}>
+            {/* Customer header */}
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableCell />
+              <TableCell colSpan={6}>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-medium text-sm text-foreground truncate">
+                      {group.customerEmail || "—"}
+                    </span>
+                    {getCustomerStatusBadge(group.customerStatus)}
+                    {group.customerRevenue > 0 && (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/80">
+                        <CreditCard className="w-3 h-3" />
+                        {formatCurrency(group.customerRevenue)} lifetime
+                      </span>
                     )}
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
+                  </div>
+                  <div className="text-xs text-muted-foreground tabular-nums shrink-0">
+                    {group.commissions.length} commission
+                    {group.commissions.length === 1 ? "" : "s"} ·{" "}
+                    <span className="font-medium text-foreground">
+                      {formatCurrency(group.totalAmount)}
+                    </span>
+                  </div>
+                </div>
+              </TableCell>
+            </TableRow>
+            {/* Per-month commission rows */}
+            {group.commissions.map((commission) => {
+              const ts = commissionTimestamp(commission);
+              const monthLabel = ts
+                ? new Date(ts).toLocaleDateString("en-US", {
+                    month: "short",
+                    year: "numeric",
+                  })
+                : "—";
+              const dayLabel = ts
+                ? new Date(ts).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })
+                : "";
+              return (
+                <TableRow key={commission.id} className="bg-muted/10">
+                  <TableCell />
+                  <TableCell className="pl-8">
+                    <div className="flex flex-col gap-0.5">
+                      <div className="inline-flex items-center gap-1.5 text-sm text-foreground">
+                        <Calendar className="w-3 h-3 text-muted-foreground" />
+                        <span className="font-medium">{monthLabel}</span>
+                      </div>
+                      {dayLabel && (
+                        <span className="text-[11px] text-muted-foreground/70">
+                          {dayLabel}
+                          {!commission.eventDate && " (created)"}
+                        </span>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <MonthBadge
+                      programType={commission.programType}
+                      monthIndex={commission.monthIndex}
+                      durationMonths={commission.durationMonths}
+                      monthsRemaining={commission.monthsRemaining}
+                      isFinalMonth={
+                        commission.programType === "recurring" &&
+                        commission.monthIndex != null &&
+                        commission.durationMonths != null &&
+                        commission.monthIndex === commission.durationMonths
+                      }
+                    />
+                  </TableCell>
+                  <TableCell />
+                  <TableCell>
+                    <span className="text-sm font-medium tabular-nums">
+                      {formatCurrency(commission.amount)}{" "}
+                      <span className="text-muted-foreground font-normal">
+                        @ {Math.round(commission.rate * 100)}%
+                      </span>
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1.5">
+                      {getStatusBadge(commission.status)}
+                      {commission.fraudFlag && (
+                        <span
+                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-negative/10 text-negative border border-negative/20"
+                          title={commission.fraudFlag}
+                        >
+                          <AlertTriangle className="w-3 h-3" />
+                          {commission.fraudFlag.replace(/_/g, " ")}
+                        </span>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-1">
+                      {commission.status === "pending" && (
+                        <>
+                          {!commission.fraudFlag && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 text-positive hover:text-positive hover:bg-positive/10"
+                              onClick={() =>
+                                onSingleAction(commission.id, "approved")
+                              }
+                              disabled={isMutating}
+                              aria-label="Approve"
+                            >
+                              <CheckCircle className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-1 text-negative hover:text-negative hover:bg-negative/10"
+                                disabled={isMutating}
+                                aria-label="Reject"
+                              >
+                                <XCircle className="w-3.5 h-3.5" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() =>
+                                  onFlagCustomer(
+                                    commission.customerId,
+                                    "self_referral",
+                                  )
+                                }
+                                className="text-warning font-medium"
+                              >
+                                Self Referral (block future)
+                              </DropdownMenuItem>
+                              {[
+                                { label: "Bot / Fake Traffic", flag: "bot_click" },
+                                { label: "Revenue Manipulation", flag: "revenue_cap" },
+                                { label: "Suspicious Activity", flag: "suspicious_activity" },
+                                { label: "Policy Violation", flag: "policy_violation" },
+                                { label: "No Reason", flag: undefined },
+                              ].map((item) => (
+                                <DropdownMenuItem
+                                  key={item.label}
+                                  onClick={() =>
+                                    onSingleAction(
+                                      commission.id,
+                                      "rejected",
+                                      item.flag,
+                                    )
+                                  }
+                                >
+                                  {item.label}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </>
+                      )}
+                      {commission.status === "approved" && (
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-6 px-1 text-negative hover:text-negative hover:bg-negative/10"
+                          className="h-6 px-2 text-xs text-info hover:text-info hover:bg-info/10"
+                          onClick={() => onSingleAction(commission.id, "paid")}
                           disabled={isMutating}
-                          aria-label="Reject"
                         >
-                          <XCircle className="w-3.5 h-3.5" />
+                          Mark Paid
                         </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={() => onFlagCustomer(commission.customerId, "self_referral")}
-                          className="text-warning font-medium"
-                        >
-                          Self Referral (block future)
-                        </DropdownMenuItem>
-                        {[
-                          { label: "Bot / Fake Traffic", flag: "bot_click" },
-                          { label: "Revenue Manipulation", flag: "revenue_cap" },
-                          { label: "Suspicious Activity", flag: "suspicious_activity" },
-                          { label: "Policy Violation", flag: "policy_violation" },
-                          { label: "No Reason", flag: undefined },
-                        ].map((item) => (
-                          <DropdownMenuItem
-                            key={item.label}
-                            onClick={() => onSingleAction(commission.id, "rejected", item.flag)}
-                          >
-                            {item.label}
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </>
-                )}
-                {commission.status === "approved" && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-2 text-xs text-info hover:text-info hover:bg-info/10"
-                    onClick={() => onSingleAction(commission.id, "paid")}
-                    disabled={isMutating}
-                  >
-                    Mark Paid
-                  </Button>
-                )}
-              </div>
-            </TableCell>
-          </TableRow>
-        );
-      })}
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </Fragment>
+        ))}
     </>
+  );
+}
+
+function CustomerView({
+  partners,
+  onBulkAction,
+  onSingleAction,
+  isMutating,
+}: {
+  partners: PartnerGroup[];
+  onBulkAction: (ids: string[], action: "approve" | "pay" | "reject") => void;
+  onSingleAction: (
+    id: string,
+    status: "approved" | "paid" | "rejected",
+    fraudFlag?: string,
+  ) => void;
+  isMutating: boolean;
+}) {
+  const rows = flattenToCustomerRows(partners);
+  const [selectedCustomerKey, setSelectedCustomerKey] = useState<string | null>(
+    null,
+  );
+  const selectedRow = selectedCustomerKey
+    ? rows.find((r) => r.customerKey === selectedCustomerKey) ?? null
+    : null;
+
+  if (rows.length === 0) {
+    return (
+      <div className="bg-card border rounded-md p-6 text-center text-sm text-muted-foreground">
+        No commissions match the current filters.
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-card rounded-md p-6">
+      <h3 className="text-sm font-medium text-foreground mb-4">
+        Customers ({rows.length})
+      </h3>
+      <Table>
+        <TableHeader className="[&_tr]:border-0">
+          <TableRow>
+            <TableHead className="w-8" />
+            <TableHead>Customer</TableHead>
+            <TableHead>Partner</TableHead>
+            <TableHead>Progress</TableHead>
+            <TableHead className="text-right">Amount</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => {
+            const paidSlotCount = row.slots.filter((s) => s === "paid").length;
+
+            return (
+              <TableRow
+                key={row.customerKey}
+                className="cursor-pointer hover:bg-muted/50"
+                onClick={() => setSelectedCustomerKey(row.customerKey)}
+              >
+                  <TableCell className="w-8">
+                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                  </TableCell>
+                  <TableCell>
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="font-medium text-sm truncate">
+                        {row.customerEmail || "—"}
+                      </div>
+                      <div className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+                        {row.customerRevenue > 0 && (
+                          <>
+                            <CreditCard className="w-3 h-3" />
+                            <span>
+                              {formatCurrency(row.customerRevenue)} lifetime
+                            </span>
+                          </>
+                        )}
+                        {row.customerStatus && (
+                          <>
+                            {row.customerRevenue > 0 && <span>·</span>}
+                            <span
+                              className={getCustomerStatusTextClass(
+                                row.customerStatus,
+                              )}
+                            >
+                              {getCustomerStatusLabel(row.customerStatus)}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="min-w-0">
+                      <Link
+                        to={`/app/customers?partner=${row.partnerId}`}
+                        className="text-sm font-medium hover:underline truncate block"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {row.partnerName}
+                      </Link>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {row.partnerEmail}
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {row.programType === "recurring" &&
+                    (row.durationMonths ?? 0) > 1 ? (
+                      <div className="flex items-center gap-3">
+                        <ProgressDonut slots={row.slots} />
+                        <div className="flex flex-col text-xs leading-tight">
+                          <span className="text-foreground">
+                            <span className="font-semibold">
+                              {paidSlotCount}
+                            </span>
+                            <span className="text-muted-foreground">
+                              {" "}
+                              / {row.slots.length} paid
+                            </span>
+                          </span>
+                          <div className="flex flex-wrap gap-x-2 text-[10px] text-muted-foreground">
+                            {row.approvedCount > 0 && (
+                              <span className="text-info">
+                                {row.approvedCount} appr
+                              </span>
+                            )}
+                            {row.pendingCount > 0 && (
+                              <span className="text-warning">
+                                {row.pendingCount} pend
+                              </span>
+                            )}
+                            {row.rejectedCount > 0 && (
+                              <span className="text-negative">
+                                {row.rejectedCount} rej
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <StatusText
+                        status={row.commissions[0]?.status ?? "pending"}
+                      />
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right text-sm tabular-nums">
+                    {row.totalAmount > 0 ? (
+                      <span className="font-medium">
+                        {formatCurrency(row.totalAmount)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+      <CustomerDetailSheet
+        row={selectedRow}
+        onOpenChange={(open) => {
+          if (!open) setSelectedCustomerKey(null);
+        }}
+        onBulkAction={onBulkAction}
+        onSingleAction={onSingleAction}
+        isMutating={isMutating}
+      />
+    </div>
+  );
+}
+
+function CustomerDetailSheet({
+  row,
+  onOpenChange,
+  onBulkAction,
+  onSingleAction,
+  isMutating,
+}: {
+  row: CustomerRowData | null;
+  onOpenChange: (open: boolean) => void;
+  onBulkAction: (ids: string[], action: "approve" | "pay" | "reject") => void;
+  onSingleAction: (
+    id: string,
+    status: "approved" | "paid" | "rejected",
+    fraudFlag?: string,
+  ) => void;
+  isMutating: boolean;
+}) {
+  if (!row) {
+    return <Sheet open={false} onOpenChange={onOpenChange} />;
+  }
+
+  const approvedIds = row.commissions
+    .filter((c) => c.status === "approved" && !c.fraudFlag)
+    .map((c) => c.id);
+  const pendingIds = row.commissions
+    .filter((c) => c.status === "pending" && !c.fraudFlag)
+    .map((c) => c.id);
+  const isRecurring =
+    row.programType === "recurring" && (row.durationMonths ?? 0) > 1;
+  const paidSlotCount = row.slots.filter((s) => s === "paid").length;
+  const futureMonths = isRecurring
+    ? row.slots.length -
+      row.paidCount -
+      row.approvedCount -
+      row.pendingCount -
+      row.rejectedCount
+    : 0;
+
+  const programLabel =
+    row.programType === "recurring"
+      ? `Recurring · ${row.durationMonths ?? "?"} month${
+          (row.durationMonths ?? 0) === 1 ? "" : "s"
+        }`
+      : row.programType === "lifetime"
+        ? "Lifetime"
+        : row.programType === "one-time"
+          ? "One-time"
+          : null;
+  const rateLabel =
+    row.commissions[0]?.rate != null
+      ? `${Math.round((row.commissions[0]?.rate ?? 0) * 100)}%`
+      : null;
+  const programParts = [row.programName ?? "Default", programLabel, rateLabel]
+    .filter((s): s is string => !!s)
+    .join(" · ");
+
+  // For non-recurring with a single commission, the per-commission card below
+  // already shows status + amount + action — skip the redundant overview /
+  // bulk-action block.
+  const showOverview =
+    isRecurring || row.commissions.length > 1;
+  const showBulkActions =
+    row.commissions.length > 1 &&
+    (pendingIds.length > 0 || approvedIds.length > 0);
+
+  return (
+    <Sheet open onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="w-full sm:max-w-xl overflow-y-auto p-0"
+      >
+        <SheetHeader className="px-6 py-5 border-b">
+          <SheetTitle className="text-base font-semibold flex items-center gap-2 min-w-0">
+            <span className="truncate">{row.customerEmail || "—"}</span>
+          </SheetTitle>
+          <SheetDescription className="text-xs flex items-center gap-1.5">
+            {row.customerRevenue > 0 && (
+              <>
+                <CreditCard className="w-3 h-3" />
+                {formatCurrency(row.customerRevenue)} lifetime
+              </>
+            )}
+            {row.customerStatus && (
+              <>
+                {row.customerRevenue > 0 && <span>·</span>}
+                <span
+                  className={getCustomerStatusTextClass(row.customerStatus)}
+                >
+                  {getCustomerStatusLabel(row.customerStatus)}
+                </span>
+              </>
+            )}
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="px-6 py-4 space-y-5">
+          {/* Partner block */}
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+              Partner
+            </div>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                <Link
+                  to={`/app/customers?partner=${row.partnerId}`}
+                  className="text-sm font-medium hover:underline truncate block"
+                >
+                  {row.partnerName}
+                </Link>
+                <div className="text-xs text-muted-foreground truncate">
+                  {row.partnerEmail}
+                </div>
+              </div>
+              {row.partnerPayoutLink && (
+                <a
+                  href={
+                    row.partnerPayoutLink.startsWith("http")
+                      ? row.partnerPayoutLink
+                      : `https://${row.partnerPayoutLink}`
+                  }
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline shrink-0"
+                >
+                  Payout link
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+            </div>
+          </div>
+
+          {/* Program block */}
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+              Program
+            </div>
+            <div className="text-sm">{programParts}</div>
+          </div>
+
+          {/* Status overview — only when it's adding info (recurring or
+              multi-commission). Single non-recurring shows status on its
+              card below. */}
+          {showOverview && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+                Status
+              </div>
+              {isRecurring ? (
+                <div className="flex items-center gap-4">
+                  <ProgressDonut slots={row.slots} size={56} thickness={7} />
+                  <div className="flex-1 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Paid</span>
+                      <span className="font-medium text-positive">
+                        {paidSlotCount} / {row.slots.length}
+                      </span>
+                    </div>
+                    {row.approvedCount > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Approved</span>
+                        <span className="font-medium text-info">
+                          {row.approvedCount}
+                        </span>
+                      </div>
+                    )}
+                    {row.pendingCount > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Pending</span>
+                        <span className="font-medium text-warning">
+                          {row.pendingCount}
+                        </span>
+                      </div>
+                    )}
+                    {row.rejectedCount > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Rejected</span>
+                        <span className="font-medium text-negative">
+                          {row.rejectedCount}
+                        </span>
+                      </div>
+                    )}
+                    {futureMonths > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Future</span>
+                        <span className="font-medium">{futureMonths}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  {row.paidCount > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Paid</span>
+                      <span className="font-medium text-positive">
+                        {row.paidCount}
+                      </span>
+                    </div>
+                  )}
+                  {row.approvedCount > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Approved</span>
+                      <span className="font-medium text-info">
+                        {row.approvedCount}
+                      </span>
+                    </div>
+                  )}
+                  {row.pendingCount > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Pending</span>
+                      <span className="font-medium text-warning">
+                        {row.pendingCount}
+                      </span>
+                    </div>
+                  )}
+                  {row.rejectedCount > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Rejected</span>
+                      <span className="font-medium text-negative">
+                        {row.rejectedCount}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Bulk actions — only useful with 2+ commissions */}
+          {showBulkActions && (
+            <div className="flex flex-wrap gap-2">
+              {pendingIds.length > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-8"
+                  disabled={isMutating}
+                  onClick={() => onBulkAction(pendingIds, "approve")}
+                >
+                  <CheckCircle className="w-3.5 h-3.5 mr-1 text-positive" />
+                  Approve {pendingIds.length}
+                </Button>
+              )}
+              {approvedIds.length > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-8"
+                  disabled={isMutating}
+                  onClick={() => onBulkAction(approvedIds, "pay")}
+                >
+                  <DollarSign className="w-3.5 h-3.5 mr-1 text-info" />
+                  Mark {approvedIds.length} paid
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/* Per-month commissions table */}
+          <CommissionsTable
+            row={row}
+            isRecurring={isRecurring}
+            onSingleAction={onSingleAction}
+            isMutating={isMutating}
+          />
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function CommissionsTable({
+  row,
+  isRecurring,
+  onSingleAction,
+  isMutating,
+}: {
+  row: CustomerRowData;
+  isRecurring: boolean;
+  onSingleAction: (
+    id: string,
+    status: "approved" | "paid" | "rejected",
+    fraudFlag?: string,
+  ) => void;
+  isMutating: boolean;
+}) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">
+        Commissions ({row.commissions.length})
+      </div>
+      <Table>
+        <TableHeader className="[&_tr]:border-0">
+          <TableRow>
+            <TableHead>Date</TableHead>
+            <TableHead>Status</TableHead>
+            {isRecurring && <TableHead>Period</TableHead>}
+            <TableHead className="text-right">Amount</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {row.commissions.map((commission) => {
+            const ts = commissionTimestamp(commission);
+            const dateLabel = ts
+              ? new Date(ts).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })
+              : "—";
+            return (
+              <TableRow key={commission.id}>
+                <TableCell>
+                  <span className="font-medium text-sm">{dateLabel}</span>
+                  {!commission.eventDate && (
+                    <span className="text-[11px] text-muted-foreground/70 ml-1">
+                      (created)
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={commission.status}
+                      onValueChange={(v) => {
+                        if (
+                          v === "approved" ||
+                          v === "paid" ||
+                          v === "rejected"
+                        ) {
+                          onSingleAction(commission.id, v);
+                        }
+                      }}
+                      disabled={isMutating}
+                    >
+                      <SelectTrigger className="h-7 w-28 text-xs">
+                        <span
+                          className={`capitalize font-medium ${getStatusTextClass(commission.status)}`}
+                        >
+                          {commission.status}
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pending" disabled>
+                          pending
+                        </SelectItem>
+                        <SelectItem value="approved">approved</SelectItem>
+                        <SelectItem value="paid">paid</SelectItem>
+                        <SelectItem value="rejected">rejected</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {commission.fraudFlag && (
+                      <span
+                        className="inline-flex items-center gap-1 text-[11px] text-negative"
+                        title={commission.fraudFlag}
+                      >
+                        <AlertTriangle className="w-3 h-3" />
+                        {commission.fraudFlag.replace(/_/g, " ")}
+                      </span>
+                    )}
+                  </div>
+                </TableCell>
+                {isRecurring && (
+                  <TableCell>
+                    <MonthBadge
+                      programType={commission.programType}
+                      monthIndex={commission.monthIndex}
+                      durationMonths={commission.durationMonths}
+                      monthsRemaining={commission.monthsRemaining}
+                      isFinalMonth={
+                        commission.programType === "recurring" &&
+                        commission.monthIndex != null &&
+                        commission.durationMonths != null &&
+                        commission.monthIndex === commission.durationMonths
+                      }
+                    />
+                  </TableCell>
+                )}
+                <TableCell className="text-right tabular-nums text-sm font-medium">
+                  {formatCurrency(commission.amount)}
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
@@ -572,6 +1774,15 @@ function Payouts() {
     "all" | "pending" | "approved" | "paid" | "rejected"
   >("all");
   const [fraudOnly, setFraudOnly] = useState(false);
+  const [viewMode, setViewMode] = useState<
+    "by-customer" | "by-partner" | "by-period"
+  >("by-customer");
+
+  useEffect(() => {
+    if (viewMode === "by-period" && statusFilter === "all") {
+      setStatusFilter("approved");
+    }
+  }, [viewMode, statusFilter]);
 
   const { data: projectsData } = useQuery({
     queryKey: ["projects"],
@@ -756,6 +1967,29 @@ function Payouts() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-4 items-center">
+        <div className="w-40">
+          <Select
+            value={viewMode}
+            onValueChange={(value) =>
+              setViewMode(value as typeof viewMode)
+            }
+          >
+            <SelectTrigger className="bg-card">
+              <span>
+                {viewMode === "by-customer"
+                  ? "By Customer"
+                  : viewMode === "by-partner"
+                    ? "By Partner"
+                    : "By Period"}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="by-customer">By Customer</SelectItem>
+              <SelectItem value="by-partner">By Partner</SelectItem>
+              <SelectItem value="by-period">By Period</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div className="w-48">
           <Select value={selectedProject} onValueChange={setSelectedProject}>
             <SelectTrigger className="bg-card">
@@ -839,50 +2073,65 @@ function Payouts() {
         />
       </div>
 
-      {/* Partner payouts table */}
-      <div className="bg-card border rounded-md p-6">
-        <h3 className="text-sm font-medium text-foreground mb-4">
-          Partner payouts ledger
-        </h3>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-8" />
-              <TableHead>Partner</TableHead>
-              <TableHead>Payout Link</TableHead>
-              <TableHead>Pending</TableHead>
-              <TableHead>Approved (Owed)</TableHead>
-              <TableHead>Paid</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredPartnerGroups.map((partner) => (
-              <PartnerRow
-                key={partner.partnerId}
-                partner={partner}
-                isExpanded={expandedPartners.has(partner.partnerId)}
-                onToggle={() => togglePartner(partner.partnerId)}
-                onBulkAction={handleBulkAction}
-                onSingleAction={handleSingleAction}
-                onFlagCustomer={handleFlagCustomer}
-                isMutating={isMutating}
-              />
-            ))}
-            {filteredPartnerGroups.length === 0 && (
+      {viewMode === "by-customer" ? (
+        <CustomerView
+          partners={filteredPartnerGroups}
+          onBulkAction={handleBulkAction}
+          onSingleAction={handleSingleAction}
+          isMutating={isMutating}
+        />
+      ) : viewMode === "by-period" ? (
+        <PeriodView
+          partners={filteredPartnerGroups}
+          onBulkAction={handleBulkAction}
+          onSingleAction={handleSingleAction}
+          isMutating={isMutating}
+        />
+      ) : (
+        <div className="bg-card border rounded-md p-6">
+          <h3 className="text-sm font-medium text-foreground mb-4">
+            Partner payouts ledger
+          </h3>
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell
-                  colSpan={7}
-                  className="text-center text-muted-foreground py-8"
-                >
-                  No commissions yet. Commissions are created automatically when
-                  conversions are tracked.
-                </TableCell>
+                <TableHead className="w-8" />
+                <TableHead>Partner</TableHead>
+                <TableHead>Payout Link</TableHead>
+                <TableHead>Pending</TableHead>
+                <TableHead>Approved (Owed)</TableHead>
+                <TableHead>Paid</TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+            </TableHeader>
+            <TableBody>
+              {filteredPartnerGroups.map((partner) => (
+                <PartnerRow
+                  key={partner.partnerId}
+                  partner={partner}
+                  isExpanded={expandedPartners.has(partner.partnerId)}
+                  onToggle={() => togglePartner(partner.partnerId)}
+                  onBulkAction={handleBulkAction}
+                  onSingleAction={handleSingleAction}
+                  onFlagCustomer={handleFlagCustomer}
+                  isMutating={isMutating}
+                />
+              ))}
+              {filteredPartnerGroups.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={7}
+                    className="text-center text-muted-foreground py-8"
+                  >
+                    No commissions yet. Commissions are created automatically when
+                    conversions are tracked.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </div>
   );
 }
