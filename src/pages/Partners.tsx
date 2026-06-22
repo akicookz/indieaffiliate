@@ -34,6 +34,16 @@ export interface PartnerListRow {
   totalRevenue: number;
   commissionRate: number;
   commissionProgramId: string | null;
+  commissionProgram: {
+    id: string;
+    name: string;
+    rate: number;
+    type: string;
+    durationMonths: number | null;
+    flatAmount: number | null;
+  } | null;
+  usesDefaultCommissionProgram: boolean;
+  defaultCommissionProgramId: string | null;
   channel: string | null;
   projectName: string;
   projectId: string;
@@ -109,6 +119,41 @@ function fmtMoney(n: number): string {
   });
 }
 
+function formatProgramAmount(n: number): string {
+  return n.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: n >= 100 ? 0 : 2,
+  });
+}
+
+function commissionSummary(partner: PartnerListRow): {
+  primary: string;
+  secondary: string;
+} {
+  const program = partner.commissionProgram;
+  if (!program) {
+    return {
+      primary: `${(partner.commissionRate * 100).toFixed(0)}%`,
+      secondary: partner.defaultCommissionProgramId
+        ? "Default program unavailable"
+        : "Fallback rate",
+    };
+  }
+  const amount =
+    program.type === "one-time" &&
+    program.flatAmount != null &&
+    program.flatAmount > 0
+      ? `${formatProgramAmount(program.flatAmount)} flat`
+      : `${program.rate}%`;
+  return {
+    primary: `${amount} · ${program.type}`,
+    secondary: partner.usesDefaultCommissionProgram
+      ? "Project default"
+      : "Assigned",
+  };
+}
+
 function statusFromTab(tab: string): string {
   switch (tab) {
     case "active":
@@ -142,7 +187,7 @@ function downloadCsv(rows: PartnerListRow[]) {
       r.email,
       r.referralCode,
       r.channel ?? "",
-      `${(r.commissionRate * 100).toFixed(0)}%`,
+      `${commissionSummary(r).primary} (${commissionSummary(r).secondary})`,
       r.metrics.refs,
       `${r.metrics.conv.toFixed(1)}%`,
       r.metrics.epc.toFixed(2),
@@ -327,6 +372,7 @@ function Partners() {
             )}
             {partners.map((p) => {
               const ch = p.channel ? CHANNEL_META[p.channel] : null;
+              const commission = commissionSummary(p);
               return (
                 <TableRow
                   key={p.id}
@@ -369,8 +415,13 @@ function Partners() {
                       <span className="text-muted-foreground text-sm">—</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {(p.commissionRate * 100).toFixed(0)}% · recurring
+                  <TableCell>
+                    <div className="text-sm text-foreground">
+                      {commission.primary}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {commission.secondary}
+                    </div>
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-sm">
                     {p.metrics.refs.toLocaleString()}

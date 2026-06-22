@@ -3,6 +3,7 @@ import { magicLink } from "better-auth/plugins";
 import {
   withCloudflare,
   type CloudflareGeolocation,
+  type WithCloudflareOptions,
 } from "better-auth-cloudflare";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { drizzle, DrizzleD1Database } from "drizzle-orm/d1";
@@ -11,6 +12,7 @@ import { schema } from "./db";
 import { type AppEnv } from "./types";
 
 const ENABLE_DEBUG_LOGS = false;
+type CloudflareD1Database = NonNullable<WithCloudflareOptions["d1"]>["db"];
 
 /** Trusted origins from BETTER_AUTH_URL (and optional TRUSTED_ORIGINS). Exported for CORS. */
 export function getTrustedOrigins(env?: AppEnv): string[] {
@@ -91,7 +93,7 @@ function createAuth(
         d1: env
           ? {
               // better-auth-cloudflare bundles its own drizzle-orm dependency; type-only mismatch can occur.
-              db: db as any,
+              db: db as unknown as CloudflareD1Database,
               options: {
                 usePlural: true,
                 debugLogs: ENABLE_DEBUG_LOGS,

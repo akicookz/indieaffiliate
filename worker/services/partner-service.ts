@@ -1,5 +1,5 @@
 import { type DrizzleD1Database } from "drizzle-orm/d1";
-import { eq, and, sql, inArray, desc } from "drizzle-orm";
+import { eq, and, sql, inArray, desc, isNull } from "drizzle-orm";
 import {
   partners,
   projects,
@@ -7,10 +7,41 @@ import {
   commissions,
   clicks,
   commissionPrograms,
+  projectBranding,
   payouts,
+  type CommissionProgramRow,
   type PartnerRow,
   type NewPartnerRow,
 } from "../db";
+
+interface PartnerCommissionProgramSummary {
+  id: string;
+  name: string;
+  rate: number;
+  type: string;
+  durationMonths: number | null;
+  flatAmount: number | null;
+}
+
+interface PartnerListRowWithProject extends PartnerRow {
+  projectName: string;
+  commissionProgram: PartnerCommissionProgramSummary | null;
+  usesDefaultCommissionProgram: boolean;
+  defaultCommissionProgramId: string | null;
+}
+
+function summarizeProgram(
+  program: CommissionProgramRow,
+): PartnerCommissionProgramSummary {
+  return {
+    id: program.id,
+    name: program.name,
+    rate: program.rate,
+    type: program.type,
+    durationMonths: program.durationMonths,
+    flatAmount: program.flatAmount,
+  };
+}
 
 export class PartnerService {
   constructor(private db: DrizzleD1Database<Record<string, unknown>>) {}
@@ -18,7 +49,7 @@ export class PartnerService {
   async getPartnersByUser(
     userId: string,
     filters?: { projectId?: string; status?: string; search?: string },
-  ): Promise<(PartnerRow & { projectName: string })[]> {
+  ): Promise<PartnerListRowWithProject[]> {
     // First get user's project IDs
     const userProjects = await this.db
       .select({ id: projects.id, name: projects.name })
@@ -52,10 +83,57 @@ export class PartnerService {
       .from(partners)
       .where(and(...conditions));
 
-    return rows.map((row) => ({
-      ...row,
-      projectName: projectMap.get(row.projectId) ?? "Unknown",
-    }));
+    const brandingRows = await this.db
+      .select({
+        projectId: projectBranding.projectId,
+        defaultCommissionProgramId: projectBranding.defaultCommissionProgramId,
+      })
+      .from(projectBranding)
+      .where(inArray(projectBranding.projectId, projectIds));
+    const defaultProgramMap = new Map(
+      brandingRows.map((row) => [
+        row.projectId,
+        row.defaultCommissionProgramId,
+      ]),
+    );
+
+    const effectiveProgramIds = Array.from(
+      new Set(
+        rows
+          .map(
+            (row) =>
+              row.commissionProgramId ??
+              defaultProgramMap.get(row.projectId) ??
+              null,
+          )
+          .filter((value): value is string => !!value),
+      ),
+    );
+    const programRows = effectiveProgramIds.length
+      ? await this.db
+          .select()
+          .from(commissionPrograms)
+          .where(inArray(commissionPrograms.id, effectiveProgramIds))
+      : [];
+    const programMap = new Map(
+      programRows.map((program) => [program.id, summarizeProgram(program)]),
+    );
+
+    return rows.map((row) => {
+      const defaultProgramId = defaultProgramMap.get(row.projectId) ?? null;
+      const effectiveProgramId = row.commissionProgramId ?? defaultProgramId;
+      const commissionProgram = effectiveProgramId
+        ? programMap.get(effectiveProgramId) ?? null
+        : null;
+      return {
+        ...row,
+        projectName: projectMap.get(row.projectId) ?? "Unknown",
+        commissionProgram,
+        usesDefaultCommissionProgram:
+          !row.commissionProgramId && !!defaultProgramId && !!commissionProgram,
+        defaultCommissionProgramId: defaultProgramId,
+      };
+    });
   }
 
   async getPartnerById(id: string): Promise<PartnerRow | null> {
@@ -127,17 +205,14 @@ export class PartnerService {
    */
   async getPartnerDetail(id: string): Promise<{
     partner: PartnerRow & {
-      commissionProgram: {
-        id: string;
-        name: string;
-        rate: number;
-        type: string;
-        durationMonths: number | null;
+      commissionProgram: (PartnerCommissionProgramSummary & {
         payoutCadence: string | null;
         payoutDayOfMonth: number | null;
         payoutDayOfWeek: number | null;
         payoutOrdinal: number | null;
-      } | null;
+      }) | null;
+      usesDefaultCommissionProgram: boolean;
+      defaultCommissionProgramId: string | null;
     };
     stats: {
       lifetimeEarned: number;
@@ -161,6 +236,30 @@ export class PartnerService {
       total: number | null;
       programType: string | null;
     }[];
+    payouts: {
+      id: string;
+      amount: number;
+      currency: string;
+      status: "scheduled" | "paid" | "failed";
+      note: string | null;
+      periodStart: string | null;
+      periodEnd: string | null;
+      paidAt: string | null;
+      createdAt: string;
+    }[];
+    commissions: {
+      id: string;
+      customerName: string;
+      customerEmail: string;
+      amount: number;
+      rate: number;
+      status: "pending" | "approved" | "paid" | "rejected";
+      eventDate: string | null;
+      fraudFlag: string | null;
+      monthIndex: number | null;
+      programName: string | null;
+      programType: string | null;
+    }[];
     payoutCount: number;
     commissionCount: number;
   } | null> {
@@ -173,11 +272,25 @@ export class PartnerService {
       rate: number;
       type: string;
       durationMonths: number | null;
+      flatAmount: number | null;
       payoutCadence: string | null;
       payoutDayOfMonth: number | null;
       payoutDayOfWeek: number | null;
       payoutOrdinal: number | null;
     } | null = null;
+    let usesDefaultCommissionProgram = false;
+    let defaultCommissionProgramId: string | null = null;
+    const brandingRows = await this.db
+      .select({
+        defaultCommissionProgramId:
+          projectBranding.defaultCommissionProgramId,
+      })
+      .from(projectBranding)
+      .where(eq(projectBranding.projectId, partner.projectId))
+      .limit(1);
+    defaultCommissionProgramId =
+      brandingRows[0]?.defaultCommissionProgramId ?? null;
+
     if (partner.commissionProgramId) {
       const programRows = await this.db
         .select()
@@ -191,11 +304,41 @@ export class PartnerService {
           rate: programRows[0].rate,
           type: programRows[0].type,
           durationMonths: programRows[0].durationMonths,
+          flatAmount: programRows[0].flatAmount,
           payoutCadence: programRows[0].payoutCadence,
           payoutDayOfMonth: programRows[0].payoutDayOfMonth,
           payoutDayOfWeek: programRows[0].payoutDayOfWeek,
           payoutOrdinal: programRows[0].payoutOrdinal,
         };
+      }
+    } else {
+      if (defaultCommissionProgramId) {
+        const programRows = await this.db
+          .select()
+          .from(commissionPrograms)
+          .where(
+            and(
+              eq(commissionPrograms.projectId, partner.projectId),
+              eq(commissionPrograms.id, defaultCommissionProgramId),
+              isNull(commissionPrograms.archivedAt),
+            ),
+          )
+          .limit(1);
+        if (programRows[0]) {
+          program = {
+            id: programRows[0].id,
+            name: programRows[0].name,
+            rate: programRows[0].rate,
+            type: programRows[0].type,
+            durationMonths: programRows[0].durationMonths,
+            flatAmount: programRows[0].flatAmount,
+            payoutCadence: programRows[0].payoutCadence,
+            payoutDayOfMonth: programRows[0].payoutDayOfMonth,
+            payoutDayOfWeek: programRows[0].payoutDayOfWeek,
+            payoutOrdinal: programRows[0].payoutOrdinal,
+          };
+          usesDefaultCommissionProgram = true;
+        }
       }
     }
 
@@ -298,15 +441,22 @@ export class PartnerService {
         ? (subProgramMap.get(r.commissionProgramId) ?? null)
         : null;
       const rateFrac = subProgram ? subProgram.rate / 100 : partner.commissionRate;
-      const perMoEarn = r.mrr != null ? r.mrr * rateFrac : null;
+      const perMoEarn =
+        subProgram?.type === "one-time" && subProgram.flatAmount != null
+          ? subProgram.flatAmount
+          : r.mrr != null
+            ? r.mrr * rateFrac
+            : null;
       let total: number | null = null;
-      if (r.mrr != null) {
+      if (subProgram?.type === "one-time" && subProgram.flatAmount != null) {
+        total = subProgram.flatAmount;
+      } else if (r.mrr != null) {
         if (subProgram?.type === "recurring" && subProgram.durationMonths) {
           total = r.mrr * rateFrac * subProgram.durationMonths;
         } else if (subProgram?.type === "lifetime") {
           total = r.mrr * rateFrac * 12;
         } else if (subProgram?.type === "one-time") {
-          total = r.mrr * rateFrac;
+          total = subProgram.flatAmount ?? r.mrr * rateFrac;
         }
       }
       return {
@@ -325,8 +475,70 @@ export class PartnerService {
       };
     });
 
+    const payoutRows = await this.db
+      .select()
+      .from(payouts)
+      .where(eq(payouts.partnerId, id))
+      .orderBy(desc(payouts.createdAt))
+      .limit(12);
+
+    const payoutsList = payoutRows.map((row) => ({
+      id: row.id,
+      amount: row.amount,
+      currency: row.currency,
+      status: row.status,
+      note: row.note,
+      periodStart: row.periodStart ? row.periodStart.toISOString() : null,
+      periodEnd: row.periodEnd ? row.periodEnd.toISOString() : null,
+      paidAt: row.paidAt ? row.paidAt.toISOString() : null,
+      createdAt: row.createdAt.toISOString(),
+    }));
+
+    const commissionRows = await this.db
+      .select({
+        id: commissions.id,
+        customerName: customers.name,
+        customerEmail: customers.email,
+        amount: commissions.amount,
+        rate: commissions.rate,
+        status: commissions.status,
+        eventDate: commissions.eventDate,
+        fraudFlag: commissions.fraudFlag,
+        monthIndex: commissions.monthIndex,
+        programName: commissionPrograms.name,
+        programType: commissionPrograms.type,
+      })
+      .from(commissions)
+      .innerJoin(customers, eq(customers.id, commissions.customerId))
+      .leftJoin(
+        commissionPrograms,
+        eq(commissionPrograms.id, commissions.commissionProgramId),
+      )
+      .where(eq(commissions.partnerId, id))
+      .orderBy(desc(commissions.createdAt))
+      .limit(20);
+
+    const commissionsList = commissionRows.map((row) => ({
+      id: row.id,
+      customerName: row.customerName ?? row.customerEmail,
+      customerEmail: row.customerEmail,
+      amount: row.amount,
+      rate: row.rate,
+      status: row.status,
+      eventDate: row.eventDate ? row.eventDate.toISOString() : null,
+      fraudFlag: row.fraudFlag,
+      monthIndex: row.monthIndex,
+      programName: row.programName,
+      programType: row.programType,
+    }));
+
     return {
-      partner: { ...partner, commissionProgram: program },
+      partner: {
+        ...partner,
+        commissionProgram: program,
+        usesDefaultCommissionProgram,
+        defaultCommissionProgramId,
+      },
       stats: {
         lifetimeEarned,
         customerCount,
@@ -338,6 +550,8 @@ export class PartnerService {
       },
       monthlyMrr,
       subscriptions,
+      payouts: payoutsList,
+      commissions: commissionsList,
       payoutCount,
       commissionCount,
     };
@@ -439,9 +653,15 @@ export class PartnerService {
       return { totalPartners: 0, activePartners: 0, pendingPartners: 0 };
     }
 
-    const projectIds = projectId && projectId !== "all"
-      ? [projectId]
-      : userProjects.map((p) => p.id);
+    const ownedProjectIds = userProjects.map((p) => p.id);
+    const projectIds =
+      projectId && projectId !== "all"
+        ? ownedProjectIds.filter((id) => id === projectId)
+        : ownedProjectIds;
+
+    if (projectIds.length === 0) {
+      return { totalPartners: 0, activePartners: 0, pendingPartners: 0 };
+    }
 
     const stats = await this.db
       .select({

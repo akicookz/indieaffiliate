@@ -1,5 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  CalendarClock,
+  CheckCircle,
+  Clock,
+  DollarSign,
+} from "lucide-react";
+
+import StatCard from "@/components/StatCard";
+import PartnerPayoutMethodCard from "@/components/PartnerPayoutMethodCard";
+import {
   Table,
   TableBody,
   TableCell,
@@ -20,6 +29,54 @@ interface Payout {
   createdAt: string;
 }
 
+interface PartnerDashboardStats {
+  partner: {
+    payoutLink: string | null;
+  };
+  stats: {
+    pendingEarnings: number;
+    approvedEarnings: number;
+    paidEarnings: number;
+  };
+}
+
+function formatCurrency(amount: number): string {
+  return `$${amount.toFixed(2)}`;
+}
+
+function formatShortDate(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatPayoutPeriod(payout: Payout): string {
+  if (!payout.periodStart || !payout.periodEnd) return "-";
+  return `${formatShortDate(payout.periodStart)} - ${formatShortDate(payout.periodEnd)}`;
+}
+
+function getStatusBadge(status: string) {
+  const styles: Record<string, string> = {
+    scheduled: "bg-warning/15 text-warning",
+    paid: "bg-positive/15 text-positive",
+    failed: "bg-destructive/15 text-destructive",
+  };
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border capitalize ${
+        styles[status] ?? "bg-muted text-muted-foreground"
+      }`}
+    >
+      {status}
+    </span>
+  );
+}
+
 function PortalPayouts() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["partner-payouts-full"],
@@ -35,7 +92,25 @@ function PortalPayouts() {
     },
   });
 
-  if (isLoading) {
+  const {
+    data: statsData,
+    isLoading: statsLoading,
+    error: statsError,
+  } = useQuery({
+    queryKey: ["partner-dashboard"],
+    queryFn: async (): Promise<PartnerDashboardStats> => {
+      const response = await fetch("/api/partner/dashboard", {
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const err = await response.json() as { error: string };
+        throw new Error(err.error || "Failed to load payout totals");
+      }
+      return response.json();
+    },
+  });
+
+  if (isLoading || statsLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
@@ -44,34 +119,17 @@ function PortalPayouts() {
     );
   }
 
-  if (error) {
+  const loadError = error ?? statsError;
+  if (loadError) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-md border border-border bg-card p-8">
-        <p className="text-sm text-destructive">{error.message}</p>
+        <p className="text-sm text-destructive">{loadError.message}</p>
       </div>
-    );
-  }
-
-  function getStatusBadge(status: string) {
-    const styles: Record<string, string> = {
-      scheduled: "bg-warning/15 text-warning",
-      paid: "bg-positive/15 text-positive",
-      failed: "bg-destructive/15 text-destructive",
-    };
-    return (
-      <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border capitalize ${
-          styles[status] ?? "bg-muted text-muted-foreground"
-        }`}
-      >
-        {status}
-      </span>
     );
   }
 
   const payoutsList = data?.payouts ?? [];
 
-  // Summary
   const totals = payoutsList.reduce(
     (acc, p) => {
       if (p.status === "paid") acc.paid += p.amount;
@@ -80,34 +138,65 @@ function PortalPayouts() {
     },
     { paid: 0, scheduled: 0 },
   );
+  const stats = statsData?.stats;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Payouts</h1>
         <p className="text-muted-foreground">
-          Your payout history and upcoming payments
+          Approved earnings, scheduled payouts, and payout history
         </p>
       </div>
 
-      {/* Summary */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="bg-card border border-border rounded-md p-4">
-          <p className="text-sm text-muted-foreground">Total Paid</p>
-          <p className="text-2xl font-medium mt-1 text-positive">
-            ${totals.paid.toFixed(2)}
-          </p>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          title="Pending Review"
+          value={formatCurrency(stats?.pendingEarnings ?? 0)}
+          Icon={Clock}
+        />
+        <StatCard
+          title="Approved"
+          value={formatCurrency(stats?.approvedEarnings ?? 0)}
+          Icon={DollarSign}
+        />
+        <StatCard
+          title="Scheduled"
+          value={formatCurrency(totals.scheduled)}
+          Icon={CalendarClock}
+        />
+        <StatCard
+          title="Paid Out"
+          value={formatCurrency(
+            totals.paid > 0 ? totals.paid : (stats?.paidEarnings ?? 0),
+          )}
+          Icon={CheckCircle}
+        />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <PartnerPayoutMethodCard
+            currentLink={statsData?.partner.payoutLink ?? null}
+          />
         </div>
-        <div className="bg-card border border-border rounded-md p-4">
-          <p className="text-sm text-muted-foreground">Upcoming</p>
-          <p className="text-2xl font-medium mt-1 text-warning">
-            ${totals.scheduled.toFixed(2)}
+
+        <div className="bg-card border border-border rounded-md p-5">
+          <p className="text-sm font-medium text-foreground">Next payout basis</p>
+          <p className="mt-2 text-2xl font-semibold tabular-nums text-foreground">
+            {formatCurrency(stats?.approvedEarnings ?? 0)}
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Approved earnings become payable when the program minimum and payout
+            schedule are met.
           </p>
         </div>
       </div>
 
-      {/* Payouts Table */}
       <div className="bg-card border border-border rounded-md p-6">
+        <div className="mb-4">
+          <h2 className="text-sm font-medium text-foreground">Payout history</h2>
+        </div>
         <Table>
           <TableHeader>
             <TableRow>
@@ -126,14 +215,10 @@ function PortalPayouts() {
                 </TableCell>
                 <TableCell>{getStatusBadge(payout.status)}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {payout.periodStart && payout.periodEnd
-                    ? `${new Date(payout.periodStart).toLocaleDateString()} - ${new Date(payout.periodEnd).toLocaleDateString()}`
-                    : "-"}
+                  {formatPayoutPeriod(payout)}
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {payout.paidAt
-                    ? new Date(payout.paidAt).toLocaleDateString()
-                    : "-"}
+                  {formatShortDate(payout.paidAt)}
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                   {payout.note ?? "-"}

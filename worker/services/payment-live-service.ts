@@ -7,7 +7,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { payments, type PaymentRow } from "../db";
 
 export type Kind = "subscription" | "one_time";
-export type AssignedFilter = "all" | "assigned";
+export type AssignedFilter = "all" | "assigned" | "unassigned";
 
 type ParsedQuery =
   | { kind: "metadata"; key: string; value: string | null }
@@ -41,6 +41,15 @@ function dedupeById<T extends { id: string }>(rows: T[]): T[] {
     out.push(r);
   }
   return out;
+}
+
+function filterByAssignment(
+  rows: LivePaymentRow[],
+  assigned: AssignedFilter,
+): LivePaymentRow[] {
+  if (assigned === "assigned") return rows.filter((r) => r.assignment !== null);
+  if (assigned === "unassigned") return rows.filter((r) => r.assignment === null);
+  return rows;
 }
 
 export interface LiveListOptions {
@@ -128,6 +137,7 @@ export interface LivePaymentRow {
     programType: "recurring" | "lifetime" | "one-time" | null;
     durationMonths: number | null;
     rate: number | null;
+    flatAmount: number | null;
     flagReason: string | null;
   } | null;
 }
@@ -187,7 +197,7 @@ export class PaymentLiveService {
       };
     });
 
-    if (assigned === "assigned") rows = rows.filter((r) => r.assignment !== null);
+    rows = filterByAssignment(rows, assigned);
     return { data: rows, hasMore: subs.hasMore, nextCursor: subs.nextCursor };
   }
 
@@ -229,7 +239,7 @@ export class PaymentLiveService {
       };
     });
 
-    if (assigned === "assigned") rows = rows.filter((r) => r.assignment !== null);
+    rows = filterByAssignment(rows, assigned);
     return { data: rows, hasMore: charges.hasMore, nextCursor: charges.nextCursor };
   }
 
@@ -516,6 +526,7 @@ export class PaymentLiveService {
       programType: (p.programType as "recurring" | "lifetime" | "one-time" | null) ?? null,
       durationMonths: p.durationMonths ?? null,
       rate: p.rate ?? null,
+      flatAmount: p.flatAmount ?? null,
       flagReason: p.flagReason ?? null,
     };
   }

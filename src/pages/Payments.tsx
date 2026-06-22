@@ -58,7 +58,7 @@ interface PartnerLite {
 }
 
 type Kind = "subscription" | "one_time";
-type AssignedFilter = "all" | "assigned";
+type AssignedFilter = "unassigned" | "assigned" | "all";
 
 interface AssignmentSnapshot {
   paymentId: string;
@@ -67,6 +67,7 @@ interface AssignmentSnapshot {
   programType: "recurring" | "lifetime" | "one-time" | null;
   durationMonths: number | null;
   rate: number | null;
+  flatAmount: number | null;
   flagReason: string | null;
 }
 
@@ -133,6 +134,33 @@ function fmtMoneyCents(cents: number | null | undefined): string {
   });
 }
 
+function fmtMoneyDollars(amount: number | null | undefined): string {
+  if (amount == null) return "—";
+  return amount.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: amount >= 100 ? 0 : 2,
+  });
+}
+
+function formatAssignmentPlan(
+  assignment: AssignmentSnapshot | null,
+): string | null {
+  if (!assignment?.programType) return null;
+  if (assignment.programType === "one-time" && assignment.flatAmount != null) {
+    return `flat ${fmtMoneyDollars(assignment.flatAmount)}`;
+  }
+  const rate =
+    assignment.rate != null ? `${(assignment.rate * 100).toFixed(0)}%` : null;
+  if (
+    assignment.programType === "recurring" &&
+    assignment.durationMonths != null
+  ) {
+    return `${assignment.durationMonths}mo${rate ? ` · ${rate}` : ""}`;
+  }
+  return rate;
+}
+
 function stripeDeepLink(p: LivePaymentRow): string {
   if (p.kind === "subscription") {
     return `https://dashboard.stripe.com/subscriptions/${p.externalPaymentId}`;
@@ -145,11 +173,28 @@ function fmtDate(unixSec: number | undefined | null): string {
   return new Date(unixSec * 1000).toISOString().slice(0, 10);
 }
 
+function assignedFilterLabel(filter: AssignedFilter): string {
+  switch (filter) {
+    case "unassigned":
+      return "Unassigned";
+    case "assigned":
+      return "Assigned";
+    case "all":
+      return "All";
+  }
+}
+
+function paymentEmptyLabel(filter: AssignedFilter, kind: Kind): string {
+  const kindLabel = kind === "subscription" ? "subscriptions" : "one-time charges";
+  if (filter === "all") return `No ${kindLabel} found.`;
+  return `No ${filter} ${kindLabel} found.`;
+}
+
 function Payments() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [kind, setKind] = useState<Kind>("subscription");
-  const [assignedFilter, setAssignedFilter] = useState<AssignedFilter>("all");
+  const [assignedFilter, setAssignedFilter] = useState<AssignedFilter>("unassigned");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState(50);
@@ -271,6 +316,7 @@ function Payments() {
       assignOne(input.row, input.partnerId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["payments-live", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["payouts-pending", projectId] });
     },
   });
 
@@ -293,6 +339,7 @@ function Payments() {
       setSelectedIds(new Set());
       setBulkOpen(false);
       queryClient.invalidateQueries({ queryKey: ["payments-live", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["payouts-pending", projectId] });
     },
   });
 
@@ -308,6 +355,7 @@ function Payments() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["payments-live", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["payouts-pending", projectId] });
     },
   });
 
@@ -359,7 +407,7 @@ function Payments() {
       <PageHeader
         eyebrow="BILLING"
         title="Payments"
-        subtitle="Live from Stripe — assign payments to partners to start tracking commissions."
+        subtitle="Start with unassigned Stripe revenue, attribute it to partners, then review commissions in Payouts."
       >
         {projects.length > 1 && (
           <Select
@@ -423,7 +471,7 @@ function Payments() {
             })}
           </div>
           <div className="inline-flex items-center p-1 bg-muted rounded-md gap-1">
-            {(["all", "assigned"] as const).map((a) => {
+            {(["unassigned", "assigned", "all"] as const).map((a) => {
               const active = a === assignedFilter;
               return (
                 <button
@@ -431,13 +479,13 @@ function Payments() {
                   type="button"
                   onClick={() => applyFilter(() => setAssignedFilter(a))}
                   className={cn(
-                    "px-3 h-7 text-sm font-medium rounded transition-colors capitalize",
+                    "px-3 h-7 text-sm font-medium rounded transition-colors",
                     active
                       ? "bg-card text-foreground border border-border shadow-sm"
                       : "text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  {a}
+                  {assignedFilterLabel(a)}
                 </button>
               );
             })}
@@ -552,7 +600,7 @@ function Payments() {
               <TableRow>
                 <TableCell colSpan={8} className="text-center py-16">
                   <p className="text-sm text-muted-foreground mb-1">
-                    No {kind === "subscription" ? "subscriptions" : "one-time charges"} found.
+                    {paymentEmptyLabel(assignedFilter, kind)}
                   </p>
                   {search && (
                     <p className="text-xs text-muted-foreground">
@@ -646,16 +694,11 @@ function Payments() {
                             <span className="text-sm truncate">
                               {partner.name || partner.email}
                             </span>
-                            {p.assignment?.programType === "recurring" &&
-                              p.assignment?.durationMonths != null && (
-                                <span className="text-[10px] text-muted-foreground">
-                                  ({p.assignment.durationMonths}mo
-                                  {p.assignment.rate != null
-                                    ? ` · ${(p.assignment.rate * 100).toFixed(0)}%`
-                                    : ""}
-                                  )
-                                </span>
-                              )}
+                            {formatAssignmentPlan(p.assignment) && (
+                              <span className="text-[10px] text-muted-foreground">
+                                ({formatAssignmentPlan(p.assignment)})
+                              </span>
+                            )}
                           </button>
                         ) : (
                           <Button size="sm" variant="secondary">

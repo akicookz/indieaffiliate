@@ -1,9 +1,12 @@
 import { type DrizzleD1Database } from "drizzle-orm/d1";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import {
+  commissions,
   commissionPrograms,
   coupons,
+  couponRedemptions,
   partners,
+  projectBranding,
   type CommissionProgramRow,
   type CouponRow,
 } from "../db";
@@ -27,12 +30,31 @@ export interface NewCommissionProgramInput {
   payoutOrdinal?: number | null;
 }
 
-export interface UpdateCommissionProgramInput
-  extends Partial<NewCommissionProgramInput> {}
+export type UpdateCommissionProgramInput = Partial<NewCommissionProgramInput>;
 
 export interface ProgramWithStats extends CommissionProgramRow {
   partners: number;
   gtvMonth: number;
+}
+
+interface CommissionProgramStatRow {
+  programId: string | null;
+  amount: number;
+  rate: number;
+  mrr: number | null;
+  status: "pending" | "approved" | "paid" | "rejected";
+  eventDate: Date | null;
+  createdAt: Date;
+}
+
+function currentMonthStart(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
+
+function estimateCommissionRevenue(row: CommissionProgramStatRow): number {
+  if (row.rate > 0) return row.amount / row.rate;
+  return row.mrr ?? 0;
 }
 
 export class CommissionProgramService {
@@ -67,9 +89,60 @@ export class CommissionProgramService {
       )
       .orderBy(desc(commissionPrograms.createdAt));
 
-    // Stats are best-effort: zero if no aggregator wired yet.
-    // Real implementation would join `commissions` filtered by program.
-    return rows.map((r) => ({ ...r, partners: 0, gtvMonth: 0 }));
+    if (rows.length === 0) return [];
+
+    const brandingRows = await this.db
+      .select({
+        defaultProgramId: projectBranding.defaultCommissionProgramId,
+      })
+      .from(projectBranding)
+      .where(eq(projectBranding.projectId, projectId))
+      .limit(1);
+    const defaultProgramId = brandingRows[0]?.defaultProgramId ?? null;
+
+    const partnerRows = await this.db
+      .select({
+        programId: partners.commissionProgramId,
+      })
+      .from(partners)
+      .where(eq(partners.projectId, projectId));
+    const partnerCounts = new Map<string, number>();
+    for (const partner of partnerRows) {
+      const programId = partner.programId ?? defaultProgramId;
+      if (!programId) continue;
+      partnerCounts.set(programId, (partnerCounts.get(programId) ?? 0) + 1);
+    }
+
+    const monthStart = currentMonthStart().getTime();
+    const commissionRows = await this.db
+      .select({
+        programId: commissions.commissionProgramId,
+        amount: commissions.amount,
+        rate: commissions.rate,
+        mrr: commissions.mrr,
+        status: commissions.status,
+        eventDate: commissions.eventDate,
+        createdAt: commissions.createdAt,
+      })
+      .from(commissions)
+      .where(eq(commissions.projectId, projectId));
+    const gtvByProgram = new Map<string, number>();
+    for (const commission of commissionRows) {
+      if (!commission.programId || commission.status === "rejected") continue;
+      const occurredAt = commission.eventDate ?? commission.createdAt;
+      if (occurredAt.getTime() < monthStart) continue;
+      const revenue = estimateCommissionRevenue(commission);
+      gtvByProgram.set(
+        commission.programId,
+        (gtvByProgram.get(commission.programId) ?? 0) + revenue,
+      );
+    }
+
+    return rows.map((program) => ({
+      ...program,
+      partners: partnerCounts.get(program.id) ?? 0,
+      gtvMonth: Math.round((gtvByProgram.get(program.id) ?? 0) * 100) / 100,
+    }));
   }
 
   async create(
@@ -242,12 +315,54 @@ export class CouponService {
     code: string,
     mrrAdded = 0,
   ): Promise<void> {
+    await this.recordAttribution(projectId, code, crypto.randomUUID(), mrrAdded);
+  }
+
+  async recordAttribution(
+    projectId: string,
+    code: string,
+    externalRedemptionId: string,
+    amount = 0,
+  ): Promise<void> {
+    const couponRows = await this.db
+      .select({ id: coupons.id })
+      .from(coupons)
+      .where(and(eq(coupons.projectId, projectId), eq(coupons.code, code)))
+      .limit(1);
+    const coupon = couponRows[0];
+    if (!coupon) return;
+
+    await this.db
+      .update(coupons)
+      .set({
+        mrrAttributed: sql`${coupons.mrrAttributed} + ${amount}`,
+      })
+      .where(eq(coupons.id, coupon.id));
+
+    const existing = await this.db
+      .select({ id: couponRedemptions.id })
+      .from(couponRedemptions)
+      .where(
+        and(
+          eq(couponRedemptions.couponId, coupon.id),
+          eq(couponRedemptions.externalRedemptionId, externalRedemptionId),
+        ),
+      )
+      .limit(1);
+    if (existing[0]) return;
+
+    await this.db.insert(couponRedemptions).values({
+      id: crypto.randomUUID(),
+      projectId,
+      couponId: coupon.id,
+      externalRedemptionId,
+      amount,
+    });
     await this.db
       .update(coupons)
       .set({
         redemptions: sql`${coupons.redemptions} + 1`,
-        mrrAttributed: sql`${coupons.mrrAttributed} + ${mrrAdded}`,
       })
-      .where(and(eq(coupons.projectId, projectId), eq(coupons.code, code)));
+      .where(eq(coupons.id, coupon.id));
   }
 }

@@ -116,6 +116,7 @@ export class PaymentService {
     programType?: "recurring" | "lifetime" | "one-time" | null;
     durationMonths?: number | null;
     rate?: number | null;
+    flatAmount?: number | null;
     subscriptionAnchorAt?: Date | null;
   }): Promise<{ row: PaymentRow; inserted: boolean }> {
     const existing = await this.db
@@ -156,6 +157,10 @@ export class PaymentService {
               ? input.durationMonths
               : existing[0].durationMonths,
           rate: input.rate !== undefined ? input.rate : existing[0].rate,
+          flatAmount:
+            input.flatAmount !== undefined
+              ? input.flatAmount
+              : existing[0].flatAmount,
           subscriptionAnchorAt:
             input.subscriptionAnchorAt !== undefined
               ? input.subscriptionAnchorAt
@@ -184,6 +189,7 @@ export class PaymentService {
       programType: input.programType ?? null,
       durationMonths: input.durationMonths ?? null,
       rate: input.rate ?? null,
+      flatAmount: input.flatAmount ?? null,
       subscriptionAnchorAt: input.subscriptionAnchorAt ?? null,
     };
     await this.db.insert(payments).values(row);

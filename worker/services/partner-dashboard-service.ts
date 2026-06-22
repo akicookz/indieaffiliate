@@ -6,6 +6,9 @@ import {
   commissions,
   clicks,
   payouts,
+  commissionPrograms,
+  projectBranding,
+  type CommissionProgramRow,
   type PartnerRow,
 } from "../db";
 import { StripeService } from "./stripe-service";
@@ -71,6 +74,34 @@ interface PartnerDashboardData {
   }>;
 }
 
+interface PartnerCommissionProgramSummary {
+  id: string;
+  name: string;
+  rate: number;
+  type: string;
+  durationMonths: number | null;
+  flatAmount: number | null;
+}
+
+interface PartnerEffectiveProgram {
+  commissionProgram: PartnerCommissionProgramSummary | null;
+  usesDefaultCommissionProgram: boolean;
+  defaultCommissionProgramId: string | null;
+}
+
+function summarizeProgram(
+  program: CommissionProgramRow,
+): PartnerCommissionProgramSummary {
+  return {
+    id: program.id,
+    name: program.name,
+    rate: program.rate,
+    type: program.type,
+    durationMonths: program.durationMonths,
+    flatAmount: program.flatAmount,
+  };
+}
+
 interface ReferredCustomer {
   id: string;
   maskedName: string;
@@ -101,6 +132,71 @@ export class PartnerDashboardService {
       .select()
       .from(partners)
       .where(eq(partners.userId, userId));
+  }
+
+  async getEffectiveCommissionPrograms(
+    partnerRows: PartnerRow[],
+  ): Promise<Map<string, PartnerEffectiveProgram>> {
+    const out = new Map<string, PartnerEffectiveProgram>();
+    if (partnerRows.length === 0) return out;
+
+    const projectIds = Array.from(
+      new Set(partnerRows.map((partner) => partner.projectId)),
+    );
+    const brandingRows = await this.db
+      .select({
+        projectId: projectBranding.projectId,
+        defaultCommissionProgramId: projectBranding.defaultCommissionProgramId,
+      })
+      .from(projectBranding)
+      .where(inArray(projectBranding.projectId, projectIds));
+    const defaultProgramMap = new Map(
+      brandingRows.map((row) => [
+        row.projectId,
+        row.defaultCommissionProgramId,
+      ]),
+    );
+
+    const programIds = Array.from(
+      new Set(
+        partnerRows
+          .map(
+            (partner) =>
+              partner.commissionProgramId ??
+              defaultProgramMap.get(partner.projectId) ??
+              null,
+          )
+          .filter((value): value is string => !!value),
+      ),
+    );
+    const programRows = programIds.length
+      ? await this.db
+          .select()
+          .from(commissionPrograms)
+          .where(inArray(commissionPrograms.id, programIds))
+      : [];
+    const programMap = new Map(
+      programRows.map((program) => [program.id, summarizeProgram(program)]),
+    );
+
+    for (const partner of partnerRows) {
+      const defaultProgramId = defaultProgramMap.get(partner.projectId) ?? null;
+      const effectiveProgramId =
+        partner.commissionProgramId ?? defaultProgramId;
+      const commissionProgram = effectiveProgramId
+        ? programMap.get(effectiveProgramId) ?? null
+        : null;
+      out.set(partner.id, {
+        commissionProgram,
+        usesDefaultCommissionProgram:
+          !partner.commissionProgramId &&
+          !!defaultProgramId &&
+          !!commissionProgram,
+        defaultCommissionProgramId: defaultProgramId,
+      });
+    }
+
+    return out;
   }
 
   /**
@@ -140,13 +236,20 @@ export class PartnerDashboardService {
     // Commission stats
     const commissionStats = await this.db
       .select({
-        total: sql<number>`coalesce(sum(${commissions.amount}), 0)`,
+        total: sql<number>`coalesce(sum(case when ${commissions.status} != 'rejected' then ${commissions.amount} else 0 end), 0)`,
         pending: sql<number>`coalesce(sum(case when ${commissions.status} = 'pending' then ${commissions.amount} else 0 end), 0)`,
         approved: sql<number>`coalesce(sum(case when ${commissions.status} = 'approved' then ${commissions.amount} else 0 end), 0)`,
         paid: sql<number>`coalesce(sum(case when ${commissions.status} = 'paid' then ${commissions.amount} else 0 end), 0)`,
       })
       .from(commissions)
       .where(inArray(commissions.partnerId, partnerIds));
+
+    const payoutStats = await this.db
+      .select({
+        paid: sql<number>`coalesce(sum(case when ${payouts.status} = 'paid' then ${payouts.amount} else 0 end), 0)`,
+      })
+      .from(payouts)
+      .where(inArray(payouts.partnerId, partnerIds));
 
     // Click stats
     const clickStats = await this.db
@@ -166,16 +269,20 @@ export class PartnerDashboardService {
       .where(inArray(customers.partnerId, partnerIds));
 
     const cs = commissionStats[0];
+    const ps = payoutStats[0];
     const ck = clickStats[0];
     const rs = referralStats[0];
     const uniqueClickCount = ck?.uniqueClicks ?? 0;
     const referralCount = rs?.total ?? 0;
+    const paidOut = Math.max(ps?.paid ?? 0, cs?.paid ?? 0);
+    const pendingEarnings = cs?.pending ?? 0;
+    const approvedEarnings = cs?.approved ?? 0;
 
     return {
-      totalEarnings: cs?.total ?? 0,
-      pendingEarnings: cs?.pending ?? 0,
-      approvedEarnings: cs?.approved ?? 0,
-      paidEarnings: cs?.paid ?? 0,
+      totalEarnings: pendingEarnings + approvedEarnings + paidOut,
+      pendingEarnings,
+      approvedEarnings,
+      paidEarnings: paidOut,
       totalClicks: ck?.totalClicks ?? 0,
       uniqueClicks: uniqueClickCount,
       totalReferrals: referralCount,

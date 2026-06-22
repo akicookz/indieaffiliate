@@ -37,10 +37,12 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import {
+  describeSchedule,
   nextPayoutDate,
   formatScheduleDate,
   type PayoutCadence,
 } from "@/lib/payout-schedule";
+import { parsePayoutMethod } from "@/lib/payout-method";
 
 const CHANNEL_META: Record<string, { label: string; color: string }> = {
   newsletter: { label: "Newsletter", color: "#2563eb" },
@@ -86,6 +88,59 @@ function fmtMoney(n: number, opts?: { compact?: boolean }): string {
   });
 }
 
+function formatShortDate(value: string | null): string {
+  if (!value) return "-";
+  return new Date(value).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatPeriod(start: string | null, end: string | null): string {
+  if (!start && !end) return "-";
+  if (!start) return `through ${formatShortDate(end)}`;
+  if (!end) return `from ${formatShortDate(start)}`;
+  return `${formatShortDate(start)} - ${formatShortDate(end)}`;
+}
+
+function formatRate(rate: number): string {
+  const pct = rate <= 1 ? rate * 100 : rate;
+  return `${pct.toFixed(pct % 1 === 0 ? 0 : 1)}%`;
+}
+
+function formatPayoutMethodDetail(value: string | null): string {
+  const method = parsePayoutMethod(value);
+  if (!method) return "Missing payout method";
+  return `${method.label}: ${method.displayValue}`;
+}
+
+function payoutStatusTone(status: "scheduled" | "paid" | "failed"): string {
+  switch (status) {
+    case "scheduled":
+      return "bg-warning/10 text-warning";
+    case "paid":
+      return "bg-positive/10 text-positive";
+    case "failed":
+      return "bg-negative/10 text-negative";
+  }
+}
+
+function commissionStatusTone(
+  status: "pending" | "approved" | "paid" | "rejected",
+): string {
+  switch (status) {
+    case "pending":
+      return "bg-muted text-muted-foreground";
+    case "approved":
+      return "bg-warning/10 text-warning";
+    case "paid":
+      return "bg-positive/10 text-positive";
+    case "rejected":
+      return "bg-negative/10 text-negative";
+  }
+}
+
 interface DetailResponse {
   partner: {
     id: string;
@@ -99,12 +154,15 @@ interface DetailResponse {
     channel: string | null;
     createdAt: string;
     projectId: string;
+    usesDefaultCommissionProgram: boolean;
+    defaultCommissionProgramId: string | null;
     commissionProgram: {
       id: string;
       name: string;
       rate: number;
       type: string;
       durationMonths: number | null;
+      flatAmount: number | null;
       payoutCadence: PayoutCadence | null;
       payoutDayOfMonth: number | null;
       payoutDayOfWeek: number | null;
@@ -133,6 +191,30 @@ interface DetailResponse {
     total: number | null;
     programType: string | null;
   }[];
+  payouts: {
+    id: string;
+    amount: number;
+    currency: string;
+    status: "scheduled" | "paid" | "failed";
+    note: string | null;
+    periodStart: string | null;
+    periodEnd: string | null;
+    paidAt: string | null;
+    createdAt: string;
+  }[];
+  commissions: {
+    id: string;
+    customerName: string;
+    customerEmail: string;
+    amount: number;
+    rate: number;
+    status: "pending" | "approved" | "paid" | "rejected";
+    eventDate: string | null;
+    fraudFlag: string | null;
+    monthIndex: number | null;
+    programName: string | null;
+    programType: string | null;
+  }[];
   payoutCount: number;
   commissionCount: number;
 }
@@ -142,6 +224,7 @@ interface CommissionProgram {
   name: string;
   type: string;
   rate: number;
+  flatAmount: number | null;
 }
 
 type RangeKey = "3M" | "6M" | "12M" | "All";
@@ -540,10 +623,19 @@ function DetailView({
       {tab === "subs" && (
         <SubscriptionsTab subscriptions={data.subscriptions} />
       )}
-      {tab !== "subs" && (
-        <div className="p-12 text-center text-sm text-muted-foreground">
-          Coming soon.
-        </div>
+      {tab === "payouts" && <PayoutsTab payouts={data.payouts} />}
+      {tab === "commission" && (
+        <CommissionTab
+          commissions={data.commissions}
+          partner={p}
+          pendingPayout={data.stats.pendingPayout}
+        />
+      )}
+      {tab === "activity" && (
+        <ActivityTab
+          commissions={data.commissions}
+          payouts={data.payouts}
+        />
       )}
     </>
   );
@@ -670,6 +762,285 @@ function SubscriptionsTab({
           <span className="size-2 rounded-sm border border-dashed border-muted-foreground" />
           Future month
         </span>
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({
+  label,
+  className,
+}: {
+  label: string;
+  className: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize",
+        className,
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function PayoutsTab({ payouts }: { payouts: DetailResponse["payouts"] }) {
+  if (payouts.length === 0) {
+    return (
+      <div className="p-12 text-center text-sm text-muted-foreground">
+        No payout records yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-eyebrow-muted">
+            <th className="text-left font-medium px-6 py-3">Amount</th>
+            <th className="text-left font-medium px-3 py-3">Status</th>
+            <th className="text-left font-medium px-3 py-3">Period</th>
+            <th className="text-left font-medium px-3 py-3">Date</th>
+            <th className="text-left font-medium px-6 py-3">Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          {payouts.map((payout) => (
+            <tr key={payout.id} className="border-t border-border">
+              <td className="px-6 py-3 tabular-nums font-medium">
+                {fmtMoney(payout.amount)} {payout.currency}
+              </td>
+              <td className="px-3 py-3">
+                <StatusBadge
+                  label={payout.status}
+                  className={payoutStatusTone(payout.status)}
+                />
+              </td>
+              <td className="px-3 py-3 text-muted-foreground">
+                {formatPeriod(payout.periodStart, payout.periodEnd)}
+              </td>
+              <td className="px-3 py-3 text-muted-foreground">
+                {formatShortDate(payout.paidAt ?? payout.createdAt)}
+              </td>
+              <td className="px-6 py-3 max-w-[240px] truncate text-muted-foreground">
+                {payout.note ?? "-"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CommissionTab({
+  commissions,
+  partner,
+  pendingPayout,
+}: {
+  commissions: DetailResponse["commissions"];
+  partner: DetailResponse["partner"];
+  pendingPayout: number;
+}) {
+  const program = partner.commissionProgram;
+  const nextPayout = program
+    ? nextPayoutDate({
+        cadence: program.payoutCadence,
+        dayOfMonth: program.payoutDayOfMonth,
+        dayOfWeek: program.payoutDayOfWeek,
+        ordinal: program.payoutOrdinal,
+      })
+    : null;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-border border-y border-border">
+        <PolicyTile
+          label="Program"
+          value={program?.name ?? "No program assigned"}
+          detail={
+            program
+              ? `${partner.usesDefaultCommissionProgram ? "Project default · " : ""}${
+                  program.type === "one-time" && program.flatAmount != null
+                    ? `${fmtMoney(program.flatAmount)} flat · one-time`
+                    : `${formatRate(program.rate)} · ${program.type}`
+                }`
+              : `${formatRate(partner.commissionRate)} fallback rate`
+          }
+        />
+        <PolicyTile
+          label="Payout cycle"
+          value={
+            program
+              ? describeSchedule({
+                  cadence: program.payoutCadence,
+                  dayOfMonth: program.payoutDayOfMonth,
+                  dayOfWeek: program.payoutDayOfWeek,
+                  ordinal: program.payoutOrdinal,
+                })
+              : "No schedule set"
+          }
+          detail={nextPayout ? `Next ${formatScheduleDate(nextPayout)}` : "No next date"}
+        />
+        <PolicyTile
+          label="Ready balance"
+          value={fmtMoney(pendingPayout)}
+          detail={formatPayoutMethodDetail(partner.payoutLink)}
+        />
+      </div>
+
+      <RecentCommissionsTable commissions={commissions} />
+    </div>
+  );
+}
+
+function PolicyTile({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <div className="bg-card p-5 min-w-0">
+      <p className="text-eyebrow-muted">{label}</p>
+      <p className="mt-1 text-sm font-medium text-foreground truncate">
+        {value}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground truncate">{detail}</p>
+    </div>
+  );
+}
+
+function RecentCommissionsTable({
+  commissions,
+}: {
+  commissions: DetailResponse["commissions"];
+}) {
+  if (commissions.length === 0) {
+    return (
+      <div className="p-12 text-center text-sm text-muted-foreground">
+        No commission records yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-eyebrow-muted">
+            <th className="text-left font-medium px-6 py-3">Customer</th>
+            <th className="text-left font-medium px-3 py-3">Program</th>
+            <th className="text-left font-medium px-3 py-3">Status</th>
+            <th className="text-right font-medium px-3 py-3">Rate</th>
+            <th className="text-right font-medium px-6 py-3">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {commissions.map((commission) => (
+            <tr key={commission.id} className="border-t border-border">
+              <td className="px-6 py-3">
+                <div className="font-medium">{commission.customerName}</div>
+                <div className="text-xs text-muted-foreground">
+                  {formatShortDate(commission.eventDate)}
+                  {commission.monthIndex ? ` · month ${commission.monthIndex}` : ""}
+                  {commission.fraudFlag ? ` · ${commission.fraudFlag}` : ""}
+                </div>
+              </td>
+              <td className="px-3 py-3 text-muted-foreground">
+                <div>{commission.programName ?? "Default"}</div>
+                <div className="text-xs capitalize">
+                  {commission.programType ?? "legacy"}
+                </div>
+              </td>
+              <td className="px-3 py-3">
+                <StatusBadge
+                  label={commission.status}
+                  className={commissionStatusTone(commission.status)}
+                />
+              </td>
+              <td className="px-3 py-3 text-right tabular-nums">
+                {formatRate(commission.rate)}
+              </td>
+              <td className="px-6 py-3 text-right tabular-nums font-medium">
+                {fmtMoney(commission.amount)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ActivityTab({
+  commissions,
+  payouts,
+}: {
+  commissions: DetailResponse["commissions"];
+  payouts: DetailResponse["payouts"];
+}) {
+  const events = [
+    ...commissions.map((commission) => ({
+      id: `commission-${commission.id}`,
+      date: commission.eventDate,
+      title: `${commission.status} commission`,
+      detail: `${commission.customerName} · ${fmtMoney(commission.amount)}`,
+      tone: commissionStatusTone(commission.status),
+    })),
+    ...payouts.map((payout) => ({
+      id: `payout-${payout.id}`,
+      date: payout.paidAt ?? payout.createdAt,
+      title: `${payout.status} payout`,
+      detail: `${fmtMoney(payout.amount)} ${payout.currency}`,
+      tone: payoutStatusTone(payout.status),
+    })),
+  ]
+    .sort((a, b) => {
+      const aTime = a.date ? new Date(a.date).getTime() : 0;
+      const bTime = b.date ? new Date(b.date).getTime() : 0;
+      return bTime - aTime;
+    })
+    .slice(0, 20);
+
+  if (events.length === 0) {
+    return (
+      <div className="p-12 text-center text-sm text-muted-foreground">
+        No partner activity yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6">
+      <div className="space-y-3">
+        {events.map((event) => (
+          <div
+            key={event.id}
+            className="flex items-start gap-3 rounded-md border border-border bg-card p-3"
+          >
+            <span className={cn("mt-1 size-2 rounded-full", event.tone)} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-medium capitalize text-foreground">
+                  {event.title}
+                </p>
+                <span className="text-xs text-muted-foreground shrink-0">
+                  {formatShortDate(event.date)}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground truncate">
+                {event.detail}
+              </p>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -854,13 +1225,21 @@ function EditView({
                 <SelectValue placeholder="Pick a program" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__none__">— None —</SelectItem>
+                <SelectItem value="__none__">
+                  {p.defaultCommissionProgramId
+                    ? "Project default"
+                    : "Fallback rate"}
+                </SelectItem>
                 {programs.map((pr) => (
                   <SelectItem key={pr.id} value={pr.id} textValue={pr.name}>
                     <span className="flex flex-col leading-tight">
                       <span>{pr.name}</span>
                       <span className="text-xs text-muted-foreground">
-                        {pr.rate}% · {pr.type}
+                        {pr.type === "one-time" &&
+                        pr.flatAmount != null &&
+                        pr.flatAmount > 0
+                          ? `${fmtMoney(pr.flatAmount)} flat · one-time`
+                          : `${pr.rate}% · ${pr.type}`}
                       </span>
                     </span>
                   </SelectItem>
@@ -869,11 +1248,11 @@ function EditView({
             </Select>
           )}
         </Field>
-        <Field label="Payout link">
+        <Field label="Payout method">
           <Input
             value={payoutLink}
             onChange={(e) => setPayoutLink(e.target.value)}
-            placeholder="https://paypal.me/…"
+            placeholder="paypal.me/name, partner@example.com, or @handle"
           />
         </Field>
         <Field label="Referral code">

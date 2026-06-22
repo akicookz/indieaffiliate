@@ -1,8 +1,9 @@
 import { type DrizzleD1Database } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
-import { partners, syncLogs } from "../db";
+import { partners, syncLogs, coupons } from "../db";
 import { StripeService, type MetadataMappings } from "./stripe-service";
 import { CommissionService } from "./commission-service";
+import { CouponService } from "./commission-program-service";
 
 interface StripeCharge {
   id: string;
@@ -66,6 +67,7 @@ export interface CustomerSyncResult {
   customersProcessed: number;
   commissionsCreated: number;
   duplicatesSkipped: number;
+  programRulesSkipped: number;
 }
 
 export interface ReferralCodeInfo {
@@ -92,6 +94,7 @@ export interface SyncSummary {
   failedChargeStatusCount: number;
   emailLookupFailures: number;
   duplicateEventsSkipped: number;
+  programRulesSkipped: number;
   error?: string;
 }
 
@@ -131,6 +134,7 @@ export class StripeSyncService {
       failedChargeStatusCount: 0,
       emailLookupFailures: 0,
       duplicateEventsSkipped: 0,
+      programRulesSkipped: 0,
     };
 
     // Record sync start
@@ -172,11 +176,50 @@ export class StripeSyncService {
       const emailCache = new Map<string, string | null>();
 
       const commissionService = new CommissionService(this.db);
+      const couponService = new CouponService(this.db);
 
       // Build a map of referral codes -> partner for fast matching
       const partnerByCode = new Map(
         projectPartners.map((p) => [p.referralCode.toUpperCase(), p]),
       );
+      const partnerById = new Map(projectPartners.map((p) => [p.id, p]));
+      const projectCoupons = await this.db
+        .select()
+        .from(coupons)
+        .where(eq(coupons.projectId, projectId));
+      const couponByCode = new Map<string, (typeof projectCoupons)[number]>();
+      for (const coupon of projectCoupons) {
+        couponByCode.set(coupon.code.toUpperCase(), coupon);
+        if (coupon.stripeCoupon) {
+          couponByCode.set(coupon.stripeCoupon.toUpperCase(), coupon);
+        }
+      }
+
+      function resolveAttribution(code: string): {
+        partnerId: string;
+        partnerName: string;
+        commissionProgramId?: string | null;
+        couponCode?: string;
+      } | null {
+        const normalized = code.toUpperCase();
+        const partner = partnerByCode.get(normalized);
+        if (partner) {
+          return {
+            partnerId: partner.id,
+            partnerName: partner.name,
+          };
+        }
+        const coupon = couponByCode.get(normalized);
+        if (!coupon) return null;
+        const couponPartner = partnerById.get(coupon.partnerId);
+        if (!couponPartner) return null;
+        return {
+          partnerId: coupon.partnerId,
+          partnerName: couponPartner.name,
+          commissionProgramId: coupon.commissionProgramId,
+          couponCode: coupon.code,
+        };
+      }
 
       // Track all discovered referral codes with counts
       const refCodeCounts = new Map<string, number>();
@@ -241,8 +284,8 @@ export class StripeSyncService {
             continue;
           }
 
-          const matchedPartner = partnerByCode.get(refCode.toUpperCase());
-          if (!matchedPartner) {
+          const attribution = resolveAttribution(refCode);
+          if (!attribution) {
             if (!summary.unmatchedReferralCodes.includes(refCode)) {
               summary.unmatchedReferralCodes.push(refCode);
             }
@@ -253,19 +296,30 @@ export class StripeSyncService {
           const revenueInDollars = charge.amount / 100;
 
           const result = await commissionService.recordConversion({
-            partnerId: matchedPartner.id,
+            partnerId: attribution.partnerId,
             projectId,
             customerEmail: email.toLowerCase(),
             revenue: revenueInDollars,
             customerStatus: "paid",
             eventId: charge.id,
             eventDate: new Date(charge.created * 1000),
+            commissionProgramId: attribution.commissionProgramId ?? undefined,
           });
 
-          if (result.isDuplicate) {
-            summary.duplicateEventsSkipped++;
-          } else {
+          if (result.conversionCreated) {
             summary.processedCount++;
+            if (attribution.couponCode) {
+              await couponService.recordAttribution(
+                projectId,
+                attribution.couponCode,
+                charge.id,
+                revenueInDollars,
+              );
+            }
+          } else if (result.isDuplicate) {
+            summary.duplicateEventsSkipped++;
+          } else if (result.skipReason) {
+            summary.programRulesSkipped++;
           }
         }
       }
@@ -314,8 +368,8 @@ export class StripeSyncService {
             continue;
           }
 
-          const matchedPartner = partnerByCode.get(refCode.toUpperCase());
-          if (!matchedPartner) {
+          const attribution = resolveAttribution(refCode);
+          if (!attribution) {
             if (!summary.unmatchedReferralCodes.includes(refCode)) {
               summary.unmatchedReferralCodes.push(refCode);
             }
@@ -341,19 +395,30 @@ export class StripeSyncService {
           // Use invoice.id as eventId — unique per billing period, so each
           // monthly payment creates its own commission and re-syncs are safe.
           const result = await commissionService.recordConversion({
-            partnerId: matchedPartner.id,
+            partnerId: attribution.partnerId,
             projectId,
             customerEmail: email.toLowerCase(),
             revenue: revenueInDollars,
             customerStatus: "paid",
             eventId: invoice.id,
             eventDate: new Date(invoice.created * 1000),
+            commissionProgramId: attribution.commissionProgramId ?? undefined,
           });
 
-          if (result.isDuplicate) {
-            summary.duplicateEventsSkipped++;
-          } else {
+          if (result.conversionCreated) {
             summary.processedCount++;
+            if (attribution.couponCode) {
+              await couponService.recordAttribution(
+                projectId,
+                attribution.couponCode,
+                invoice.subscription,
+                revenueInDollars,
+              );
+            }
+          } else if (result.isDuplicate) {
+            summary.duplicateEventsSkipped++;
+          } else if (result.skipReason) {
+            summary.programRulesSkipped++;
           }
         }
       }
@@ -362,7 +427,9 @@ export class StripeSyncService {
       summary.referralCodes = Array.from(refCodeCounts.entries()).map(
         ([code, count]) => {
           const upperCode = code.toUpperCase();
-          const partner = partnerByCode.get(upperCode);
+          const partner =
+            partnerByCode.get(upperCode) ??
+            partnerById.get(couponByCode.get(upperCode)?.partnerId ?? "");
           return {
             code,
             count,
@@ -498,7 +565,7 @@ export class StripeSyncService {
       page = data.has_more ? data.next_page : undefined;
     } while (page);
 
-    return allCharges;
+    return allCharges.sort((a, b) => a.created - b.created);
   }
 
   /**
@@ -585,7 +652,7 @@ export class StripeSyncService {
       }
     }
 
-    return allInvoices;
+    return allInvoices.sort((a, b) => a.created - b.created);
   }
 
   /**
@@ -852,13 +919,17 @@ export class StripeSyncService {
     projectId: string,
     partnerId: string,
     stripeCustomerId: string,
-  ): Promise<{ commissionsCreated: number; duplicatesSkipped: number }> {
+  ): Promise<{
+    commissionsCreated: number;
+    duplicatesSkipped: number;
+    programRulesSkipped: number;
+  }> {
     const commissionService = new CommissionService(this.db);
 
     // Fetch customer email
     const customerInfo = await this.getCustomerInfo(apiKey, stripeCustomerId);
     if (!customerInfo.email) {
-      return { commissionsCreated: 0, duplicatesSkipped: 0 };
+      return { commissionsCreated: 0, duplicatesSkipped: 0, programRulesSkipped: 0 };
     }
     const email = customerInfo.email.toLowerCase();
 
@@ -870,6 +941,7 @@ export class StripeSyncService {
 
     let commissionsCreated = 0;
     let duplicatesSkipped = 0;
+    let programRulesSkipped = 0;
 
     // Determine if we have invoices — if so, skip charges that have an invoice
     const hasInvoices = invoices.length > 0;
@@ -892,10 +964,12 @@ export class StripeSyncService {
         eventDate: new Date(charge.created * 1000),
       });
 
-      if (result.isDuplicate) {
-        duplicatesSkipped++;
-      } else {
+      if (result.conversionCreated) {
         commissionsCreated++;
+      } else if (result.isDuplicate) {
+        duplicatesSkipped++;
+      } else if (result.skipReason) {
+        programRulesSkipped++;
       }
     }
 
@@ -914,14 +988,16 @@ export class StripeSyncService {
         eventDate: new Date(invoice.created * 1000),
       });
 
-      if (result.isDuplicate) {
-        duplicatesSkipped++;
-      } else {
+      if (result.conversionCreated) {
         commissionsCreated++;
+      } else if (result.isDuplicate) {
+        duplicatesSkipped++;
+      } else if (result.skipReason) {
+        programRulesSkipped++;
       }
     }
 
-    return { commissionsCreated, duplicatesSkipped };
+    return { commissionsCreated, duplicatesSkipped, programRulesSkipped };
   }
 
   // ─── Private helpers for customer browsing ──────────────────────────────────
@@ -1299,7 +1375,7 @@ export class StripeSyncService {
       }
     }
 
-    return allCharges;
+    return allCharges.sort((a, b) => a.created - b.created);
   }
 
   /**
@@ -1336,7 +1412,7 @@ export class StripeSyncService {
       }
     }
 
-    return allInvoices;
+    return allInvoices.sort((a, b) => a.created - b.created);
   }
 
 }

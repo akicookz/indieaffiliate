@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { partners, customers, commissions } from "../db";
 import { StripeService, type MetadataMappings } from "./stripe-service";
 import { StripeSyncService } from "./stripe-sync-service";
+import { CommissionService } from "./commission-service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -260,6 +261,10 @@ export class ImportService {
           (await this.db.select().from(partners).where(eq(partners.id, partnerId)).limit(1))[0];
 
         let amount = row.amount;
+        let rate = partner?.commissionRate ?? 0.2;
+        let commissionProgramId: string | null = null;
+        let mrr: number | null = null;
+        let monthIndex: number | null = null;
         if (options.commissionMode === "recalculate" && partner) {
           const customer = await this.db
             .select()
@@ -267,7 +272,26 @@ export class ImportService {
             .where(eq(customers.id, customerId))
             .limit(1);
           if (customer[0]) {
-            amount = customer[0].revenue * partner.commissionRate;
+            const commissionService = new CommissionService(this.db);
+            const snapshot = await commissionService.calculateCommissionSnapshot({
+              partnerId,
+              projectId,
+              customerId,
+              revenue: customer[0].revenue,
+            });
+            if (!snapshot.shouldCreate) {
+              result.skipped.push({
+                row: i,
+                reason: snapshot.skipReason ?? "Commission is not eligible",
+                type: "commission",
+              });
+              continue;
+            }
+            amount = snapshot.amount;
+            rate = snapshot.rate;
+            commissionProgramId = snapshot.commissionProgramId;
+            mrr = snapshot.mrr;
+            monthIndex = snapshot.monthIndex;
           }
         }
 
@@ -278,9 +302,12 @@ export class ImportService {
           customerId,
           projectId,
           amount,
-          rate: partner?.commissionRate ?? 0.2,
+          rate,
           status: row.status ?? "pending",
           externalEventId: `csv_import_${id}`,
+          commissionProgramId,
+          monthIndex,
+          mrr,
         });
 
         result.created.commissions++;

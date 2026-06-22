@@ -158,6 +158,7 @@ export const payments = sqliteTable(
     }),
     durationMonths: integer("duration_months"),
     rate: real("rate"),
+    flatAmount: real("flat_amount"),
     // Stripe `subscription.billing_cycle_anchor` — the anchor we derive
     // monthIndex from for recurring commissions.
     subscriptionAnchorAt: integer("subscription_anchor_at", { mode: "timestamp" }),
@@ -372,6 +373,36 @@ export const coupons = sqliteTable(
 
 export type CouponRow = typeof coupons.$inferSelect;
 export type NewCouponRow = typeof coupons.$inferInsert;
+
+// Coupon redemptions - idempotency records for external coupon use
+export const couponRedemptions = sqliteTable(
+  "coupon_redemptions",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    couponId: text("coupon_id")
+      .notNull()
+      .references(() => coupons.id, { onDelete: "cascade" }),
+    externalRedemptionId: text("external_redemption_id").notNull(),
+    amount: real("amount").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_coupon_redemptions_coupon_external").on(
+      table.couponId,
+      table.externalRedemptionId,
+    ),
+    index("idx_coupon_redemptions_project").on(table.projectId),
+    index("idx_coupon_redemptions_coupon").on(table.couponId),
+  ],
+);
+
+export type CouponRedemptionRow = typeof couponRedemptions.$inferSelect;
+export type NewCouponRedemptionRow = typeof couponRedemptions.$inferInsert;
 
 // API Keys - project-level keys for authenticating the conversion endpoint
 export const apiKeys = sqliteTable(
@@ -596,6 +627,36 @@ export const payouts = sqliteTable(
 
 export type PayoutRow = typeof payouts.$inferSelect;
 export type NewPayoutRow = typeof payouts.$inferInsert;
+
+// Payout commission links - exact commission batch represented by a payout
+export const payoutCommissions = sqliteTable(
+  "payout_commissions",
+  {
+    payoutId: text("payout_id")
+      .notNull()
+      .references(() => payouts.id, { onDelete: "cascade" }),
+    commissionId: text("commission_id")
+      .notNull()
+      .references(() => commissions.id, { onDelete: "cascade" }),
+    amount: real("amount").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_payout_commissions_payout_commission").on(
+      table.payoutId,
+      table.commissionId,
+    ),
+    uniqueIndex("idx_payout_commissions_commission_unique").on(
+      table.commissionId,
+    ),
+    index("idx_payout_commissions_payout").on(table.payoutId),
+  ],
+);
+
+export type PayoutCommissionRow = typeof payoutCommissions.$inferSelect;
+export type NewPayoutCommissionRow = typeof payoutCommissions.$inferInsert;
 
 // User Subscriptions (billing) - selected plan (nullable until onboarding), Stripe customer/subscription, status, trial
 export const userSubscriptions = sqliteTable(

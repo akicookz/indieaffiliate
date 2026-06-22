@@ -75,6 +75,7 @@ interface AssignResult {
   customersProcessed: number;
   commissionsCreated: number;
   duplicatesSkipped: number;
+  programRulesSkipped: number;
 }
 
 interface StripeCustomerTableProps {
@@ -213,7 +214,7 @@ function StripeCustomerTable({
       setSelectedIds(new Set());
       setAssignOpen(false);
       setSuccessMessage(
-        `Synced ${result.customersProcessed} customer${result.customersProcessed !== 1 ? "s" : ""}: ${result.commissionsCreated} commission${result.commissionsCreated !== 1 ? "s" : ""} created, ${result.duplicatesSkipped} duplicate${result.duplicatesSkipped !== 1 ? "s" : ""} skipped`,
+        `Synced ${result.customersProcessed} customer${result.customersProcessed !== 1 ? "s" : ""}: ${result.commissionsCreated} commission${result.commissionsCreated !== 1 ? "s" : ""} created, ${result.duplicatesSkipped} duplicate${result.duplicatesSkipped !== 1 ? "s" : ""} skipped, ${result.programRulesSkipped} program-rule skip${result.programRulesSkipped !== 1 ? "s" : ""}`,
       );
       setTimeout(() => setSuccessMessage(null), 5000);
       queryClient.invalidateQueries({ queryKey: ["commissions"] });

@@ -17,8 +17,9 @@ export const createPartnerSchema = z.object({
   name: z.string().max(100).optional(),
   email: z.string().email("Invalid email address").optional(),
   commissionRate: z.number().min(0.01).max(1).optional(),
+  commissionProgramId: z.string().min(1).nullable().optional(),
   referralCode: z.string().min(1).max(50).optional(),
-  payoutLink: z.string().max(500).optional(),
+  payoutLink: z.string().trim().max(500).optional(),
 });
 
 export const PARTNER_CHANNELS = [
@@ -66,6 +67,75 @@ export const bulkCommissionActionSchema = z.object({
     "policy_violation",
   ]).optional(),
 });
+
+const payoutCadenceSchema = z.enum(["monthly_day", "monthly_ordinal", "weekly"]);
+
+const commissionProgramBaseSchema = z.object({
+  code: z.string().trim().min(1, "Code is required").max(50),
+  name: z.string().trim().min(1, "Name is required").max(120),
+  type: z.enum(["recurring", "lifetime", "one-time"]),
+  rate: z.number().min(0, "Rate must be non-negative").max(100, "Rate cannot exceed 100%"),
+  durationMonths: z.number().int().min(1).max(120).nullable().optional(),
+  flatAmount: z.number().min(0).max(100000).nullable().optional(),
+  description: z.string().trim().max(500).nullable().optional(),
+  minPayout: z.number().min(0).max(100000).optional(),
+  isDefault: z.boolean().optional(),
+  payoutCadence: payoutCadenceSchema.nullable().optional(),
+  payoutDayOfMonth: z.number().int().min(1).max(31).nullable().optional(),
+  payoutDayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
+  payoutOrdinal: z.number().int().min(1).max(5).nullable().optional(),
+});
+
+export const createCommissionProgramSchema = commissionProgramBaseSchema
+  .superRefine((data, ctx) => {
+    if (data.type === "recurring" && data.durationMonths == null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["durationMonths"],
+        message: "Recurring programs need a duration",
+      });
+    }
+    if (data.type !== "one-time" && data.rate <= 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["rate"],
+        message: "Percentage programs need a positive rate",
+      });
+    }
+    if (
+      data.type === "one-time" &&
+      (data.flatAmount == null || data.flatAmount <= 0) &&
+      data.rate <= 0
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["rate"],
+        message: "One-time programs need a positive rate or flat bounty",
+      });
+    }
+  })
+  .transform((data) => ({
+    ...data,
+    durationMonths: data.type === "recurring" ? data.durationMonths : null,
+    flatAmount:
+      data.type === "one-time" && data.flatAmount != null && data.flatAmount > 0
+        ? data.flatAmount
+        : null,
+    description: data.description ?? null,
+    minPayout: data.minPayout ?? 50,
+    payoutCadence: data.payoutCadence ?? null,
+    payoutDayOfMonth:
+      data.payoutCadence === "monthly_day" ? data.payoutDayOfMonth ?? 1 : null,
+    payoutDayOfWeek:
+      data.payoutCadence === "weekly" ||
+      data.payoutCadence === "monthly_ordinal"
+        ? data.payoutDayOfWeek ?? 0
+        : null,
+    payoutOrdinal:
+      data.payoutCadence === "monthly_ordinal"
+        ? data.payoutOrdinal ?? 1
+        : null,
+  }));
 
 // ─── Tracking ─────────────────────────────────────────────────────────────────
 export const trackClickSchema = z.object({
@@ -179,7 +249,7 @@ export const updatePayoutSchema = z.object({
 
 // ─── Partner Self-Edit ─────────────────────────────────────────────────────────
 export const updatePartnerPayoutLinkSchema = z.object({
-  payoutLink: z.string().max(500).nullable(),
+  payoutLink: z.string().trim().max(500).nullable(),
 });
 
 // ─── Partner Magic Link Login ─────────────────────────────────────────────────
@@ -291,6 +361,9 @@ export const webhookEventSchema = z.enum([
   "commission.created",
   "commission.approved",
   "payout.created",
+  "payout.updated",
+  "payout.paid",
+  "payout.failed",
   "click.recorded",
 ]);
 

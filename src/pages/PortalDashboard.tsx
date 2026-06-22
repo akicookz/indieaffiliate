@@ -1,4 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   DollarSign,
   MousePointer,
@@ -7,11 +8,10 @@ import {
   Clock,
   CheckCircle,
   Copy,
-  Wallet,
-  Pencil,
 } from "lucide-react";
-import { useState } from "react";
+
 import StatCard from "@/components/StatCard";
+import PartnerPayoutMethodCard from "@/components/PartnerPayoutMethodCard";
 import {
   Table,
   TableBody,
@@ -21,7 +21,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 
 interface PartnerDashboardData {
   partner: {
@@ -31,6 +30,9 @@ interface PartnerDashboardData {
     commissionRate: number;
     status: string;
     payoutLink: string | null;
+    commissionProgram: CommissionProgram | null;
+    usesDefaultCommissionProgram: boolean;
+    defaultCommissionProgramId: string | null;
   };
   programs: Array<{
     id: string;
@@ -38,6 +40,9 @@ interface PartnerDashboardData {
     referralCode: string;
     commissionRate: number;
     status: string;
+    commissionProgram: CommissionProgram | null;
+    usesDefaultCommissionProgram: boolean;
+    defaultCommissionProgramId: string | null;
   }>;
   stats: {
     totalEarnings: number;
@@ -49,6 +54,15 @@ interface PartnerDashboardData {
     totalReferrals: number;
     conversionRate: number;
   };
+}
+
+interface CommissionProgram {
+  id: string;
+  name: string;
+  rate: number;
+  type: string;
+  durationMonths: number | null;
+  flatAmount: number | null;
 }
 
 interface Payout {
@@ -63,108 +77,54 @@ interface Payout {
   createdAt: string;
 }
 
-function PayoutLinkCard({ currentLink }: { currentLink: string | null }) {
-  const queryClient = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(currentLink ?? "");
-
-  const mutation = useMutation({
-    mutationFn: async (payoutLink: string | null) => {
-      const response = await fetch("/api/partner/payout-link", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ payoutLink }),
-      });
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error ?? "Failed to update");
-      }
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["partner-dashboard"] });
-      setEditing(false);
-    },
+function formatProgramAmount(n: number): string {
+  return n.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: n >= 100 ? 0 : 2,
   });
+}
 
+function commissionPlanCopy(
+  partner: PartnerDashboardData["partner"] | undefined,
+): { primary: string; secondary: string } {
+  if (!partner) return { primary: "No plan", secondary: "Unavailable" };
+  const program = partner.commissionProgram;
+  if (!program) {
+    return {
+      primary: `${Math.round(partner.commissionRate * 100)}%`,
+      secondary: partner.defaultCommissionProgramId
+        ? "Project default unavailable"
+        : "Fallback rate",
+    };
+  }
+  const primary =
+    program.type === "one-time" &&
+    program.flatAmount != null &&
+    program.flatAmount > 0
+      ? `${formatProgramAmount(program.flatAmount)} flat · one-time`
+      : `${program.rate}% · ${program.type}`;
+  return {
+    primary,
+    secondary: partner.usesDefaultCommissionProgram
+      ? `Project default · ${program.name}`
+      : program.name,
+  };
+}
+
+function CommissionPlanCard({
+  partner,
+}: {
+  partner: PartnerDashboardData["partner"] | undefined;
+}) {
+  const copy = commissionPlanCopy(partner);
   return (
     <div className="bg-card border border-border rounded-md p-5">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <Wallet className="w-4 h-4 text-muted-foreground" />
-          <h3 className="text-sm font-medium text-foreground">
-            Payout Link
-          </h3>
-        </div>
-        {!editing && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs"
-            onClick={() => {
-              setValue(currentLink ?? "");
-              setEditing(true);
-            }}
-          >
-            <Pencil className="w-3 h-3 mr-1" />
-            {currentLink ? "Edit" : "Add"}
-          </Button>
-        )}
-      </div>
-      {editing ? (
-        <div className="flex items-center gap-2">
-          <Input
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="paypal.me/yourname or payment link"
-            className="text-sm"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                mutation.mutate(value.trim() || null);
-              }
-              if (e.key === "Escape") {
-                setEditing(false);
-                setValue(currentLink ?? "");
-              }
-            }}
-            autoFocus
-          />
-          <Button
-            size="sm"
-            onClick={() => mutation.mutate(value.trim() || null)}
-            disabled={mutation.isPending}
-          >
-            {mutation.isPending ? "Saving..." : "Save"}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              setEditing(false);
-              setValue(currentLink ?? "");
-            }}
-          >
-            Cancel
-          </Button>
-        </div>
-      ) : currentLink ? (
-        <a
-          href={currentLink.startsWith("http") ? currentLink : `https://${currentLink}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm text-primary hover:underline"
-        >
-          {currentLink}
-        </a>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          No payout link set. Add one so the project owner knows where to send payments.
-        </p>
-      )}
-      {mutation.error && (
-        <p className="text-sm text-destructive mt-2">{mutation.error.message}</p>
-      )}
+      <p className="text-sm font-medium text-foreground">Commission plan</p>
+      <p className="mt-2 text-2xl font-semibold tabular-nums text-foreground">
+        {copy.primary}
+      </p>
+      <p className="mt-1 text-sm text-muted-foreground">{copy.secondary}</p>
     </div>
   );
 }
@@ -249,7 +209,7 @@ function PortalDashboard() {
           Welcome back{data?.partner?.name?.trim() ? `, ${data.partner.name}` : ""}
         </h1>
         <p className="text-muted-foreground mt-1">
-          Commission rate: {Math.round((data?.partner.commissionRate ?? 0) * 100)}%
+          {commissionPlanCopy(data?.partner).secondary}
         </p>
       </div>
 
@@ -279,8 +239,10 @@ function PortalDashboard() {
         </div>
       </div>
 
-      {/* Payout Link Card */}
-      <PayoutLinkCard currentLink={data?.partner.payoutLink ?? null} />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <CommissionPlanCard partner={data?.partner} />
+        <PartnerPayoutMethodCard currentLink={data?.partner.payoutLink ?? null} />
+      </div>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

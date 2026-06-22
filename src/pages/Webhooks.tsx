@@ -48,6 +48,9 @@ const WEBHOOK_EVENT_OPTIONS = [
   "commission.created",
   "commission.approved",
   "payout.created",
+  "payout.updated",
+  "payout.paid",
+  "payout.failed",
   "click.recorded",
 ] as const;
 

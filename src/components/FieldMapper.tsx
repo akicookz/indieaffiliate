@@ -24,7 +24,7 @@ const PARTNER_FIELDS = [
   { value: "email", label: "Partner Email", required: false },
   { value: "referralCode", label: "Referral Code", required: false },
   { value: "commissionRate", label: "Commission Rate", required: false },
-  { value: "payoutLink", label: "Payout Link", required: false },
+  { value: "payoutLink", label: "Payout Method", required: false },
   { value: "status", label: "Status", required: false },
 ];
 
@@ -48,7 +48,7 @@ const AUTO_MAP_HINTS: Record<string, string[]> = {
   email: ["email", "partner_email", "affiliate_email", "email_address", "mail"],
   referralCode: ["referral_code", "referrer_code", "ref_code", "code", "affiliate_code", "referral", "ref", "coupon_code", "coupon"],
   commissionRate: ["commission_rate", "rate", "commission", "percentage", "pct", "commission_pct"],
-  payoutLink: ["payout_link", "payout", "payout_url", "paypal", "payment_link", "payment_url"],
+  payoutLink: ["payout_method", "payout_link", "payout", "payout_url", "paypal", "venmo", "wise", "payment_link", "payment_url"],
   status: ["status", "state", "partner_status"],
   partnerEmail: ["partner_email", "affiliate_email", "referrer_email", "referrer"],
   customerEmail: ["customer_email", "email", "buyer_email"],

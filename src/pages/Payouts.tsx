@@ -14,12 +14,14 @@ import {
   Calendar,
   Copy,
   Check,
+  Loader2,
 } from "lucide-react";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
   DropdownMenu,
@@ -44,6 +46,14 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import StatCard from "@/components/StatCard";
+import {
+  describeSchedule,
+  formatScheduleDate,
+  nextPayoutDate,
+  type PayoutCadence,
+  type PayoutSchedule,
+} from "@/lib/payout-schedule";
+import { parsePayoutMethod } from "@/lib/payout-method";
 
 interface CommissionDetail {
   id: string;
@@ -64,6 +74,11 @@ interface CommissionDetail {
   monthsRemaining: number | null;
   programType: "recurring" | "lifetime" | "one-time" | null;
   programName: string | null;
+  programMinPayout: number | null;
+  payoutCadence: PayoutCadence | null;
+  payoutDayOfMonth: number | null;
+  payoutDayOfWeek: number | null;
+  payoutOrdinal: number | null;
 }
 
 interface PendingPayoutRow {
@@ -81,6 +96,7 @@ interface PendingPayoutRow {
   revenue: number;
   mrr: number | null;
   rate: number;
+  flatAmount: number | null;
   commissionAmount: number;
   programType: "recurring" | "lifetime" | "one-time";
   programName: string;
@@ -168,6 +184,41 @@ interface Project {
   slug: string;
 }
 
+interface PayoutRecord {
+  id: string;
+  projectId: string;
+  partnerId: string;
+  partnerName: string;
+  partnerEmail: string;
+  projectName: string;
+  amount: number;
+  currency: string;
+  status: "scheduled" | "paid" | "failed";
+  note: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  paidAt: string | null;
+  createdAt: string;
+  commissionCount: number;
+}
+
+type PayoutStatus = PayoutRecord["status"];
+type PayoutStatusFilter = PayoutStatus | "all";
+
+const PAYOUT_STATUS_OPTIONS: PayoutStatus[] = ["scheduled", "paid", "failed"];
+
+interface PayoutStats {
+  totalPayouts: number;
+  scheduledAmount: number;
+  paidAmount: number;
+  failedAmount: number;
+}
+
+interface PayoutRecordsResponse {
+  payouts: PayoutRecord[];
+  stats: PayoutStats;
+}
+
 function getStatusBadge(status: string) {
   const styles: Record<string, string> = {
     pending: "bg-warning/10 text-warning",
@@ -187,8 +238,259 @@ function getStatusBadge(status: string) {
   );
 }
 
+function getPayoutStatusBadge(status: PayoutRecord["status"]) {
+  const styles: Record<PayoutRecord["status"], string> = {
+    scheduled: "bg-warning/10 text-warning",
+    paid: "bg-positive/10 text-positive",
+    failed: "bg-negative/10 text-negative",
+  };
+
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border border-border capitalize ${styles[status]}`}
+    >
+      {status}
+    </span>
+  );
+}
+
 function formatCurrency(amount: number) {
   return `$${amount.toFixed(2)}`;
+}
+
+function sumCommissionAmounts(commissions: CommissionDetail[]): number {
+  return commissions.reduce((total, commission) => total + commission.amount, 0);
+}
+
+function isApprovalEligibleCommission(commission: CommissionDetail): boolean {
+  return commission.status === "pending" && !commission.fraudFlag;
+}
+
+function isPayEligibleCommission(commission: CommissionDetail): boolean {
+  return commission.status === "approved" && !commission.fraudFlag;
+}
+
+interface PayoutEligibility {
+  approvedCount: number;
+  commissions: CommissionDetail[];
+  count: number;
+  amount: number;
+  minPayout: number | null;
+  belowMinimum: boolean;
+  shortfall: number;
+  flaggedApprovedCount: number;
+  futureCount: number;
+  futureAmount: number;
+  nextDueDate: Date | null;
+}
+
+function commissionDueDate(commission: CommissionDetail): Date | null {
+  const schedule = commissionSchedule(commission);
+  if (!schedule) return null;
+  const basis = commission.eventDate ?? commission.createdAt;
+  const basisDate = basis ? new Date(basis) : new Date();
+  if (Number.isNaN(basisDate.getTime())) return null;
+  return nextPayoutDate(schedule, basisDate);
+}
+
+function startOfDay(date: Date): Date {
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+}
+
+function isCommissionDue(commission: CommissionDetail): boolean {
+  const dueDate = commissionDueDate(commission);
+  if (!dueDate) return true;
+  return dueDate.getTime() <= startOfDay(new Date()).getTime();
+}
+
+function getPayoutEligibility(commissions: CommissionDetail[]): PayoutEligibility {
+  const approved = commissions.filter(isPayEligibleCommission);
+  const eligible = approved.filter(isCommissionDue);
+  const future = approved.filter((commission) => !isCommissionDue(commission));
+  const amount = sumCommissionAmounts(eligible);
+  const minPayouts = eligible
+    .map((commission) => commission.programMinPayout)
+    .filter((value): value is number => typeof value === "number");
+  const minPayout = minPayouts.length > 0 ? Math.max(...minPayouts) : null;
+  const belowMinimum =
+    minPayout != null && eligible.length > 0 && amount + 0.005 < minPayout;
+
+  return {
+    approvedCount: approved.length,
+    commissions: eligible,
+    count: eligible.length,
+    amount,
+    minPayout,
+    belowMinimum,
+    shortfall:
+      belowMinimum && minPayout != null ? Math.max(0, minPayout - amount) : 0,
+    flaggedApprovedCount: commissions.filter(
+      (commission) =>
+        commission.status === "approved" && !!commission.fraudFlag,
+    ).length,
+    futureCount: future.length,
+    futureAmount: sumCommissionAmounts(future),
+    nextDueDate:
+      future
+        .map(commissionDueDate)
+        .filter((date): date is Date => !!date)
+        .sort((a, b) => a.getTime() - b.getTime())[0] ?? null,
+  };
+}
+
+function getPayBlocker(
+  commissions: CommissionDetail[],
+  payoutLink: string | null,
+): string | null {
+  const eligibility = getPayoutEligibility(commissions);
+  if (eligibility.approvedCount === 0) {
+    return "No unflagged approved commissions are eligible for payout.";
+  }
+  if (eligibility.count === 0 && eligibility.nextDueDate) {
+    return `Next payout date is ${formatScheduleDate(eligibility.nextDueDate)}.`;
+  }
+  if (!payoutLink?.trim()) {
+    return "Partner needs a payout method before commissions can be marked paid.";
+  }
+  if (eligibility.belowMinimum) {
+    return `Needs ${formatCurrency(
+      eligibility.shortfall,
+    )} more approved commission to meet the minimum payout.`;
+  }
+  return null;
+}
+
+function PayoutMethodDisplay({
+  value,
+  showMissing = true,
+}: {
+  value: string | null;
+  showMissing?: boolean;
+}) {
+  const method = parsePayoutMethod(value);
+  if (!method) {
+    if (!showMissing) return null;
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-warning">
+        <AlertTriangle className="w-3 h-3" />
+        Missing method
+      </span>
+    );
+  }
+
+  if (method.href) {
+    return (
+      <a
+        href={method.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex max-w-[12rem] items-center gap-1 text-xs text-primary hover:underline"
+        title={method.label}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <span className="truncate">{method.displayValue}</span>
+        <ExternalLink className="w-3 h-3 shrink-0" />
+      </a>
+    );
+  }
+
+  return (
+    <span
+      className="inline-flex max-w-[12rem] items-center gap-1 text-xs text-muted-foreground"
+      title={method.label}
+    >
+      <CreditCard className="w-3 h-3 shrink-0" />
+      <span className="truncate">{method.displayValue}</span>
+    </span>
+  );
+}
+
+function formatShortDate(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatPayoutPeriod(payout: PayoutRecord): string {
+  if (!payout.periodStart || !payout.periodEnd) return "-";
+  return `${formatShortDate(payout.periodStart)} - ${formatShortDate(payout.periodEnd)}`;
+}
+
+function scheduleKey(schedule: PayoutSchedule): string {
+  return [
+    schedule.cadence ?? "",
+    schedule.dayOfMonth ?? "",
+    schedule.dayOfWeek ?? "",
+    schedule.ordinal ?? "",
+  ].join(":");
+}
+
+function commissionSchedule(c: CommissionDetail): PayoutSchedule | null {
+  if (!c.payoutCadence) return null;
+  return {
+    cadence: c.payoutCadence,
+    dayOfMonth: c.payoutDayOfMonth,
+    dayOfWeek: c.payoutDayOfWeek,
+    ordinal: c.payoutOrdinal,
+  };
+}
+
+interface PartnerPayoutPolicy {
+  minPayout: number | null;
+  schedule: PayoutSchedule | null;
+  scheduleLabel: string;
+  nextDateLabel: string | null;
+  isMixedSchedule: boolean;
+  belowMinimum: boolean;
+  shortfall: number;
+  eligibleCount: number;
+  eligibleAmount: number;
+  futureCount: number;
+  futureAmount: number;
+  flaggedApprovedCount: number;
+}
+
+function getPartnerPayoutPolicy(partner: PartnerGroup): PartnerPayoutPolicy {
+  const eligibility = getPayoutEligibility(partner.commissions);
+  const approved = eligibility.commissions;
+
+  const scheduleEntries = approved
+    .map(commissionSchedule)
+    .filter((schedule): schedule is PayoutSchedule => !!schedule);
+  const uniqueSchedules = new Map(
+    scheduleEntries.map((schedule) => [scheduleKey(schedule), schedule]),
+  );
+  const schedule =
+    uniqueSchedules.size === 1
+      ? Array.from(uniqueSchedules.values())[0] ?? null
+      : null;
+  const nextDate = schedule ? nextPayoutDate(schedule) : null;
+  const displayNextDate = eligibility.nextDueDate ?? nextDate;
+
+  return {
+    minPayout: eligibility.minPayout,
+    schedule,
+    scheduleLabel:
+      uniqueSchedules.size > 1
+        ? "Multiple schedules"
+        : describeSchedule(schedule),
+    nextDateLabel: displayNextDate ? formatScheduleDate(displayNextDate) : null,
+    isMixedSchedule: uniqueSchedules.size > 1,
+    belowMinimum: eligibility.belowMinimum,
+    shortfall: eligibility.shortfall,
+    eligibleCount: eligibility.count,
+    eligibleAmount: eligibility.amount,
+    futureCount: eligibility.futureCount,
+    futureAmount: eligibility.futureAmount,
+    flaggedApprovedCount: eligibility.flaggedApprovedCount,
+  };
 }
 
 function getStatusTextClass(status: string): string {
@@ -204,6 +506,23 @@ function getStatusTextClass(status: string): string {
     default:
       return "text-muted-foreground";
   }
+}
+
+function canChooseCommissionStatus(
+  commission: CommissionDetail,
+  nextStatus: CommissionDetail["status"],
+): boolean {
+  if (nextStatus === commission.status) return true;
+  if (nextStatus === "approved") {
+    return isApprovalEligibleCommission(commission);
+  }
+  if (nextStatus === "paid") {
+    return isPayEligibleCommission(commission);
+  }
+  if (nextStatus === "rejected") {
+    return commission.status !== "paid";
+  }
+  return false;
 }
 
 function StatusText({
@@ -381,8 +700,9 @@ function groupByMonth(commissions: CommissionDetail[]): MonthGroup[] {
 }
 
 function buildPaymentNote(partner: PartnerGroup) {
-  const approved = partner.commissions.filter((c) => c.status === "approved");
-  if (approved.length === 0) return "";
+  const eligibility = getPayoutEligibility(partner.commissions);
+  const approved = eligibility.commissions;
+  if (eligibility.count === 0) return "";
 
   const projectName = approved[0]?.projectName ?? "Affiliate";
 
@@ -398,7 +718,9 @@ function buildPaymentNote(partner: PartnerGroup) {
     return `${monthLabel}: ${formatCurrency(total)} (${items})`;
   });
 
-  return `${projectName} Affiliate payout ${formatCurrency(partner.approvedAmount)}: ${months.join(", ")} - thank you!`;
+  return `${projectName} Affiliate payout ${formatCurrency(
+    eligibility.amount,
+  )}: ${months.join(", ")} - thank you!`;
 }
 
 function CopyNoteButton({ partner }: { partner: PartnerGroup }) {
@@ -412,7 +734,7 @@ function CopyNoteButton({ partner }: { partner: PartnerGroup }) {
     });
   }
 
-  if (partner.approvedAmount <= 0) return null;
+  if (getPayoutEligibility(partner.commissions).count === 0) return null;
 
   return (
     <Button
@@ -655,6 +977,7 @@ function PeriodView({
   type FlatRow = CommissionDetail & {
     partnerId: string;
     partnerName: string;
+    partnerPayoutLink: string | null;
   };
 
   const flat: FlatRow[] = partners.flatMap((p) =>
@@ -662,6 +985,7 @@ function PeriodView({
       ...c,
       partnerId: p.partnerId,
       partnerName: partnerNameById.get(p.partnerId) ?? p.partnerName,
+      partnerPayoutLink: p.payoutLink,
     })),
   );
 
@@ -685,7 +1009,35 @@ function PeriodView({
     });
   }
 
-  const grandTotal = flat.reduce((sum, c) => sum + c.amount, 0);
+  const grandTotal = sumCommissionAmounts(flat);
+
+  function getMonthPayBlocker(rows: FlatRow[]): string | null {
+    const byPartner = new Map<
+      string,
+      {
+        partnerName: string;
+        payoutLink: string | null;
+        commissions: CommissionDetail[];
+      }
+    >();
+
+    for (const row of rows) {
+      const group = byPartner.get(row.partnerId) ?? {
+        partnerName: row.partnerName,
+        payoutLink: row.partnerPayoutLink,
+        commissions: [],
+      };
+      group.commissions.push(row);
+      byPartner.set(row.partnerId, group);
+    }
+
+    for (const group of byPartner.values()) {
+      const blocker = getPayBlocker(group.commissions, group.payoutLink);
+      if (blocker) return `${group.partnerName}: ${blocker}`;
+    }
+
+    return null;
+  }
 
   if (months.length === 0) {
     return (
@@ -728,12 +1080,11 @@ function PeriodView({
             c.customerStatus &&
             NON_ACTIVE_CUSTOMER_STATUSES.has(c.customerStatus),
         ).length;
-        const approvedIds = month.commissions
-          .filter((c) => c.status === "approved" && !c.fraudFlag)
-          .map((c) => c.id);
-        const monthApprovedTotal = month.commissions
-          .filter((c) => c.status === "approved")
-          .reduce((s, c) => s + c.amount, 0);
+        const payoutEligibility = getPayoutEligibility(month.commissions);
+        const payableRows = payoutEligibility.commissions;
+        const approvedIds = payableRows.map((c) => c.id);
+        const monthPayableTotal = payoutEligibility.amount;
+        const payBlocker = getMonthPayBlocker(month.commissions);
 
         return (
           <div
@@ -773,25 +1124,31 @@ function PeriodView({
                 <div className="text-sm font-semibold tabular-nums">
                   {formatCurrency(monthTotal)}
                 </div>
-                {monthApprovedTotal !== monthTotal && (
-                  <div className="text-[10px] text-muted-foreground">
-                    {formatCurrency(monthApprovedTotal)} approved
-                  </div>
-                )}
+              {monthPayableTotal > 0 && monthPayableTotal !== monthTotal && (
+                <div className="text-[10px] text-muted-foreground">
+                  {formatCurrency(monthPayableTotal)} payable
+                </div>
+              )}
+              {payoutEligibility.futureCount > 0 && (
+                <div className="text-[10px] text-muted-foreground">
+                  {formatCurrency(payoutEligibility.futureAmount)} scheduled
+                </div>
+              )}
               </div>
               {approvedIds.length > 0 && (
                 <Button
                   variant="secondary"
                   size="sm"
                   className="h-7 text-xs ml-2"
-                  disabled={isMutating}
+                  disabled={isMutating || !!payBlocker}
+                  title={payBlocker ?? undefined}
                   onClick={(e) => {
                     e.stopPropagation();
                     const ok = window.confirm(
                       `Mark ${approvedIds.length} commission${
                         approvedIds.length === 1 ? "" : "s"
                       } in ${month.monthLabel} as paid? Total: ${formatCurrency(
-                        monthApprovedTotal,
+                        monthPayableTotal,
                       )}.`,
                     );
                     if (ok) onBulkAction(approvedIds, "pay");
@@ -817,53 +1174,64 @@ function PeriodView({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {month.commissions.map((c) => (
-                    <TableRow key={c.id}>
-                      <TableCell>
-                        <Link
-                          to={`/app/customers?partner=${c.partnerId}`}
-                          className="text-sm font-medium hover:underline"
-                        >
-                          {c.partnerName}
-                        </Link>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {c.customerEmail || "—"}
-                      </TableCell>
-                      <TableCell>
-                        {getCustomerStatusBadge(c.customerStatus)}
-                      </TableCell>
-                      <TableCell>
-                        <MonthBadge
-                          programType={c.programType}
-                          monthIndex={c.monthIndex}
-                          durationMonths={c.durationMonths}
-                          monthsRemaining={c.monthsRemaining}
-                        />
-                      </TableCell>
-                      <TableCell>{getStatusBadge(c.status)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-sm font-medium">
-                        {formatCurrency(c.amount)}
-                        <div className="text-[10px] text-muted-foreground font-normal">
-                          @ {Math.round(c.rate * 100)}%
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {c.status === "approved" && !c.fraudFlag && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 text-xs"
-                            disabled={isMutating}
-                            onClick={() => onSingleAction(c.id, "paid")}
+                  {month.commissions.map((c) => {
+                    const payBlocker = getPayBlocker(
+                      [c],
+                      c.partnerPayoutLink,
+                    );
+                    return (
+                      <TableRow key={c.id}>
+                        <TableCell>
+                          <Link
+                            to={`/app/customers?partner=${c.partnerId}`}
+                            className="text-sm font-medium hover:underline"
                           >
-                            <CreditCard className="w-3 h-3 mr-1" />
-                            Mark paid
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                            {c.partnerName}
+                          </Link>
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {c.customerEmail || "—"}
+                        </TableCell>
+                        <TableCell>
+                          {getCustomerStatusBadge(c.customerStatus)}
+                        </TableCell>
+                        <TableCell>
+                          <MonthBadge
+                            programType={c.programType}
+                            monthIndex={c.monthIndex}
+                            durationMonths={c.durationMonths}
+                            monthsRemaining={c.monthsRemaining}
+                          />
+                        </TableCell>
+                        <TableCell>{getStatusBadge(c.status)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm font-medium">
+                          {formatCurrency(c.amount)}
+                          <div className="text-[10px] text-muted-foreground font-normal">
+                            @ {Math.round(c.rate * 100)}%
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {c.status === "approved" && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              disabled={
+                                isMutating ||
+                                !!payBlocker ||
+                                !isPayEligibleCommission(c)
+                              }
+                              title={payBlocker ?? undefined}
+                              onClick={() => onSingleAction(c.id, "paid")}
+                            >
+                              <CreditCard className="w-3 h-3 mr-1" />
+                              Mark paid
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}
@@ -891,9 +1259,13 @@ function PartnerRow({
   onFlagCustomer: (customerId: string, reason: string) => void;
   isMutating: boolean;
 }) {
-  const pendingIds = partner.commissions.filter((c) => c.status === "pending" && !c.fraudFlag).map((c) => c.id);
-  const approvedIds = partner.commissions.filter((c) => c.status === "approved" && !c.fraudFlag).map((c) => c.id);
+  const pendingIds = partner.commissions.filter(isApprovalEligibleCommission).map((c) => c.id);
+  const payoutEligibility = getPayoutEligibility(partner.commissions);
+  const approvedIds = payoutEligibility.commissions.map((c) => c.id);
   const flaggedPendingIds = partner.commissions.filter((c) => c.status === "pending" && c.fraudFlag).map((c) => c.id);
+  const payoutPolicy = getPartnerPayoutPolicy(partner);
+  const payBlocker = getPayBlocker(partner.commissions, partner.payoutLink);
+  const canPayApproved = approvedIds.length > 0 && !payBlocker;
 
   return (
     <>
@@ -924,20 +1296,29 @@ function PartnerRow({
           </div>
         </TableCell>
         <TableCell>
-          {partner.payoutLink ? (
-            <a
-              href={partner.payoutLink.startsWith("http") ? partner.payoutLink : `https://${partner.payoutLink}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {partner.payoutLink}
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          ) : (
-            <span className="text-xs text-muted-foreground">Not set</span>
-          )}
+          <PayoutMethodDisplay value={partner.payoutLink} />
+        </TableCell>
+        <TableCell>
+          <div className="text-xs space-y-0.5">
+            <div className="text-foreground">
+              {payoutPolicy.minPayout != null
+                ? `Min ${formatCurrency(payoutPolicy.minPayout)}`
+                : "No minimum"}
+            </div>
+            <div className="text-muted-foreground">
+              {payoutPolicy.scheduleLabel}
+            </div>
+            {payoutPolicy.nextDateLabel && !payoutPolicy.isMixedSchedule && (
+              <div className="text-muted-foreground">
+                Next {payoutPolicy.nextDateLabel}
+              </div>
+            )}
+            {payoutPolicy.belowMinimum && (
+              <div className="text-warning">
+                {formatCurrency(payoutPolicy.shortfall)} short
+              </div>
+            )}
+          </div>
         </TableCell>
         <TableCell>
           {partner.pendingCount > 0 ? (
@@ -958,6 +1339,21 @@ function PartnerRow({
                 {formatCurrency(partner.approvedAmount)}
               </span>
               <span className="text-muted-foreground ml-1">({partner.approvedCount})</span>
+              {payoutEligibility.amount !== partner.approvedAmount && (
+                <div className="text-[10px] text-muted-foreground">
+                  {formatCurrency(payoutEligibility.amount)} payable
+                </div>
+              )}
+              {payoutEligibility.flaggedApprovedCount > 0 && (
+                <div className="text-[10px] text-negative">
+                  {payoutEligibility.flaggedApprovedCount} flagged
+                </div>
+              )}
+              {payoutEligibility.futureCount > 0 && (
+                <div className="text-[10px] text-muted-foreground">
+                  {formatCurrency(payoutEligibility.futureAmount)} scheduled
+                </div>
+              )}
             </div>
           ) : (
             <span className="text-xs text-muted-foreground">-</span>
@@ -995,7 +1391,8 @@ function PartnerRow({
                 size="sm"
                 className="h-7 text-xs"
                 onClick={() => onBulkAction(approvedIds, "pay")}
-                disabled={isMutating}
+                disabled={isMutating || !canPayApproved}
+                title={payBlocker ?? undefined}
               >
                 <DollarSign className="w-3 h-3 mr-1 text-info" />
                 Mark All Paid ({approvedIds.length})
@@ -1025,7 +1422,7 @@ function PartnerRow({
             {/* Customer header */}
             <TableRow className="bg-muted/40 hover:bg-muted/40">
               <TableCell />
-              <TableCell colSpan={6}>
+              <TableCell colSpan={7}>
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="font-medium text-sm text-foreground truncate">
@@ -1052,6 +1449,10 @@ function PartnerRow({
             {/* Per-month commission rows */}
             {group.commissions.map((commission) => {
               const ts = commissionTimestamp(commission);
+              const payBlocker = getPayBlocker(
+                [commission],
+                partner.payoutLink,
+              );
               const monthLabel = ts
                 ? new Date(ts).toLocaleDateString("en-US", {
                     month: "short",
@@ -1096,6 +1497,7 @@ function PartnerRow({
                       }
                     />
                   </TableCell>
+                  <TableCell />
                   <TableCell />
                   <TableCell>
                     <span className="text-sm font-medium tabular-nums">
@@ -1191,7 +1593,12 @@ function PartnerRow({
                           size="sm"
                           className="h-6 px-2 text-xs text-info hover:text-info hover:bg-info/10"
                           onClick={() => onSingleAction(commission.id, "paid")}
-                          disabled={isMutating}
+                          disabled={
+                            isMutating ||
+                            !!payBlocker ||
+                            !isPayEligibleCommission(commission)
+                          }
+                          title={payBlocker ?? undefined}
                         >
                           Mark Paid
                         </Button>
@@ -1398,11 +1805,12 @@ function CustomerDetailSheet({
   }
 
   const approvedIds = row.commissions
-    .filter((c) => c.status === "approved" && !c.fraudFlag)
+    .filter(isPayEligibleCommission)
     .map((c) => c.id);
   const pendingIds = row.commissions
-    .filter((c) => c.status === "pending" && !c.fraudFlag)
+    .filter(isApprovalEligibleCommission)
     .map((c) => c.id);
+  const payBlocker = getPayBlocker(row.commissions, row.partnerPayoutLink);
   const isRecurring =
     row.programType === "recurring" && (row.durationMonths ?? 0) > 1;
   const paidSlotCount = row.slots.filter((s) => s === "paid").length;
@@ -1489,21 +1897,10 @@ function CustomerDetailSheet({
                   {row.partnerEmail}
                 </div>
               </div>
-              {row.partnerPayoutLink && (
-                <a
-                  href={
-                    row.partnerPayoutLink.startsWith("http")
-                      ? row.partnerPayoutLink
-                      : `https://${row.partnerPayoutLink}`
-                  }
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline shrink-0"
-                >
-                  Payout link
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              )}
+              <PayoutMethodDisplay
+                value={row.partnerPayoutLink}
+                showMissing={false}
+              />
             </div>
           </div>
 
@@ -1624,7 +2021,8 @@ function CustomerDetailSheet({
                   variant="secondary"
                   size="sm"
                   className="h-8"
-                  disabled={isMutating}
+                  disabled={isMutating || !!payBlocker}
+                  title={payBlocker ?? undefined}
                   onClick={() => onBulkAction(approvedIds, "pay")}
                 >
                   <DollarSign className="w-3.5 h-3.5 mr-1 text-info" />
@@ -1679,6 +2077,10 @@ function CommissionsTable({
         <TableBody>
           {row.commissions.map((commission) => {
             const ts = commissionTimestamp(commission);
+            const singlePayBlocker = getPayBlocker(
+              [commission],
+              row.partnerPayoutLink,
+            );
             const dateLabel = ts
               ? new Date(ts).toLocaleDateString("en-US", {
                   month: "short",
@@ -1702,9 +2104,11 @@ function CommissionsTable({
                       value={commission.status}
                       onValueChange={(v) => {
                         if (
-                          v === "approved" ||
-                          v === "paid" ||
-                          v === "rejected"
+                          (v === "approved" ||
+                            v === "paid" ||
+                            v === "rejected") &&
+                          canChooseCommissionStatus(commission, v) &&
+                          (v !== "paid" || !singlePayBlocker)
                         ) {
                           onSingleAction(commission.id, v);
                         }
@@ -1722,9 +2126,27 @@ function CommissionsTable({
                         <SelectItem value="pending" disabled>
                           pending
                         </SelectItem>
-                        <SelectItem value="approved">approved</SelectItem>
-                        <SelectItem value="paid">paid</SelectItem>
-                        <SelectItem value="rejected">rejected</SelectItem>
+                        <SelectItem
+                          value="approved"
+                          disabled={!canChooseCommissionStatus(commission, "approved")}
+                        >
+                          approved
+                        </SelectItem>
+                        <SelectItem
+                          value="paid"
+                          disabled={
+                            !canChooseCommissionStatus(commission, "paid") ||
+                            !!singlePayBlocker
+                          }
+                        >
+                          paid
+                        </SelectItem>
+                        <SelectItem
+                          value="rejected"
+                          disabled={!canChooseCommissionStatus(commission, "rejected")}
+                        >
+                          rejected
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                     {commission.fraudFlag && (
@@ -1763,6 +2185,258 @@ function CommissionsTable({
         </TableBody>
       </Table>
     </div>
+  );
+}
+
+function PayoutHistorySection({
+  selectedProject,
+}: {
+  selectedProject: string;
+}) {
+  const queryClient = useQueryClient();
+  const [statusFilter, setStatusFilter] = useState<PayoutStatusFilter>("all");
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["payout-records", selectedProject, statusFilter],
+    queryFn: async (): Promise<PayoutRecordsResponse> => {
+      const params = new URLSearchParams();
+      if (selectedProject !== "all") params.set("project", selectedProject);
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      const response = await fetch(`/api/payouts?${params.toString()}`);
+      if (!response.ok) throw new Error("Failed to fetch payout history");
+      return response.json();
+    },
+  });
+
+  const statusMutation = useMutation({
+    mutationFn: async ({
+      payout,
+      status,
+    }: {
+      payout: PayoutRecord;
+      status: PayoutStatus;
+    }) => {
+      const response = await fetch(`/api/payouts/${payout.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok) {
+        const errorBody = await response
+          .json()
+          .catch(() => ({ error: "Failed to update payout status" }));
+        throw new Error(errorBody.error ?? "Failed to update payout status");
+      }
+      return response.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["payout-records"] });
+      queryClient.invalidateQueries({
+        queryKey: ["partner-detail", variables.payout.partnerId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["partner-payouts"] });
+      queryClient.invalidateQueries({ queryKey: ["partner-payouts-full"] });
+    },
+  });
+
+  const payouts = data?.payouts ?? [];
+  const stats = data?.stats ?? {
+    totalPayouts: 0,
+    scheduledAmount: 0,
+    paidAmount: 0,
+    failedAmount: 0,
+  };
+
+  return (
+    <div className="bg-card border rounded-md p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-medium text-foreground">
+            Payout ledger
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Partner-visible payout records generated from paid commission batches.
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 sm:items-end">
+          <div className="flex flex-wrap gap-3 text-xs">
+            <span className="text-muted-foreground">
+              Records{" "}
+              <span className="font-medium text-foreground tabular-nums">
+                {stats.totalPayouts}
+              </span>
+            </span>
+            <span className="text-muted-foreground">
+              Scheduled{" "}
+              <span className="font-medium text-warning tabular-nums">
+                {formatCurrency(stats.scheduledAmount)}
+              </span>
+            </span>
+            <span className="text-muted-foreground">
+              Paid{" "}
+              <span className="font-medium text-positive tabular-nums">
+                {formatCurrency(stats.paidAmount)}
+              </span>
+            </span>
+            <span className="text-muted-foreground">
+              Failed{" "}
+              <span className="font-medium text-negative tabular-nums">
+                {formatCurrency(stats.failedAmount)}
+              </span>
+            </span>
+          </div>
+          <Select
+            value={statusFilter}
+            onValueChange={(value) =>
+              setStatusFilter(value as PayoutStatusFilter)
+            }
+          >
+            <SelectTrigger className="h-8 w-40 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              {PAYOUT_STATUS_OPTIONS.map((status) => (
+                <SelectItem key={status} value={status} className="capitalize">
+                  {status}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {statusMutation.error && (
+        <div className="mb-4 rounded-md border border-negative/20 bg-negative/5 p-3 text-sm text-negative">
+          {statusMutation.error instanceof Error
+            ? statusMutation.error.message
+            : "Failed to update payout status"}
+        </div>
+      )}
+
+      {error ? (
+        <div className="rounded-md border border-negative/20 bg-negative/5 p-4 text-sm text-negative">
+          {(error as Error).message}
+        </div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Partner</TableHead>
+              <TableHead>Project</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Period</TableHead>
+              <TableHead>Date</TableHead>
+              <TableHead className="text-right">Commissions</TableHead>
+              <TableHead className="text-right">Amount</TableHead>
+              <TableHead>Note</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading && (
+              <TableRow>
+                <TableCell
+                  colSpan={8}
+                  className="text-center text-muted-foreground py-8"
+                >
+                  Loading payout records...
+                </TableCell>
+              </TableRow>
+            )}
+            {!isLoading && payouts.length === 0 && (
+              <TableRow>
+                <TableCell
+                  colSpan={8}
+                  className="text-center text-muted-foreground py-8"
+                >
+                  No payout records yet.
+                </TableCell>
+              </TableRow>
+            )}
+            {payouts.map((payout) => (
+              <TableRow key={payout.id}>
+                <TableCell>
+                  <div className="font-medium text-sm">
+                    {payout.partnerName}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {payout.partnerEmail}
+                  </div>
+                </TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {payout.projectName}
+                </TableCell>
+                <TableCell>
+                  <PayoutStatusMenu
+                    isPending={
+                      statusMutation.isPending &&
+                      statusMutation.variables?.payout.id === payout.id
+                    }
+                    payout={payout}
+                    onChange={(status) =>
+                      statusMutation.mutate({ payout, status })
+                    }
+                  />
+                </TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {formatPayoutPeriod(payout)}
+                </TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {formatShortDate(payout.paidAt ?? payout.createdAt)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
+                  {payout.commissionCount || "-"}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-sm font-medium">
+                  {formatCurrency(payout.amount)} {payout.currency}
+                </TableCell>
+                <TableCell className="max-w-[260px] truncate text-sm text-muted-foreground">
+                  {payout.note ?? "-"}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </div>
+  );
+}
+
+function PayoutStatusMenu({
+  isPending,
+  payout,
+  onChange,
+}: {
+  isPending: boolean;
+  payout: PayoutRecord;
+  onChange: (status: PayoutStatus) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 px-2"
+          disabled={isPending}
+        >
+          {isPending && <Loader2 className="size-3 animate-spin" />}
+          {getPayoutStatusBadge(payout.status)}
+          <ChevronDown className="size-3 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {PAYOUT_STATUS_OPTIONS.map((status) => (
+          <DropdownMenuItem
+            key={status}
+            disabled={status === payout.status || isPending}
+            onClick={() => onChange(status)}
+          >
+            Mark {status}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -1818,13 +2492,19 @@ function Payouts() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids, action }),
       });
-      if (!response.ok) throw new Error("Failed to update commissions");
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(
+          (err as { error?: string }).error ?? "Failed to update commissions",
+        );
+      }
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["commissions-by-partner"] });
       queryClient.invalidateQueries({ queryKey: ["commissions"] });
       queryClient.invalidateQueries({ queryKey: ["fraud-flags"] });
+      queryClient.invalidateQueries({ queryKey: ["payout-records"] });
     },
   });
 
@@ -1845,13 +2525,19 @@ function Payouts() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!response.ok) throw new Error("Failed to update commission");
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(
+          (err as { error?: string }).error ?? "Failed to update commission",
+        );
+      }
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["commissions-by-partner"] });
       queryClient.invalidateQueries({ queryKey: ["commissions"] });
       queryClient.invalidateQueries({ queryKey: ["fraud-flags"] });
+      queryClient.invalidateQueries({ queryKey: ["payout-records"] });
     },
   });
 
@@ -1876,6 +2562,10 @@ function Payouts() {
 
   const projects = projectsData?.projects ?? [];
   const isMutating = bulkActionMutation.isPending || singleActionMutation.isPending || flagCustomerMutation.isPending;
+  const mutationError =
+    bulkActionMutation.error ??
+    singleActionMutation.error ??
+    flagCustomerMutation.error;
 
   function togglePartner(partnerId: string) {
     setExpandedPartners((prev) => {
@@ -1921,6 +2611,22 @@ function Payouts() {
 
   const totals = data?.totals ?? { pendingAmount: 0, approvedAmount: 0, paidAmount: 0 };
   const partnerGroups = data?.partners ?? [];
+  const payoutReadiness = partnerGroups.reduce(
+    (acc, partner) => {
+      const policy = getPartnerPayoutPolicy(partner);
+      acc.scheduledLater += policy.futureAmount;
+      if (policy.eligibleCount === 0) return acc;
+      if (policy.belowMinimum) {
+        acc.belowMinimum += policy.eligibleAmount;
+      } else if (!partner.payoutLink?.trim()) {
+        acc.needsMethod += policy.eligibleAmount;
+      } else {
+        acc.ready += policy.eligibleAmount;
+      }
+      return acc;
+    },
+    { ready: 0, belowMinimum: 0, needsMethod: 0, scheduledLater: 0 },
+  );
 
   const filteredPartnerGroups: PartnerGroup[] = partnerGroups
     .map((partner) => {
@@ -1960,10 +2666,16 @@ function Payouts() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Payouts</h1>
           <p className="text-muted-foreground">
-            Review commissions by partner, approve, and track payments
+            Review commissions, pay partners, and keep payout records aligned
           </p>
         </div>
       </div>
+
+      {mutationError && (
+        <div className="rounded-md border border-negative/20 bg-negative/5 p-3 text-sm text-negative">
+          {(mutationError as Error).message}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-4 items-center">
@@ -2055,16 +2767,31 @@ function Payouts() {
       )}
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-2 xl:grid-cols-6 gap-6">
         <StatCard
           title="Pending Approval"
           value={formatCurrency(totals.pendingAmount)}
           Icon={Clock}
         />
         <StatCard
-          title="Approved (Owed)"
-          value={formatCurrency(totals.approvedAmount)}
+          title="Ready to Pay"
+          value={formatCurrency(payoutReadiness.ready)}
           Icon={DollarSign}
+        />
+        <StatCard
+          title="Below Minimum"
+          value={formatCurrency(payoutReadiness.belowMinimum)}
+          Icon={AlertTriangle}
+        />
+        <StatCard
+          title="Needs Method"
+          value={formatCurrency(payoutReadiness.needsMethod)}
+          Icon={CreditCard}
+        />
+        <StatCard
+          title="Scheduled Later"
+          value={formatCurrency(payoutReadiness.scheduledLater)}
+          Icon={Calendar}
         />
         <StatCard
           title="Paid"
@@ -2072,6 +2799,8 @@ function Payouts() {
           Icon={CheckCircle}
         />
       </div>
+
+      <PayoutHistorySection selectedProject={selectedProject} />
 
       {viewMode === "by-customer" ? (
         <CustomerView
@@ -2097,7 +2826,8 @@ function Payouts() {
               <TableRow>
                 <TableHead className="w-8" />
                 <TableHead>Partner</TableHead>
-                <TableHead>Payout Link</TableHead>
+                <TableHead>Payout method</TableHead>
+                <TableHead>Payout Policy</TableHead>
                 <TableHead>Pending</TableHead>
                 <TableHead>Approved (Owed)</TableHead>
                 <TableHead>Paid</TableHead>
@@ -2120,7 +2850,7 @@ function Payouts() {
               {filteredPartnerGroups.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={8}
                     className="text-center text-muted-foreground py-8"
                   >
                     No commissions yet. Commissions are created automatically when
@@ -2168,6 +2898,7 @@ function PendingReviewSection({ projectId }: { projectId: string }) {
             eventId: input.row.eventId,
             monthIndex: input.row.monthIndex,
             revenue: input.row.revenue,
+            commissionAmount: input.row.commissionAmount,
             mrr: input.row.mrr,
             eventDate: input.row.eventDate,
           }),
@@ -2284,7 +3015,9 @@ function PendingReviewSection({ projectId }: { projectId: string }) {
               <TableCell className="text-right tabular-nums text-sm font-medium">
                 {formatCurrency(r.commissionAmount)}
                 <div className="text-[10px] text-muted-foreground font-normal">
-                  @ {Math.round(r.rate * 100)}%
+                  {r.programType === "one-time" && r.flatAmount != null
+                    ? `Flat ${formatCurrency(r.flatAmount)}`
+                    : `@ ${Math.round(r.rate * 100)}%`}
                 </div>
               </TableCell>
               <TableCell className="text-right">

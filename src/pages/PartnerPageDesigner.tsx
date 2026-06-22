@@ -35,6 +35,7 @@ interface CommissionProgram {
   name: string;
   type: "recurring" | "lifetime" | "one-time";
   rate: number;
+  flatAmount: number | null;
 }
 
 interface Project {
@@ -116,6 +117,14 @@ function emptyAvatarSlots(): AvatarSlot[] {
     imageUrl: null,
     initials: null,
   }));
+}
+
+function formatProgramAmount(amount: number): string {
+  return amount.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: amount >= 100 ? 0 : 2,
+  });
 }
 
 const DEFAULTS = {
@@ -874,7 +883,10 @@ function PartnerPageDesigner() {
                       <span className="flex flex-col leading-tight">
                         <span className="truncate">{p.name}</span>
                         <span className="text-xs text-muted-foreground">
-                          {p.rate}% · {p.type}
+                          {p.type === "one-time" && p.flatAmount != null
+                            ? `${formatProgramAmount(p.flatAmount)} flat`
+                            : `${p.rate}%`}{" "}
+                          · {p.type}
                         </span>
                       </span>
                     </SelectItem>
@@ -1202,13 +1214,17 @@ function EarningsCalculatorPreview({
 }) {
   const [referrals, setReferrals] = useState(10);
   const rateFrac = program.rate / 100;
+  const oneTimePerReferral =
+    program.type === "one-time" && program.flatAmount != null
+      ? program.flatAmount
+      : planPrice * rateFrac;
   // For recurring with a duration cap, multiply by min(duration, 1) per
   // referral and keep monthly view; for lifetime, show monthly recurring;
   // for one-time, show one-time per referral.
   const isOneTime = program.type === "one-time";
   const monthlyPerReferral = planPrice * rateFrac;
   const monthlyEarnings = isOneTime ? 0 : referrals * monthlyPerReferral;
-  const oneTimeEarnings = isOneTime ? referrals * monthlyPerReferral : 0;
+  const oneTimeEarnings = isOneTime ? referrals * oneTimePerReferral : 0;
   const annualOrTotal = (() => {
     if (isOneTime) return oneTimeEarnings;
     if (program.type === "recurring" && program.durationMonths) {
@@ -1300,7 +1316,11 @@ function EarningsCalculatorPreview({
         </div>
 
         <p className="text-xs" style={{ color: muted }}>
-          Based on {program.name} ({program.rate}% {program.type}
+          Based on {program.name} (
+          {isOneTime && program.flatAmount != null
+            ? `${formatProgramAmount(program.flatAmount)} flat`
+            : `${program.rate}%`}{" "}
+          {program.type}
           {program.type === "recurring" && program.durationMonths
             ? ` × ${program.durationMonths} mo`
             : ""}

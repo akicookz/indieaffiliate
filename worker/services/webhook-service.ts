@@ -15,6 +15,9 @@ export const WEBHOOK_EVENTS = [
   "commission.created",
   "commission.approved",
   "payout.created",
+  "payout.updated",
+  "payout.paid",
+  "payout.failed",
   "click.recorded",
 ] as const;
 

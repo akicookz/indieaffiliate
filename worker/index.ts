@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { eq, and, desc, isNotNull, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { except } from "hono/combine";
 import { createAuth, getTrustedOrigins } from "./auth";
 import { type HonoAppContext, type AppEnv } from "./types";
@@ -15,6 +16,8 @@ import {
   users,
   payments,
   commissions,
+  payouts,
+  payoutCommissions,
   commissionPrograms,
   schema,
 } from "./db";
@@ -55,7 +58,6 @@ import { BrandingService } from "./services/branding-service";
 import {
   CommissionProgramService,
   CouponService,
-  type ProgramType,
 } from "./services/commission-program-service";
 import { StripeService } from "./services/stripe-service";
 import { StripeSyncService } from "./services/stripe-sync-service";
@@ -94,6 +96,7 @@ import {
   updatePartnerSchema,
   updateCommissionSchema,
   bulkCommissionActionSchema,
+  createCommissionProgramSchema,
   trackClickSchema,
   trackConversionSchema,
   createApiKeySchema,
@@ -224,6 +227,7 @@ async function actionPendingPayout(
     revenue?: number;
     mrr?: number | null;
     eventDate?: number;
+    commissionAmount?: number;
   };
   if (
     !body.paymentId ||
@@ -259,10 +263,426 @@ async function actionPendingPayout(
     monthIndex: body.monthIndex ?? undefined,
     commissionProgramId: payment.commissionProgramId,
     rate: payment.rate ?? undefined,
+    commissionAmount:
+      typeof body.commissionAmount === "number"
+        ? body.commissionAmount
+        : undefined,
     forceStatus: status,
     forceFraudFlag: status === "rejected" ? "denied_by_owner" : undefined,
   });
   return c.json(result);
+}
+
+interface CommissionForPayoutRecord {
+  id: string;
+  projectId: string;
+  partnerId: string;
+  amount: number;
+  status: "pending" | "approved" | "paid" | "rejected";
+  fraudFlag: string | null;
+  eventDate: Date | string | null;
+  createdAt: Date | string;
+  projectName: string;
+  partnerName: string;
+  partnerPayoutLink?: string | null;
+  programMinPayout?: number | null;
+  payoutCadence?: string | null;
+  payoutDayOfMonth?: number | null;
+  payoutDayOfWeek?: number | null;
+  payoutOrdinal?: number | null;
+}
+
+interface CommissionActionCandidate {
+  status: "pending" | "approved" | "paid" | "rejected";
+  fraudFlag: string | null;
+}
+
+type CommissionBulkAction = "approve" | "pay" | "reject";
+type CommissionStatusUpdate = "pending" | "approved" | "paid" | "rejected";
+
+interface PaidPayoutWebhookData {
+  id: string;
+  projectId: string;
+  partnerId: string;
+  amount: number;
+  currency: string;
+  status: "paid";
+  paidAt: Date;
+}
+
+function isCommissionEligibleForAction(
+  commission: CommissionActionCandidate,
+  action: CommissionBulkAction,
+): boolean {
+  if (action === "approve") {
+    return commission.status === "pending" && !commission.fraudFlag;
+  }
+  if (action === "pay") {
+    return commission.status === "approved" && !commission.fraudFlag;
+  }
+  if (action === "reject") {
+    return commission.status !== "paid";
+  }
+  return false;
+}
+
+function getCommissionTransitionError(
+  commission: CommissionActionCandidate,
+  nextStatus: CommissionStatusUpdate,
+): string | null {
+  if (nextStatus === "pending" && commission.status !== "pending") {
+    return "Commissions cannot be moved back to pending";
+  }
+  if (nextStatus === "approved" && !isCommissionEligibleForAction(commission, "approve")) {
+    return "Only unflagged pending commissions can be approved";
+  }
+  if (nextStatus === "paid" && !isCommissionEligibleForAction(commission, "pay")) {
+    return "Only unflagged approved commissions can be marked paid";
+  }
+  if (nextStatus === "rejected" && !isCommissionEligibleForAction(commission, "reject")) {
+    return "Paid commissions cannot be rejected";
+  }
+  return null;
+}
+
+function validateMinimumPayout(
+  commissionsToPay: CommissionForPayoutRecord[],
+): string | null {
+  const byTarget = new Map<string, CommissionForPayoutRecord[]>();
+  for (const commission of commissionsToPay) {
+    const groupKey = `${commission.projectId}:${commission.partnerId}`;
+    const group = byTarget.get(groupKey) ?? [];
+    group.push(commission);
+    byTarget.set(groupKey, group);
+  }
+
+  for (const group of byTarget.values()) {
+    const minimum = Math.max(
+      ...group.map((commission) => commission.programMinPayout ?? 0),
+      0,
+    );
+    if (minimum <= 0) continue;
+
+    const amount = group.reduce(
+      (total, commission) => total + commission.amount,
+      0,
+    );
+    if (amount + 0.005 < minimum) {
+      const partnerName = group[0]?.partnerName ?? "This partner";
+      return `${partnerName} has ${amount.toFixed(
+        2,
+      )} selected for payout, below the ${minimum.toFixed(2)} minimum payout.`;
+    }
+  }
+
+  return null;
+}
+
+function validatePayoutMethod(
+  commissionsToPay: CommissionForPayoutRecord[],
+): string | null {
+  const byTarget = new Map<string, CommissionForPayoutRecord[]>();
+  for (const commission of commissionsToPay) {
+    const groupKey = `${commission.projectId}:${commission.partnerId}`;
+    const group = byTarget.get(groupKey) ?? [];
+    group.push(commission);
+    byTarget.set(groupKey, group);
+  }
+
+  for (const group of byTarget.values()) {
+    const first = group[0];
+    if (!first?.partnerPayoutLink?.trim()) {
+      return `${first?.partnerName ?? "This partner"} needs a payout method before commissions can be marked paid.`;
+    }
+  }
+
+  return null;
+}
+
+function coercePayoutDate(value: Date | string | null): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatPayoutDate(date: Date | null): string | null {
+  return date ? date.toISOString().slice(0, 10) : null;
+}
+
+function startOfUtcDay(date: Date): Date {
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+}
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+}
+
+function matchMonthlyDay(from: Date, dayOfMonth: number): Date {
+  const year = from.getUTCFullYear();
+  const month = from.getUTCMonth();
+  const candidate = new Date(
+    Date.UTC(year, month, Math.min(dayOfMonth, daysInMonth(year, month))),
+  );
+  if (candidate.getTime() >= from.getTime()) return candidate;
+  const nextYear = month === 11 ? year + 1 : year;
+  const nextMonth = month === 11 ? 0 : month + 1;
+  return new Date(
+    Date.UTC(
+      nextYear,
+      nextMonth,
+      Math.min(dayOfMonth, daysInMonth(nextYear, nextMonth)),
+    ),
+  );
+}
+
+function nthWeekdayOfMonth(
+  year: number,
+  month: number,
+  ordinal: number,
+  dayOfWeek: number,
+): Date {
+  const normalizedYear = year + Math.floor(month / 12);
+  const normalizedMonth = ((month % 12) + 12) % 12;
+  if (ordinal === 5) {
+    for (
+      let day = daysInMonth(normalizedYear, normalizedMonth);
+      day >= 1;
+      day--
+    ) {
+      const date = new Date(Date.UTC(normalizedYear, normalizedMonth, day));
+      if (date.getUTCDay() === dayOfWeek) return date;
+    }
+  }
+  let count = 0;
+  for (let day = 1; day <= daysInMonth(normalizedYear, normalizedMonth); day++) {
+    const date = new Date(Date.UTC(normalizedYear, normalizedMonth, day));
+    if (date.getUTCDay() === dayOfWeek) {
+      count++;
+      if (count === ordinal) return date;
+    }
+  }
+  return new Date(Date.UTC(normalizedYear, normalizedMonth, 1));
+}
+
+function matchMonthlyOrdinal(
+  from: Date,
+  ordinal: number,
+  dayOfWeek: number,
+): Date {
+  for (let offset = 0; offset < 12; offset++) {
+    const date = nthWeekdayOfMonth(
+      from.getUTCFullYear(),
+      from.getUTCMonth() + offset,
+      ordinal,
+      dayOfWeek,
+    );
+    if (date.getTime() >= from.getTime()) return date;
+  }
+  return from;
+}
+
+function matchWeekly(from: Date, dayOfWeek: number): Date {
+  const result = new Date(from);
+  const diff = (dayOfWeek - from.getUTCDay() + 7) % 7;
+  result.setUTCDate(result.getUTCDate() + diff);
+  return result;
+}
+
+function commissionPayoutDueDate(
+  commission: CommissionForPayoutRecord,
+): Date | null {
+  const start = startOfUtcDay(
+    coercePayoutDate(commission.eventDate) ??
+      coercePayoutDate(commission.createdAt) ??
+      new Date(),
+  );
+  if (commission.payoutCadence === "monthly_day") {
+    if (!commission.payoutDayOfMonth) return null;
+    return matchMonthlyDay(start, commission.payoutDayOfMonth);
+  }
+  if (commission.payoutCadence === "monthly_ordinal") {
+    if (
+      commission.payoutOrdinal == null ||
+      commission.payoutDayOfWeek == null
+    ) {
+      return null;
+    }
+    return matchMonthlyOrdinal(
+      start,
+      commission.payoutOrdinal,
+      commission.payoutDayOfWeek,
+    );
+  }
+  if (commission.payoutCadence === "weekly") {
+    if (commission.payoutDayOfWeek == null) return null;
+    return matchWeekly(start, commission.payoutDayOfWeek);
+  }
+  return null;
+}
+
+function validatePayoutSchedule(
+  commissionsToPay: CommissionForPayoutRecord[],
+): string | null {
+  const today = startOfUtcDay(new Date());
+  for (const commission of commissionsToPay) {
+    const dueDate = commissionPayoutDueDate(commission);
+    if (dueDate && dueDate.getTime() > today.getTime()) {
+      return `${commission.partnerName} has a commission scheduled for payout on ${formatPayoutDate(
+        dueDate,
+      )}.`;
+    }
+  }
+  return null;
+}
+
+function buildPaidPayoutNote(
+  commissionsToPay: CommissionForPayoutRecord[],
+  periodStart: Date | null,
+  periodEnd: Date | null,
+): string {
+  const first = commissionsToPay[0];
+  const projectName = first?.projectName ?? "Affiliate";
+  const count = commissionsToPay.length;
+  const period =
+    periodStart && periodEnd
+      ? ` for ${formatPayoutDate(periodStart)} to ${formatPayoutDate(periodEnd)}`
+      : "";
+  return `${projectName} affiliate payout: ${count} commission${
+    count === 1 ? "" : "s"
+  }${period}.`;
+}
+
+function calculateDerivedCommissionAmount({
+  revenue,
+  rate,
+  programType,
+  flatAmount,
+}: {
+  revenue: number;
+  rate: number;
+  programType: "recurring" | "lifetime" | "one-time";
+  flatAmount: number | null;
+}): number {
+  if (programType === "one-time" && flatAmount != null) {
+    return flatAmount;
+  }
+  return revenue * rate;
+}
+
+async function createPaidPayoutRecordsFromCommissions(
+  db: DrizzleD1Database<Record<string, unknown>>,
+  webhookService: WebhookService,
+  commissionsToPay: CommissionForPayoutRecord[],
+): Promise<{ payoutsCreated: number }> {
+  const payableCommissions = commissionsToPay.filter(
+    (commission) =>
+      commission.status !== "paid" &&
+      commission.status !== "rejected" &&
+      !commission.fraudFlag &&
+      commission.amount > 0,
+  );
+
+  const grouped = new Map<string, CommissionForPayoutRecord[]>();
+  for (const commission of payableCommissions) {
+    const key = `${commission.projectId}:${commission.partnerId}`;
+    const group = grouped.get(key) ?? [];
+    group.push(commission);
+    grouped.set(key, group);
+  }
+
+  const createdPayouts = await db.transaction(async (tx) => {
+    const rows: PaidPayoutWebhookData[] = [];
+    for (const group of grouped.values()) {
+      const first = group[0];
+      if (!first) continue;
+
+      const commissionIds = group.map((commission) => commission.id);
+      const existingLinks = await tx
+        .select({ commissionId: payoutCommissions.commissionId })
+        .from(payoutCommissions)
+        .where(inArray(payoutCommissions.commissionId, commissionIds));
+      if (existingLinks.length > 0) {
+        throw new Error(
+          "One or more commissions are already attached to a payout record.",
+        );
+      }
+
+      const dates = group
+        .map((commission) =>
+          coercePayoutDate(commission.eventDate) ??
+          coercePayoutDate(commission.createdAt),
+        )
+        .filter((date): date is Date => !!date)
+        .sort((a, b) => a.getTime() - b.getTime());
+      const periodStart = dates[0] ?? null;
+      const periodEnd = dates[dates.length - 1] ?? null;
+      const amount = Math.round(
+        group.reduce((total, commission) => total + commission.amount, 0) * 100,
+      ) / 100;
+      const payoutId = crypto.randomUUID();
+      const paidAt = new Date();
+
+      await tx.insert(payouts).values({
+        id: payoutId,
+        projectId: first.projectId,
+        partnerId: first.partnerId,
+        amount,
+        currency: "USD",
+        status: "paid",
+        note: buildPaidPayoutNote(group, periodStart, periodEnd),
+        periodStart,
+        periodEnd,
+        paidAt,
+      });
+      await tx.insert(payoutCommissions).values(
+        group.map((commission) => ({
+          payoutId,
+          commissionId: commission.id,
+          amount: commission.amount,
+        })),
+      );
+      await tx
+        .update(commissions)
+        .set({ status: "paid" })
+        .where(inArray(commissions.id, commissionIds));
+
+      rows.push({
+        id: payoutId,
+        projectId: first.projectId,
+        partnerId: first.partnerId,
+        amount,
+        currency: "USD",
+        status: "paid",
+        paidAt,
+      });
+    }
+    return rows;
+  });
+
+  for (const payout of createdPayouts) {
+    await webhookService.fireEvent(payout.projectId, "payout.created", {
+      payoutId: payout.id,
+      projectId: payout.projectId,
+      partnerId: payout.partnerId,
+      amount: payout.amount,
+      currency: payout.currency,
+      status: payout.status,
+    });
+    await webhookService.fireEvent(payout.projectId, "payout.paid", {
+      payoutId: payout.id,
+      projectId: payout.projectId,
+      partnerId: payout.partnerId,
+      amount: payout.amount,
+      currency: payout.currency,
+      status: payout.status,
+      paidAt: payout.paidAt.toISOString(),
+    });
+  }
+
+  return { payoutsCreated: createdPayouts.length };
 }
 
 // CORS: never use wildcard when credentials are included (browser rejects). Reflect origin or use allow list.
@@ -564,7 +984,7 @@ const app = new Hono<HonoAppContext>()
       mrr: parsed.data.mrr,
     });
 
-    if (!result.isDuplicate) {
+    if (result.conversionCreated) {
       const webhookServiceConv = new WebhookService(db);
       await webhookServiceConv.fireEvent(keyResult.projectId, "customer.created", {
         customerId: result.customerId,
@@ -580,7 +1000,7 @@ const app = new Hono<HonoAppContext>()
       });
     }
 
-    return c.json(result, result.isDuplicate ? 200 : 201);
+    return c.json(result, result.conversionCreated ? 201 : 200);
   })
   // ─── Public: Serve uploaded images from R2 ─────────────────────────────────
   .get("/api/uploads/:key", async (c) => {
@@ -653,6 +1073,7 @@ const app = new Hono<HonoAppContext>()
       rate: number;
       type: string;
       durationMonths: number | null;
+      flatAmount: number | null;
     } | null = null;
     if (result.branding.defaultCommissionProgramId) {
       const programService = new CommissionProgramService(db);
@@ -666,6 +1087,7 @@ const app = new Hono<HonoAppContext>()
           rate: program.rate,
           type: program.type,
           durationMonths: program.durationMonths,
+          flatAmount: program.flatAmount,
         };
       }
     }
@@ -932,7 +1354,7 @@ const app = new Hono<HonoAppContext>()
 
       const db = drizzle(c.env.DB, { schema });
       const brandingService = new BrandingService(db);
-      let brandingResult = await brandingService.getBySlug(slug);
+      const brandingResult = await brandingService.getBySlug(slug);
       let projectId: string;
       if (!brandingResult) {
         const projectRows = await db
@@ -1369,7 +1791,6 @@ const app = new Hono<HonoAppContext>()
 
     let slug = baseSlug;
     let suffix = 2;
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const existingWithSlug = await db
         .select({ id: projects.id })
@@ -1527,15 +1948,29 @@ const app = new Hono<HonoAppContext>()
       "unknown";
     const hashedPartnerIp = await hashIP(partnerIp);
 
+    let commissionRate = parsed.data.commissionRate ?? 0.2;
+    if (parsed.data.commissionProgramId) {
+      const programService = new CommissionProgramService(db);
+      const program = await programService.getById(
+        parsed.data.projectId,
+        parsed.data.commissionProgramId,
+      );
+      if (!program || program.archivedAt) {
+        return c.json({ error: "Commission program not found" }, 400);
+      }
+      commissionRate = program.rate / 100;
+    }
+
     let partner;
     try {
       partner = await partnerService.createPartner({
         projectId: parsed.data.projectId,
         name: parsed.data.name?.trim() ?? "",
         email: parsed.data.email?.trim().toLowerCase() ?? "",
-        commissionRate: parsed.data.commissionRate ?? 0.2,
+        commissionRate,
+        commissionProgramId: parsed.data.commissionProgramId ?? null,
         referralCode: parsed.data.referralCode,
-        payoutLink: parsed.data.payoutLink ?? null,
+        payoutLink: parsed.data.payoutLink?.trim() || null,
         status: "active",
         registrationIp: hashedPartnerIp,
       });
@@ -1800,11 +2235,57 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Commission not found" }, 404);
     }
 
-    const updated = await commissionService.updateCommissionStatus(
-      id,
+    const transitionError = getCommissionTransitionError(
+      commission,
       parsed.data.status,
-      parsed.data.fraudFlag,
     );
+    if (transitionError) {
+      return c.json({ error: transitionError }, 400);
+    }
+
+    if (parsed.data.status === "paid") {
+      const methodError = validatePayoutMethod([commission]);
+      if (methodError) return c.json({ error: methodError }, 400);
+      const minimumError = validateMinimumPayout([commission]);
+      if (minimumError) return c.json({ error: minimumError }, 400);
+      const scheduleError = validatePayoutSchedule([commission]);
+      if (scheduleError) return c.json({ error: scheduleError }, 400);
+    }
+
+    let payoutsCreated = 0;
+    let updated = null;
+    if (parsed.data.status === "paid") {
+      try {
+        const payoutResult = await createPaidPayoutRecordsFromCommissions(
+          db,
+          new WebhookService(db),
+          [commission],
+        );
+        payoutsCreated = payoutResult.payoutsCreated;
+        const updatedRows = await db
+          .select()
+          .from(commissions)
+          .where(eq(commissions.id, id))
+          .limit(1);
+        updated = updatedRows[0] ?? null;
+      } catch (err) {
+        return c.json(
+          {
+            error:
+              err instanceof Error
+                ? err.message
+                : "Failed to create payout record",
+          },
+          400,
+        );
+      }
+    } else {
+      updated = await commissionService.updateCommissionStatus(
+        id,
+        parsed.data.status,
+        parsed.data.fraudFlag,
+      );
+    }
 
     if (parsed.data.status === "approved") {
       const webhookServiceComm = new WebhookService(db);
@@ -1852,7 +2333,7 @@ const app = new Hono<HonoAppContext>()
       });
     }
 
-    return c.json({ commission: updated });
+    return c.json({ commission: updated, payoutsCreated });
   })
   .get("/api/commissions/by-partner", async (c) => {
     const user = c.get("user");
@@ -1883,10 +2364,25 @@ const app = new Hono<HonoAppContext>()
     // Verify ownership: all commission IDs must belong to user's projects
     const allCommissions = await commissionService.getCommissionsByUser(user.id, {});
     const validIds = new Set(allCommissions.map((c) => c.id));
-    const requestedIds = parsed.data.ids.filter((id) => validIds.has(id));
+    const requestedCommissions = allCommissions.filter(
+      (commission) =>
+        parsed.data.ids.includes(commission.id) &&
+        validIds.has(commission.id) &&
+        isCommissionEligibleForAction(commission, parsed.data.action),
+    );
+    const requestedIds = requestedCommissions.map((commission) => commission.id);
 
     if (requestedIds.length === 0) {
-      return c.json({ error: "No valid commission IDs found" }, 404);
+      return c.json({ error: "No eligible commission IDs found" }, 404);
+    }
+
+    if (parsed.data.action === "pay") {
+      const methodError = validatePayoutMethod(requestedCommissions);
+      if (methodError) return c.json({ error: methodError }, 400);
+      const minimumError = validateMinimumPayout(requestedCommissions);
+      if (minimumError) return c.json({ error: minimumError }, 400);
+      const scheduleError = validatePayoutSchedule(requestedCommissions);
+      if (scheduleError) return c.json({ error: scheduleError }, 400);
     }
 
     const statusMap = {
@@ -1895,11 +2391,35 @@ const app = new Hono<HonoAppContext>()
       reject: "rejected" as const,
     };
 
-    const count = await commissionService.bulkUpdateStatus(
-      requestedIds,
-      statusMap[parsed.data.action],
-      parsed.data.fraudFlag,
-    );
+    let payoutsCreated = 0;
+    let count = 0;
+    if (parsed.data.action === "pay") {
+      try {
+        const payoutResult = await createPaidPayoutRecordsFromCommissions(
+          db,
+          new WebhookService(db),
+          requestedCommissions,
+        );
+        payoutsCreated = payoutResult.payoutsCreated;
+        count = requestedIds.length;
+      } catch (err) {
+        return c.json(
+          {
+            error:
+              err instanceof Error
+                ? err.message
+                : "Failed to create payout records",
+          },
+          400,
+        );
+      }
+    } else {
+      count = await commissionService.bulkUpdateStatus(
+        requestedIds,
+        statusMap[parsed.data.action],
+        parsed.data.fraudFlag,
+      );
+    }
 
     if (parsed.data.action === "approve") {
       const webhookServiceBulk = new WebhookService(db);
@@ -1928,7 +2448,7 @@ const app = new Hono<HonoAppContext>()
       }
     }
 
-    return c.json({ updated: count });
+    return c.json({ updated: count, payoutsCreated });
   })
   // ─── Fraud Flags ────────────────────────────────────────────────────────────
   .get("/api/fraud-flags", async (c) => {
@@ -2244,8 +2764,11 @@ const app = new Hono<HonoAppContext>()
     );
     const cursor = c.req.query("cursor") || undefined;
     const query = c.req.query("query") || undefined;
+    const assignedParam = c.req.query("assigned");
     const assigned: LiveAssignedFilter =
-      c.req.query("assigned") === "assigned" ? "assigned" : "all";
+      assignedParam === "assigned" || assignedParam === "unassigned"
+        ? assignedParam
+        : "all";
 
     const stripeService = new StripeService(
       db,
@@ -2373,6 +2896,7 @@ const app = new Hono<HonoAppContext>()
         (program?.type as "recurring" | "lifetime" | "one-time" | null) ?? null,
       durationMonths: program?.durationMonths ?? null,
       rate,
+      flatAmount: program?.flatAmount ?? null,
       subscriptionAnchorAt: body.subscriptionAnchorAt
         ? new Date(body.subscriptionAnchorAt * 1000)
         : null,
@@ -2513,10 +3037,17 @@ const app = new Hono<HonoAppContext>()
             : "Default";
         const rate = a.rate ?? 0;
         const programType = a.programType ?? "recurring";
+        const flatAmount = a.flatAmount ?? null;
 
         if (a.kind === "one_time") {
           if (actionedEventIds.has(a.externalPaymentId)) return [];
           const revenue = a.mrr ?? 0;
+          const commissionAmount = calculateDerivedCommissionAmount({
+            revenue,
+            rate,
+            programType,
+            flatAmount,
+          });
           return [
             {
               paymentId: a.id,
@@ -2534,7 +3065,8 @@ const app = new Hono<HonoAppContext>()
               revenue,
               mrr: a.mrr,
               rate,
-              commissionAmount: revenue * rate,
+              flatAmount,
+              commissionAmount,
               programType,
               programName,
               monthIndex: null,
@@ -2563,6 +3095,12 @@ const app = new Hono<HonoAppContext>()
             .sort((x, y) => x.created - y.created)[0];
           if (!earliest || actionedEventIds.has(earliest.id)) return [];
           const revenue = earliest.amount_paid / 100;
+          const commissionAmount = calculateDerivedCommissionAmount({
+            revenue,
+            rate,
+            programType,
+            flatAmount,
+          });
           return [
             {
               paymentId: a.id,
@@ -2579,7 +3117,8 @@ const app = new Hono<HonoAppContext>()
               revenue,
               mrr: a.mrr,
               rate,
-              commissionAmount: revenue * rate,
+              flatAmount,
+              commissionAmount,
               programType,
               programName,
               monthIndex: null,
@@ -2605,6 +3144,12 @@ const app = new Hono<HonoAppContext>()
             continue;
           }
           const revenue = inv.amount_paid / 100;
+          const commissionAmount = calculateDerivedCommissionAmount({
+            revenue,
+            rate,
+            programType,
+            flatAmount,
+          });
           const monthsRemaining =
             programType === "recurring" && a.durationMonths != null
               ? Math.max(0, a.durationMonths - monthIndex)
@@ -2624,7 +3169,8 @@ const app = new Hono<HonoAppContext>()
             revenue,
             mrr: a.mrr,
             rate,
-            commissionAmount: revenue * rate,
+            flatAmount,
+            commissionAmount,
             programType,
             programName,
             monthIndex: programType === "recurring" ? monthIndex : null,
@@ -2803,6 +3349,7 @@ const app = new Hono<HonoAppContext>()
 
     let totalCommissionsCreated = 0;
     let totalDuplicatesSkipped = 0;
+    let totalProgramRulesSkipped = 0;
 
     for (const customerId of parsed.data.stripeCustomerIds) {
       const result = await syncService.syncCustomerHistory(
@@ -2813,12 +3360,14 @@ const app = new Hono<HonoAppContext>()
       );
       totalCommissionsCreated += result.commissionsCreated;
       totalDuplicatesSkipped += result.duplicatesSkipped;
+      totalProgramRulesSkipped += result.programRulesSkipped;
     }
 
     return c.json({
       customersProcessed: parsed.data.stripeCustomerIds.length,
       commissionsCreated: totalCommissionsCreated,
       duplicatesSkipped: totalDuplicatesSkipped,
+      programRulesSkipped: totalProgramRulesSkipped,
     });
   })
   // ─── Import ─────────────────────────────────────────────────────────────────
@@ -2990,8 +3539,20 @@ const app = new Hono<HonoAppContext>()
     const parsed = validate(updateBrandingSchema, body);
     if (!parsed.success) return c.json({ error: parsed.error }, 400);
 
+    if (parsed.data.defaultCommissionProgramId) {
+      const programService = new CommissionProgramService(db);
+      const program = await programService.getById(
+        projectId,
+        parsed.data.defaultCommissionProgramId,
+      );
+      if (!program || program.archivedAt) {
+        return c.json({ error: "Default commission program not found" }, 400);
+      }
+    }
+
     // Omit portalName so DB layer does not require portal_name column (optional until migration 0015)
-    const { portalName: _pn, ...brandingData } = parsed.data;
+    const brandingData = { ...parsed.data };
+    delete brandingData.portalName;
     const brandingService = new BrandingService(db);
     const branding = await brandingService.upsert(projectId, brandingData);
 
@@ -3040,27 +3601,12 @@ const app = new Hono<HonoAppContext>()
     if (!project || project.userId !== user.id) {
       return c.json({ error: "Project not found" }, 404);
     }
-    const body = (await c.req.json()) as {
-      code: string;
-      name: string;
-      type: ProgramType;
-      rate: number;
-      durationMonths?: number | null;
-      flatAmount?: number | null;
-      description?: string | null;
-      minPayout?: number;
-      isDefault?: boolean;
-      payoutCadence?: "monthly_day" | "monthly_ordinal" | "weekly" | null;
-      payoutDayOfMonth?: number | null;
-      payoutDayOfWeek?: number | null;
-      payoutOrdinal?: number | null;
-    };
-    if (!body.code || !body.name || typeof body.rate !== "number") {
-      return c.json({ error: "code, name, and rate are required" }, 400);
-    }
+    const body = await c.req.json();
+    const parsed = validate(createCommissionProgramSchema, body);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
     const service = new CommissionProgramService(db);
     try {
-      const program = await service.create(projectId, body);
+      const program = await service.create(projectId, parsed.data);
       return c.json({ program }, 201);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to create";
@@ -3078,9 +3624,51 @@ const app = new Hono<HonoAppContext>()
     if (!project || project.userId !== user.id) {
       return c.json({ error: "Project not found" }, 404);
     }
-    const body = await c.req.json();
     const service = new CommissionProgramService(db);
-    const program = await service.update(projectId, programId, body);
+    const existing = await service.getById(projectId, programId);
+    if (!existing) return c.json({ error: "Program not found" }, 404);
+    if (existing.archivedAt) {
+      return c.json({ error: "Archived programs cannot be edited" }, 400);
+    }
+
+    const body = await c.req.json();
+    const mergedProgram = {
+      code: body.code ?? existing.code,
+      name: body.name ?? existing.name,
+      type: body.type ?? existing.type,
+      rate: body.rate ?? existing.rate,
+      durationMonths:
+        body.durationMonths !== undefined
+          ? body.durationMonths
+          : existing.durationMonths,
+      flatAmount:
+        body.flatAmount !== undefined ? body.flatAmount : existing.flatAmount,
+      description:
+        body.description !== undefined ? body.description : existing.description,
+      minPayout:
+        body.minPayout !== undefined ? body.minPayout : existing.minPayout,
+      isDefault:
+        body.isDefault !== undefined ? body.isDefault : existing.isDefault,
+      payoutCadence:
+        body.payoutCadence !== undefined
+          ? body.payoutCadence
+          : existing.payoutCadence,
+      payoutDayOfMonth:
+        body.payoutDayOfMonth !== undefined
+          ? body.payoutDayOfMonth
+          : existing.payoutDayOfMonth,
+      payoutDayOfWeek:
+        body.payoutDayOfWeek !== undefined
+          ? body.payoutDayOfWeek
+          : existing.payoutDayOfWeek,
+      payoutOrdinal:
+        body.payoutOrdinal !== undefined
+          ? body.payoutOrdinal
+          : existing.payoutOrdinal,
+    };
+    const parsed = validate(createCommissionProgramSchema, mergedProgram);
+    if (!parsed.success) return c.json({ error: parsed.error }, 400);
+    const program = await service.update(projectId, programId, parsed.data);
     if (!program) return c.json({ error: "Program not found" }, 404);
     return c.json({ program });
   })
@@ -3097,7 +3685,16 @@ const app = new Hono<HonoAppContext>()
     }
     const service = new CommissionProgramService(db);
     await service.archive(projectId, programId);
-    return c.json({ ok: true });
+    const brandingService = new BrandingService(db);
+    const branding = await brandingService.getByProjectId(projectId);
+    const defaultCleared =
+      branding?.defaultCommissionProgramId === programId;
+    if (defaultCleared) {
+      await brandingService.upsert(projectId, {
+        defaultCommissionProgramId: null,
+      });
+    }
+    return c.json({ ok: true, defaultCleared });
   })
   // ─── Coupons ─────────────────────────────────────────────────────────────
   .get("/api/projects/:id/coupons", async (c) => {
@@ -3331,6 +3928,33 @@ const app = new Hono<HonoAppContext>()
       parsed.data.status,
       paidAt,
     );
+    const linkedCommissionIds = await payoutService.getLinkedCommissionIds(id);
+    if (linkedCommissionIds.length > 0) {
+      const commissionService = new CommissionService(db);
+      await commissionService.bulkUpdateStatus(
+        linkedCommissionIds,
+        parsed.data.status === "paid" ? "paid" : "approved",
+      );
+    }
+    if (payout) {
+      const event =
+        parsed.data.status === "paid"
+          ? "payout.paid"
+          : parsed.data.status === "failed"
+            ? "payout.failed"
+            : "payout.updated";
+      const webhookServicePayoutUpdate = new WebhookService(db);
+      await webhookServicePayoutUpdate.fireEvent(existing.projectId, event, {
+        payoutId: payout.id,
+        projectId: payout.projectId,
+        partnerId: payout.partnerId,
+        amount: payout.amount,
+        currency: payout.currency,
+        previousStatus: existing.status,
+        status: payout.status,
+        paidAt: payout.paidAt?.toISOString() ?? null,
+      });
+    }
     return c.json({ payout });
   })
   // ─── Partner Portal API (partner-facing, auth via session) ──────────────────
@@ -3351,9 +3975,12 @@ const app = new Hono<HonoAppContext>()
 
     const partnerIds = partnerRecords.map((p) => p.id);
     const stats = await dashboardService.getDashboardData(partnerIds);
+    const effectivePrograms =
+      await dashboardService.getEffectiveCommissionPrograms(partnerRecords);
 
     // Return first partner's info as primary (partner may span multiple projects)
     const primary = partnerRecords[0];
+    const primaryProgram = effectivePrograms.get(primary.id);
     return c.json({
       partner: {
         name: primary.name,
@@ -3362,6 +3989,11 @@ const app = new Hono<HonoAppContext>()
         commissionRate: primary.commissionRate,
         status: primary.status,
         payoutLink: primary.payoutLink,
+        commissionProgram: primaryProgram?.commissionProgram ?? null,
+        usesDefaultCommissionProgram:
+          primaryProgram?.usesDefaultCommissionProgram ?? false,
+        defaultCommissionProgramId:
+          primaryProgram?.defaultCommissionProgramId ?? null,
       },
       programs: partnerRecords.map((p) => ({
         id: p.id,
@@ -3369,6 +4001,12 @@ const app = new Hono<HonoAppContext>()
         referralCode: p.referralCode,
         commissionRate: p.commissionRate,
         status: p.status,
+        commissionProgram:
+          effectivePrograms.get(p.id)?.commissionProgram ?? null,
+        usesDefaultCommissionProgram:
+          effectivePrograms.get(p.id)?.usesDefaultCommissionProgram ?? false,
+        defaultCommissionProgramId:
+          effectivePrograms.get(p.id)?.defaultCommissionProgramId ?? null,
       })),
       stats,
     });
@@ -3462,6 +4100,7 @@ const app = new Hono<HonoAppContext>()
     const body = await c.req.json();
     const parsed = validate(updatePartnerPayoutLinkSchema, body);
     if (!parsed.success) return c.json({ error: parsed.error }, 400);
+    const payoutLink = parsed.data.payoutLink?.trim() || null;
 
     const db = c.get("db");
     const dashboardService = new PartnerDashboardService(db);
@@ -3474,11 +4113,11 @@ const app = new Hono<HonoAppContext>()
     const partnerService = new PartnerService(db);
     for (const record of partnerRecords) {
       await partnerService.updatePartner(record.id, {
-        payoutLink: parsed.data.payoutLink,
+        payoutLink,
       });
     }
 
-    return c.json({ payoutLink: parsed.data.payoutLink });
+    return c.json({ payoutLink });
   })
   // ─── Webhooks ──────────────────────────────────────────────────────────────────
   .get("/api/webhooks", async (c) => {

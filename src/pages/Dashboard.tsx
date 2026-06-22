@@ -20,6 +20,7 @@ import {
   CheckCircle,
   AlertTriangle,
   UserPlus,
+  ArrowRight,
 } from "lucide-react";
 import {
   Select,
@@ -115,6 +116,17 @@ interface Project {
   slug: string;
 }
 
+interface StripeStatus {
+  connected: boolean;
+  syncStatus?: string;
+  syncError?: string | null;
+  lastSyncAt?: string | null;
+}
+
+interface CommissionProgramSummary {
+  id: string;
+}
+
 const revenueChartConfig = {
   revenue: {
     label: "Revenue",
@@ -155,6 +167,110 @@ function getStatusIcon(status: string) {
   }
 }
 
+function SetupChecklist({
+  project,
+  stripeConnected,
+  programCount,
+  partnerCount,
+  approvedAmount,
+  pendingAmount,
+}: {
+  project: Project | undefined;
+  stripeConnected: boolean;
+  programCount: number;
+  partnerCount: number;
+  approvedAmount: number;
+  pendingAmount: number;
+}) {
+  if (!project) return null;
+
+  const hasProgram = programCount > 0;
+  const hasPartners = partnerCount > 0;
+  const hasCommissions = approvedAmount > 0 || pendingAmount > 0;
+  const steps = [
+    {
+      label: "Connect Stripe",
+      done: stripeConnected,
+      href: `/app/projects/${project.slug}/settings`,
+      action: stripeConnected ? "Connected" : "Connect",
+    },
+    {
+      label: "Define commission program",
+      done: hasProgram,
+      href: `/app/projects/${project.slug}/commissions`,
+      action: hasProgram ? `${programCount} active` : "Create",
+    },
+    {
+      label: "Add partners",
+      done: hasPartners,
+      href: "/app/partners",
+      action: hasPartners ? `${partnerCount} partners` : "Invite",
+    },
+    {
+      label: "Assign revenue",
+      done: hasCommissions,
+      href: `/app/payments?project=${project.id}`,
+      action: hasCommissions ? "Tracked" : "Assign",
+    },
+    {
+      label: "Review payouts",
+      done: approvedAmount > 0,
+      href: "/app/payouts",
+      action: approvedAmount > 0
+        ? `$${approvedAmount.toLocaleString(undefined, {
+            maximumFractionDigits: 0,
+          })} ready`
+        : "Review",
+    },
+  ];
+  const completed = steps.filter((step) => step.done).length;
+
+  return (
+    <div className="bg-card border rounded-md p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+        <div>
+          <h2 className="text-sm font-medium text-foreground">
+            Launch checklist
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            {project.name} · {completed} of {steps.length} complete
+          </p>
+        </div>
+        <div className="h-2 w-full sm:w-40 rounded-full bg-muted overflow-hidden">
+          <div
+            className="h-full bg-positive"
+            style={{ width: `${(completed / steps.length) * 100}%` }}
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+        {steps.map((step) => (
+          <Link
+            key={step.label}
+            to={step.href}
+            className="rounded-md border border-border bg-background/50 px-3 py-3 hover:bg-muted/40 transition-colors"
+          >
+            <div className="flex items-center justify-between gap-2">
+              {step.done ? (
+                <CheckCircle className="w-4 h-4 text-positive shrink-0" />
+              ) : (
+                <Clock className="w-4 h-4 text-muted-foreground shrink-0" />
+              )}
+              <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            </div>
+            <div className="mt-2 text-sm font-medium text-foreground">
+              {step.label}
+            </div>
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              {step.action}
+            </div>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Dashboard() {
   const [days, setDays] = useState("30");
   const [selectedProject, setSelectedProject] = useState("all");
@@ -173,6 +289,10 @@ function Dashboard() {
   const projects = projectsData?.projects ?? [];
   const shouldRedirectToOnboarding = !projectsLoading && projects.length === 0;
   const showProjectColumn = projects.length > 1;
+  const setupProject =
+    selectedProject === "all"
+      ? projects[0]
+      : projects.find((p) => p.id === selectedProject);
 
   const { data: dashData, isLoading: dashLoading, error: dashError } = useQuery({
     queryKey: ["dashboard", selectedProject],
@@ -223,6 +343,28 @@ function Dashboard() {
     enabled: !projectsLoading && projects.length > 0,
   });
 
+  const { data: stripeStatus } = useQuery({
+    queryKey: ["stripe-connection", setupProject?.id],
+    queryFn: async (): Promise<StripeStatus> => {
+      const response = await fetch(`/api/projects/${setupProject!.id}/stripe`);
+      if (!response.ok) throw new Error("Failed to fetch Stripe status");
+      return response.json();
+    },
+    enabled: !!setupProject?.id,
+  });
+
+  const { data: programsData } = useQuery({
+    queryKey: ["commission-programs", setupProject?.id],
+    queryFn: async (): Promise<{ programs: CommissionProgramSummary[] }> => {
+      const response = await fetch(
+        `/api/projects/${setupProject!.id}/commission-programs`,
+      );
+      if (!response.ok) throw new Error("Failed to fetch commission programs");
+      return response.json();
+    },
+    enabled: !!setupProject?.id,
+  });
+
   if (shouldRedirectToOnboarding) {
     return <Navigate to="/onboarding" replace />;
   }
@@ -250,8 +392,11 @@ function Dashboard() {
   const totalConversions = analyticsData?.totals.conversions ?? dashData?.newCustomers ?? 0;
   const conversionRate = totalClicks > 0 ? ((totalConversions / totalClicks) * 100).toFixed(1) : "0";
   const pendingAmount = commissionsData?.totals.pendingAmount ?? 0;
+  const approvedAmount = commissionsData?.totals.approvedAmount ?? 0;
   const activePartners = partnersData?.stats.activePartners ?? 0;
   const pendingPartners = partnersData?.stats.pendingPartners ?? 0;
+  const totalPartners = partnersData?.stats.totalPartners ?? 0;
+  const programCount = programsData?.programs.length ?? 0;
 
   const topReferrers = dashData?.topReferrers ?? [];
   const pieData = topReferrers
@@ -337,6 +482,15 @@ function Dashboard() {
           </Button>
         </div>
       </div>
+
+      <SetupChecklist
+        project={setupProject}
+        stripeConnected={stripeStatus?.connected ?? false}
+        programCount={programCount}
+        partnerCount={totalPartners}
+        approvedAmount={approvedAmount}
+        pendingAmount={pendingAmount}
+      />
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

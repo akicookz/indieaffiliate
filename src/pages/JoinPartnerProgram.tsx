@@ -22,6 +22,7 @@ interface CommissionProgramPublic {
   rate: number;
   type: "recurring" | "lifetime" | "one-time";
   durationMonths: number | null;
+  flatAmount: number | null;
 }
 
 interface JoinPageData {
@@ -96,6 +97,14 @@ function deriveWordmark(wordmark: string | null, projectName: string): string {
   const explicit = wordmark?.trim();
   if (explicit) return explicit.toUpperCase();
   return projectName.trim().slice(0, 20).toUpperCase() || "PARTNERS";
+}
+
+function formatProgramAmount(amount: number): string {
+  return amount.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: amount >= 100 ? 0 : 2,
+  });
 }
 
 function getGoogleFontUrl(font: string): string {
@@ -1094,9 +1103,13 @@ function EarningsCalculator({
   const [referrals, setReferrals] = useState(10);
   const rateFrac = program.rate / 100;
   const isOneTime = program.type === "one-time";
+  const oneTimePerReferral =
+    isOneTime && program.flatAmount != null
+      ? program.flatAmount
+      : planPrice * rateFrac;
   const monthlyPerReferral = planPrice * rateFrac;
   const monthlyEarnings = isOneTime ? 0 : referrals * monthlyPerReferral;
-  const oneTimeEarnings = isOneTime ? referrals * monthlyPerReferral : 0;
+  const oneTimeEarnings = isOneTime ? referrals * oneTimePerReferral : 0;
   const totalProjection =
     program.type === "recurring" && program.durationMonths
       ? referrals * monthlyPerReferral * program.durationMonths
@@ -1204,7 +1217,11 @@ function EarningsCalculator({
         </div>
 
         <p className="text-xs" style={{ color: palette.muted }}>
-          Based on {program.name} ({program.rate}% {program.type}
+          Based on {program.name} (
+          {isOneTime && program.flatAmount != null
+            ? `${formatProgramAmount(program.flatAmount)} flat`
+            : `${program.rate}%`}{" "}
+          {program.type}
           {program.type === "recurring" && program.durationMonths
             ? ` × ${program.durationMonths} mo`
             : ""}
