@@ -3,6 +3,7 @@ import { Bell, BellRing, CheckCheck, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import PageHeader from "@/components/PageHeader";
 
 interface NotificationItem {
   id: string;
@@ -60,13 +61,10 @@ function Notifications() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Notifications</h1>
-          <p className="text-muted-foreground">
-            Stay on top of account and billing updates in one place.
-          </p>
-        </div>
+      <PageHeader
+        title="Notifications"
+        subtitle="Stay on top of account and billing updates in one place."
+      >
         <Button
           variant="secondary"
           onClick={() => readAllMutation.mutate()}
@@ -75,7 +73,7 @@ function Notifications() {
           <CheckCheck className="mr-2 h-4 w-4" />
           Mark all as read
         </Button>
-      </div>
+      </PageHeader>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">

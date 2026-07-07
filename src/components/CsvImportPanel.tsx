@@ -32,6 +32,13 @@ export interface CsvImportProject {
   name: string;
 }
 
+// Strip currency symbols, thousands separators, percent signs, and whitespace
+// before parsing. Without this, parseFloat("1,234.56") stops at the comma and
+// returns 1, silently importing a $1,234 value as $1.
+function parseNumeric(value: string): number {
+  return parseFloat(value.replace(/[$,%\s]/g, ""));
+}
+
 export type CsvImportType = "partners" | "customers" | "commissions";
 type CsvStep = "upload" | "map" | "confirm" | "result";
 
@@ -138,7 +145,7 @@ export default function CsvImportPanel({
         for (const [idx, field] of colMap.entries()) {
           const value = row[idx]?.trim() ?? "";
           if (["commissionRate", "revenue", "amount"].includes(field)) {
-            const num = parseFloat(value);
+            const num = parseNumeric(value);
             if (!isNaN(num)) {
               if (field === "commissionRate" && num > 1) {
                 obj[field] = num / 100;
@@ -186,7 +193,7 @@ export default function CsvImportPanel({
   })();
 
   const wrapperClass = framed
-    ? "bg-card border rounded-md p-6 space-y-4"
+    ? "bg-card shadow-card rounded-lg p-6 space-y-4"
     : "space-y-4";
 
   return (

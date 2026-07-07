@@ -186,6 +186,8 @@ export const updateBrandingSchema = z.object({
   wordmark: z.string().max(20).nullable().optional(),
   backgroundMode: z.enum(["cream", "white", "dark"]).optional(),
   layout: z.enum(["split", "stacked", "cover"]).optional(),
+  theme: z.enum(["minimal", "bold", "editorial"]).optional(),
+  partnerAgreement: z.string().max(20000).nullable().optional(),
   showSocialProof: z.boolean().optional(),
   showFaq: z.boolean().optional(),
   showEarningsCalculator: z.boolean().optional(),
@@ -271,7 +273,10 @@ export const updateMetadataMappingsSchema = z.object({
 
 export const csvImportPartnerSchema = z.object({
   name: z.string().max(100).optional(),
-  email: z.string().email().optional(),
+  // Email is the partner's identity: it is required for portal login and for
+  // customers/commissions to link to them. Rows without a valid email are
+  // reported per-row rather than silently inserted with an empty email.
+  email: z.string().email(),
   referralCode: z.string().max(50).optional(),
   commissionRate: z.number().min(0.01).max(1).optional(),
   status: z.enum(["active", "pending", "inactive"]).optional(),
@@ -298,6 +303,18 @@ export const csvImportSchema = z.object({
   partners: z.array(csvImportPartnerSchema).default([]),
   customers: z.array(csvImportCustomerSchema).default([]),
   commissions: z.array(csvImportCommissionSchema).default([]),
+  options: z.object({
+    commissionMode: z.enum(["csv", "recalculate"]).default("csv"),
+  }).optional(),
+});
+
+// Envelope for per-row validation: rows arrive as unknown[] so each can be
+// validated individually (one bad row must not reject the whole import).
+export const csvImportEnvelopeSchema = z.object({
+  projectId: z.string().min(1, "projectId is required"),
+  partners: z.array(z.unknown()).default([]),
+  customers: z.array(z.unknown()).default([]),
+  commissions: z.array(z.unknown()).default([]),
   options: z.object({
     commissionMode: z.enum(["csv", "recalculate"]).default("csv"),
   }).optional(),

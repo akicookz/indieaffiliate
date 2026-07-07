@@ -104,6 +104,7 @@ interface StripeCharge {
 interface StripeInvoice {
   id: string;
   amount_paid: number;
+  currency: string;
   status: string;
   customer: string;
   subscription: string | null;

@@ -346,6 +346,28 @@ function Onboarding() {
     },
   });
 
+  // Remove a partner that was already created server-side (the trash button):
+  // deletes it on the backend too, not just from local state.
+  const deletePartnerMutation = useMutation({
+    mutationFn: async (partnerId: string) => {
+      const response = await fetch(`/api/partners/${partnerId}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(
+          (body as { error?: string }).error ?? "Failed to remove partner",
+        );
+      }
+      return partnerId;
+    },
+    onSuccess: (partnerId) => {
+      setAddedPartners((prev) => prev.filter((x) => x.id !== partnerId));
+      queryClient.invalidateQueries({ queryKey: ["partners"] });
+      queryClient.invalidateQueries({ queryKey: ["partners-for-assign"] });
+    },
+  });
+
   // Fetch partners (for the sync step)
   const { data: partnersData } = useQuery({
     queryKey: ["partners-for-assign", project?.id],
@@ -1003,8 +1025,9 @@ function Onboarding() {
                           </Badge>
                         </div>
                         <button
-                          onClick={() => setAddedPartners((prev) => prev.filter((x) => x.id !== p.id))}
-                          className="text-muted-foreground hover:text-destructive ml-2 shrink-0"
+                          onClick={() => deletePartnerMutation.mutate(p.id)}
+                          disabled={deletePartnerMutation.isPending}
+                          className="text-muted-foreground hover:text-destructive ml-2 shrink-0 disabled:opacity-50"
                           aria-label="Remove"
                         >
                           <Trash2 className="w-3.5 h-3.5" />

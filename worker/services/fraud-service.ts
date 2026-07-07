@@ -440,7 +440,7 @@ export class FraudService {
    * Get fraud flags for a project with optional filters.
    */
   async getFlagsByProject(
-    projectId: string,
+    projectId: string | string[],
     filters?: {
       status?: string;
       type?: string;
@@ -453,7 +453,9 @@ export class FraudService {
       projectName: string;
     })[]
   > {
-    const conditions = [eq(fraudFlags.projectId, projectId)];
+    const projectIds = Array.isArray(projectId) ? projectId : [projectId];
+    if (projectIds.length === 0) return [];
+    const conditions = [inArray(fraudFlags.projectId, projectIds)];
 
     if (filters?.status && filters.status !== "all") {
       conditions.push(
@@ -497,13 +499,16 @@ export class FraudService {
       partnerRows.map((p) => [p.id, { name: p.name, email: p.email }]),
     );
 
-    // Get project name
-    const projectRows = await this.db
-      .select({ name: projects.name })
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1);
-    const projectName = projectRows[0]?.name ?? "Unknown";
+    // Get project names for every project present in the results
+    const flagProjectIds = [...new Set(rows.map((r) => r.projectId))];
+    const projectRows =
+      flagProjectIds.length > 0
+        ? await this.db
+            .select({ id: projects.id, name: projects.name })
+            .from(projects)
+            .where(inArray(projects.id, flagProjectIds))
+        : [];
+    const projectNameMap = new Map(projectRows.map((p) => [p.id, p.name]));
 
     return rows.map((row) => ({
       ...row,
@@ -513,14 +518,18 @@ export class FraudService {
       partnerEmail: row.partnerId
         ? (partnerMap.get(row.partnerId)?.email ?? "")
         : "",
-      projectName,
+      projectName: projectNameMap.get(row.projectId) ?? "Unknown",
     }));
   }
 
   /**
    * Get aggregate stats for fraud flags on a project.
    */
-  async getFlagStats(projectId: string) {
+  async getFlagStats(projectId: string | string[]) {
+    const projectIds = Array.isArray(projectId) ? projectId : [projectId];
+    if (projectIds.length === 0) {
+      return { total: 0, open: 0, high: 0, dismissed: 0, confirmed: 0 };
+    }
     const rows = await this.db
       .select({
         total: sql<number>`count(*)`,
@@ -530,7 +539,7 @@ export class FraudService {
         confirmed: sql<number>`sum(case when ${fraudFlags.status} = 'confirmed' then 1 else 0 end)`,
       })
       .from(fraudFlags)
-      .where(eq(fraudFlags.projectId, projectId));
+      .where(inArray(fraudFlags.projectId, projectIds));
 
     const row = rows[0];
     return {

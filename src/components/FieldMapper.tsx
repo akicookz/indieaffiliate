@@ -21,7 +21,7 @@ interface FieldMapperProps {
 
 const PARTNER_FIELDS = [
   { value: "name", label: "Partner Name", required: false },
-  { value: "email", label: "Partner Email", required: false },
+  { value: "email", label: "Partner Email", required: true },
   { value: "referralCode", label: "Referral Code", required: false },
   { value: "commissionRate", label: "Commission Rate", required: false },
   { value: "payoutLink", label: "Payout Method", required: false },

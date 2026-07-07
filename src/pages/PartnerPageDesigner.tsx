@@ -3,7 +3,6 @@ import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Upload,
-  Check,
   Loader2,
   Monitor,
   Smartphone,
@@ -29,6 +28,58 @@ import {
 } from "@/components/ui/popover";
 import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import PageHeader from "@/components/PageHeader";
+import PartnerJoinView, {
+  type PartnerJoinForm,
+} from "@/components/PartnerJoinView";
+
+// Starter templates for the partner agreement. Selecting one fills the editor;
+// the owner can edit freely or write their own from scratch.
+const AGREEMENT_TEMPLATES: { label: string; text: string }[] = [
+  {
+    label: "Standard",
+    text: `Partner Agreement
+
+1. Commission. You earn the commission rate shown on the program page for qualifying sales attributed to your referral link. Commissions are calculated on net revenue after refunds, chargebacks, and cancellations.
+
+2. Payouts. Approved commissions are paid monthly. A commission is approved once the referred payment has cleared and any refund window has passed.
+
+3. Attribution. A sale is attributed to you when a customer you referred completes a purchase. The program owner determines attribution in good faith.
+
+4. Acceptable use. No spam, misleading claims, trademark bidding, self-referrals, or incentivized traffic. Violations may result in withheld commissions and removal from the program.
+
+5. Term. Either party may end this arrangement at any time. Commissions already approved will still be paid.`,
+  },
+  {
+    label: "Simple",
+    text: `Partner Agreement
+
+By joining, you agree to promote us honestly and follow our brand guidelines. You'll earn the commission shown on this page on qualifying sales, paid monthly after refund windows close. No spam or self-referrals. Either side can end the partnership anytime; approved commissions are still paid.`,
+  },
+  { label: "Clear", text: "" },
+];
+
+// The preview is non-interactive — it shows the form's initial state only.
+const INERT_FORM: PartnerJoinForm = {
+  step: "form",
+  name: "",
+  email: "",
+  promo: "",
+  otp: "",
+  onName: () => {},
+  onEmail: () => {},
+  onPromo: () => {},
+  onOtp: () => {},
+  onSubmit: () => {},
+  onVerify: () => {},
+  onResend: () => {},
+  submitting: false,
+  verifying: false,
+  error: null,
+  notice: null,
+  resendCooldown: 0,
+  interactive: false,
+};
 
 interface CommissionProgram {
   id: string;
@@ -36,6 +87,9 @@ interface CommissionProgram {
   type: "recurring" | "lifetime" | "one-time";
   rate: number;
   flatAmount: number | null;
+  durationMonths?: number | null;
+  minPayout?: number | null;
+  payoutCadence?: string | null;
 }
 
 interface Project {
@@ -74,6 +128,8 @@ interface BrandingData {
   wordmark: string | null;
   backgroundMode: BackgroundMode;
   layout: Layout;
+  theme?: string;
+  partnerAgreement?: string | null;
   showSocialProof: boolean;
   showFaq: boolean;
   showEarningsCalculator: boolean;
@@ -99,13 +155,7 @@ const ACCENTS = [
   { value: "#db2777", label: "Pink" },
 ] as const;
 
-const BACKGROUNDS = [
-  { value: "cream", label: "Cream", bg: "#f7f5f0", fg: "#1c1917", muted: "#78716c" },
-  { value: "white", label: "White", bg: "#ffffff", fg: "#1c1917", muted: "#78716c" },
-  { value: "dark", label: "Dark", bg: "#0a0a0a", fg: "#ededed", muted: "#a3a3a3" },
-] as const;
-
-type BackgroundMode = (typeof BACKGROUNDS)[number]["value"];
+type BackgroundMode = "cream" | "white" | "dark";
 type Layout = "split" | "stacked" | "cover";
 type DeviceMode = "desktop" | "mobile";
 
@@ -129,32 +179,16 @@ function formatProgramAmount(amount: number): string {
 
 const DEFAULTS = {
   brandColor: "#c2410c",
-  headline: "Earn 30% recurring on every referral",
+  // Keep defaults free of specific rates/durations — those come from the real
+  // commission program (shown in the benefits card + calculator), so hardcoding
+  // numbers here would contradict it.
+  headline: "Earn recurring commission on every referral",
   description:
-    "Join the partner program. Get paid monthly for everyone you bring along — for the first 3 months of their subscription, no cap.",
+    "Join the partner program and get paid for every customer you bring along.",
   ctaText: "Apply to join",
   borderRadius: "soft",
   autoApprove: false,
 };
-
-const FAQ_ITEMS = [
-  {
-    q: "When do I get paid?",
-    a: "Payouts run on the 12th of each month for the prior month.",
-  },
-  {
-    q: "What about refunds?",
-    a: "A 30-day clawback window applies to fresh referrals.",
-  },
-  {
-    q: "Can I use paid ads?",
-    a: "Branded paid ads are not allowed.",
-  },
-  {
-    q: "Is there a minimum payout?",
-    a: "Yes — $50, accumulated until met.",
-  },
-];
 
 function PartnerPageDesigner() {
   const { slug } = useParams<{ slug: string }>();
@@ -171,29 +205,27 @@ function PartnerPageDesigner() {
   const [portalName, setPortalName] = useState("");
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [logoKey, setLogoKey] = useState<string | null>(null);
-  const [heroImageUrl, setHeroImageUrl] = useState<string | null>(null);
-  const [heroImageKey, setHeroImageKey] = useState<string | null>(null);
   const [wordmark, setWordmark] = useState("");
   const [background, setBackground] = useState<BackgroundMode>("cream");
-  const [layout, setLayout] = useState<Layout>("split");
+  const [partnerAgreement, setPartnerAgreement] = useState("");
   const [device, setDevice] = useState<DeviceMode>("desktop");
-  const [sections, setSections] = useState({
+  // The join page uses one fixed layout and a fixed set of sections (no picker,
+  // no per-section toggles, no earnings calculator).
+  const layout: Layout = "split";
+  const sections = {
     socialProof: true,
     faq: true,
     earningsCalculator: false,
     termsAcceptance: true,
-  });
+  };
   const [socialProofText, setSocialProofText] = useState("");
   const [avatarSlots, setAvatarSlots] = useState<AvatarSlot[]>(
     emptyAvatarSlots(),
   );
   const [faqs, setFaqs] = useState<FaqItem[]>([]);
-  const [samplePlanName, setSamplePlanName] = useState("");
-  const [samplePlanPrice, setSamplePlanPrice] = useState<string>("");
   const [activeTab, setActiveTab] = useState<"general" | "content">("general");
 
   const logoInputRef = useRef<HTMLInputElement>(null);
-  const heroImageInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   const { data: projectsData } = useQuery({
@@ -247,28 +279,11 @@ function PartnerPageDesigner() {
     } else {
       setLogoKey(null);
     }
-    setHeroImageUrl(b.backgroundImage);
-    if (b.backgroundImage) {
-      const parts = b.backgroundImage.split("/api/uploads/");
-      setHeroImageKey(parts.length > 1 ? parts[1] : null);
-    } else {
-      setHeroImageKey(null);
-    }
     setWordmark(b.wordmark ?? "");
     setBackground(b.backgroundMode ?? "cream");
-    setLayout(b.layout ?? "split");
-    setSections({
-      socialProof: b.showSocialProof ?? true,
-      faq: b.showFaq ?? true,
-      earningsCalculator: b.showEarningsCalculator ?? false,
-      termsAcceptance: b.showTermsAcceptance ?? true,
-    });
+    setPartnerAgreement(b.partnerAgreement ?? "");
     setSocialProofText(b.socialProofText ?? "");
     setFaqs(b.faqs ?? []);
-    setSamplePlanName(b.samplePlanName ?? "");
-    setSamplePlanPrice(
-      b.samplePlanPrice != null ? String(b.samplePlanPrice) : "",
-    );
     if (b.socialProofAvatars && b.socialProofAvatars.length > 0) {
       const hydrated = emptyAvatarSlots();
       b.socialProofAvatars.slice(0, 5).forEach((a, i) => {
@@ -328,10 +343,11 @@ function PartnerPageDesigner() {
           autoApprove,
           defaultCommissionProgramId,
           logo: logoKey,
-          backgroundImage: heroImageKey,
+          backgroundImage: null,
           portalName: portalName.trim() || null,
           wordmark: wordmark.trim() || null,
           backgroundMode: background,
+          partnerAgreement: partnerAgreement.trim() || null,
           layout,
           showSocialProof: sections.socialProof,
           showFaq: sections.faq,
@@ -345,10 +361,8 @@ function PartnerPageDesigner() {
                   .filter((f) => f.q.trim() && f.a.trim())
                   .map((f) => ({ q: f.q.trim(), a: f.a.trim() }))
               : null,
-          samplePlanName: samplePlanName.trim() || null,
-          samplePlanPrice: samplePlanPrice.trim()
-            ? Number(samplePlanPrice)
-            : null,
+          samplePlanName: null,
+          samplePlanPrice: null,
         }),
       });
       if (!response.ok) throw new Error("Failed to save branding");
@@ -370,21 +384,6 @@ function PartnerPageDesigner() {
     [uploadMutation]
   );
 
-  const handleHeroImageUpload = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      const result = await uploadMutation.mutateAsync(file);
-      setHeroImageUrl(result.url);
-      setHeroImageKey(result.key);
-    },
-    [uploadMutation],
-  );
-
-  function clearHeroImage() {
-    setHeroImageUrl(null);
-    setHeroImageKey(null);
-  }
 
   const handleAvatarUpload = useCallback(
     async (idx: number, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -431,20 +430,13 @@ function PartnerPageDesigner() {
     setDescription(DEFAULTS.description);
     setCtaText(DEFAULTS.ctaText);
     setBackground("cream");
-    setLayout("split");
-    setSections({
-      socialProof: true,
-      faq: true,
-      earningsCalculator: false,
-      termsAcceptance: true,
-    });
     setSocialProofText("");
     setAvatarSlots(emptyAvatarSlots());
   }
 
   if (isLoading || !project) {
     return (
-      <div className="p-6 space-y-6">
+      <div className="space-y-6">
         <Skeleton className="h-8 w-64" />
         <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
           <Skeleton className="h-[600px]" />
@@ -456,11 +448,18 @@ function PartnerPageDesigner() {
 
   const joinUrl = brandingData?.joinUrl ?? `${window.location.origin}/join/${slug}`;
   const previewUrl = joinUrl.replace(/^https?:\/\//, "");
+  const selectedProgram =
+    programs.find((p) => p.id === defaultCommissionProgramId) ?? null;
 
   return (
-    <div className="p-6 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
+    <div className="space-y-6">
+      <PageHeader
+        title="Partner page"
+        subtitle="Customize the public join page partners use to sign up."
+      />
+      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
       {/* ─── Left: Design panel ─────────────────────────────────────────── */}
-      <div className="bg-card border rounded-md p-5 space-y-6 self-start lg:sticky lg:top-6">
+      <div className="bg-card shadow-card rounded-lg p-5 space-y-6 self-start lg:sticky lg:top-6">
         <div className="flex items-center justify-between">
           <h2 className="text-card-title text-foreground">Design</h2>
           <button
@@ -535,14 +534,6 @@ function PartnerPageDesigner() {
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <p className="text-eyebrow-muted">Background</p>
-            <SegmentedControl
-              value={background}
-              onChange={(v) => setBackground(v as BackgroundMode)}
-              options={BACKGROUNDS.map((b) => ({ value: b.value, label: b.label }))}
-            />
-          </div>
         </section>
 
         {/* COPY */}
@@ -572,102 +563,6 @@ function PartnerPageDesigner() {
           <div className="space-y-1.5">
             <p className="text-eyebrow-muted">CTA Button</p>
             <Input value={ctaText} onChange={(e) => setCtaText(e.target.value)} maxLength={50} />
-          </div>
-        </section>
-
-        {/* LAYOUT */}
-        <section className="space-y-3">
-          <p className="text-eyebrow-muted">Layout</p>
-          <SegmentedControl
-            value={layout}
-            onChange={(v) => setLayout(v as Layout)}
-            options={[
-              { value: "split", label: "Split" },
-              { value: "stacked", label: "Stacked" },
-              { value: "cover", label: "Cover" },
-            ]}
-          />
-
-          {layout === "cover" && (
-            <div className="space-y-1.5">
-              <p className="text-eyebrow-muted">Hero image</p>
-              <div className="flex gap-2 items-center">
-                <div
-                  className="size-12 rounded border border-border bg-muted/40 overflow-hidden flex items-center justify-center shrink-0"
-                  style={
-                    heroImageUrl
-                      ? {
-                          backgroundImage: `url(${heroImageUrl})`,
-                          backgroundSize: "cover",
-                          backgroundPosition: "center",
-                        }
-                      : undefined
-                  }
-                >
-                  {!heroImageUrl && (
-                    <span className="text-xs text-muted-foreground">none</span>
-                  )}
-                </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => heroImageInputRef.current?.click()}
-                  className="flex-1"
-                >
-                  <Upload className="size-3.5" />
-                  {heroImageUrl ? "Replace" : "Upload"}
-                </Button>
-                {heroImageUrl && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={clearHeroImage}
-                    aria-label="Clear hero image"
-                  >
-                    <X className="size-4" />
-                  </Button>
-                )}
-                <input
-                  ref={heroImageInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  className="hidden"
-                  onChange={handleHeroImageUpload}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Falls back to brand color if no image is set.
-              </p>
-            </div>
-          )}
-        </section>
-
-        {/* SECTIONS */}
-        <section className="space-y-2">
-          <p className="text-eyebrow-muted">Sections</p>
-          <div className="space-y-3 pt-1">
-            <SectionToggle
-              label="Social proof"
-              checked={sections.socialProof}
-              onChange={(v) => setSections((s) => ({ ...s, socialProof: v }))}
-            />
-            <SectionToggle
-              label="FAQ"
-              checked={sections.faq}
-              onChange={(v) => setSections((s) => ({ ...s, faq: v }))}
-            />
-            <SectionToggle
-              label="Earnings calculator"
-              checked={sections.earningsCalculator}
-              onChange={(v) => setSections((s) => ({ ...s, earningsCalculator: v }))}
-            />
-            <SectionToggle
-              label="Terms acceptance"
-              checked={sections.termsAcceptance}
-              onChange={(v) => setSections((s) => ({ ...s, termsAcceptance: v }))}
-            />
           </div>
         </section>
 
@@ -793,48 +688,40 @@ function PartnerPageDesigner() {
           </div>
         </section>
 
+        {/* PARTNER AGREEMENT */}
+        <section className="space-y-3 pt-4 border-t border-border">
+          <p className="text-eyebrow-muted">Partner agreement</p>
+          <p className="text-xs text-muted-foreground">
+            Opens when a partner clicks “Partner Agreement.” Start from a
+            template and edit it, or write your own. Leave blank to use a
+            standard default.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {AGREEMENT_TEMPLATES.map((t) => (
+              <Button
+                key={t.label}
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setPartnerAgreement(t.text)}
+              >
+                {t.label}
+              </Button>
+            ))}
+          </div>
+          <Textarea
+            value={partnerAgreement}
+            onChange={(e) => setPartnerAgreement(e.target.value)}
+            placeholder="Write your partner agreement, or pick a template above…"
+            rows={8}
+          />
+        </section>
+
           </>
         )}
 
         {activeTab === "general" && (
           <>
-        {/* EARNINGS CALCULATOR */}
-        {sections.earningsCalculator && (
-          <section className="space-y-3">
-            <p className="text-eyebrow-muted">Earnings calculator</p>
-            <p className="text-xs text-muted-foreground">
-              Visitors will see an interactive earnings preview using the
-              default commission program.
-            </p>
-            <div className="space-y-1.5">
-              <p className="text-eyebrow-muted">Sample plan name</p>
-              <Input
-                value={samplePlanName}
-                onChange={(e) => setSamplePlanName(e.target.value)}
-                placeholder="Pro plan"
-                maxLength={80}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <p className="text-eyebrow-muted">Sample plan price ($/mo)</p>
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={samplePlanPrice}
-                onChange={(e) => setSamplePlanPrice(e.target.value)}
-                placeholder="99"
-              />
-            </div>
-            {!defaultCommissionProgramId && (
-              <p className="text-xs text-warning">
-                Pick a default commission program below for the calculator to
-                work.
-              </p>
-            )}
-          </section>
-        )}
-
         {/* Hidden controls retained */}
         <section className="space-y-3 pt-2 border-t border-border">
           <div className="flex items-center justify-between gap-3">
@@ -957,38 +844,47 @@ function PartnerPageDesigner() {
         </div>
 
         {/* Preview frame */}
-        <div className="bg-muted/40 border rounded-md p-4">
+        <div className="bg-muted/40 shadow-ring rounded-lg p-4">
           <div
             className={cn(
-              "mx-auto bg-background border rounded-md overflow-hidden transition-all duration-200",
+              "mx-auto bg-background shadow-ring rounded-lg overflow-hidden transition-all duration-200",
               device === "mobile" ? "max-w-sm" : "w-full"
             )}
           >
-            <PartnerPagePreview
-              wordmark={wordmark || project.name.toUpperCase()}
-              brandColor={brandColor}
-              background={background}
-              layout={layout}
-              headline={headline}
-              description={description}
-              ctaText={ctaText}
-              logoUrl={logoUrl}
-              heroImageUrl={heroImageUrl}
-              sections={sections}
-              socialProofText={socialProofText}
-              avatarSlots={avatarSlots}
-              faqs={faqs}
-              samplePlanName={samplePlanName}
-              samplePlanPrice={
-                samplePlanPrice.trim() ? Number(samplePlanPrice) : null
-              }
-              selectedProgram={
-                programs.find((p) => p.id === defaultCommissionProgramId) ??
-                null
-              }
+            <PartnerJoinView
+              accent={brandColor}
+              data={{
+                wordmark: wordmark || project.name,
+                projectName: project.name,
+                partnerAgreement: partnerAgreement.trim() || null,
+                logo: logoUrl,
+                headline,
+                description,
+                ctaText,
+                program: selectedProgram
+                  ? {
+                      rate: selectedProgram.rate,
+                      type: selectedProgram.type,
+                      durationMonths: selectedProgram.durationMonths ?? null,
+                      flatAmount: selectedProgram.flatAmount,
+                      minPayout: selectedProgram.minPayout ?? null,
+                      payoutCadence: selectedProgram.payoutCadence ?? null,
+                    }
+                  : null,
+                socialProofText: socialProofText.trim() || null,
+                avatars: avatarSlots.map((s) => ({
+                  image: s.imageUrl,
+                  initials: s.initials,
+                })),
+                faqs: faqs
+                  .filter((f) => f.q.trim() && f.a.trim())
+                  .map((f) => ({ q: f.q.trim(), a: f.a.trim() })),
+              }}
+              form={INERT_FORM}
             />
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -1036,23 +932,6 @@ function SegmentedControl({
   );
 }
 
-// ─── Section Toggle Row ────────────────────────────────────────────────────
-function SectionToggle({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <label className="flex items-center justify-between gap-3 cursor-pointer">
-      <span className="text-sm text-foreground">{label}</span>
-      <Switch checked={checked} onCheckedChange={onChange} />
-    </label>
-  );
-}
 
 // ─── Avatar Stack (compact inline editor) ──────────────────────────────────
 function AvatarStack({
@@ -1185,531 +1064,6 @@ function AvatarStack({
             </div>
           </PopoverContent>
         </Popover>
-      )}
-    </div>
-  );
-}
-
-// ─── Earnings Calculator (shared by preview + live page) ──────────────────
-function EarningsCalculatorPreview({
-  brandColor,
-  tinted,
-  fg,
-  muted,
-  cardBg,
-  borderColor,
-  planName,
-  planPrice,
-  program,
-}: {
-  brandColor: string;
-  tinted: string;
-  fg: string;
-  muted: string;
-  cardBg: string;
-  borderColor: string;
-  planName: string;
-  planPrice: number;
-  program: CommissionProgram & { durationMonths?: number | null };
-}) {
-  const [referrals, setReferrals] = useState(10);
-  const rateFrac = program.rate / 100;
-  const oneTimePerReferral =
-    program.type === "one-time" && program.flatAmount != null
-      ? program.flatAmount
-      : planPrice * rateFrac;
-  // For recurring with a duration cap, multiply by min(duration, 1) per
-  // referral and keep monthly view; for lifetime, show monthly recurring;
-  // for one-time, show one-time per referral.
-  const isOneTime = program.type === "one-time";
-  const monthlyPerReferral = planPrice * rateFrac;
-  const monthlyEarnings = isOneTime ? 0 : referrals * monthlyPerReferral;
-  const oneTimeEarnings = isOneTime ? referrals * oneTimePerReferral : 0;
-  const annualOrTotal = (() => {
-    if (isOneTime) return oneTimeEarnings;
-    if (program.type === "recurring" && program.durationMonths) {
-      return referrals * monthlyPerReferral * program.durationMonths;
-    }
-    // lifetime: show 12-month projection
-    return referrals * monthlyPerReferral * 12;
-  })();
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <p
-          className="text-xs font-semibold tracking-[0.12em] uppercase"
-          style={{ color: muted }}
-        >
-          Earnings calculator
-        </p>
-        <h2
-          className="font-heading text-2xl tracking-tight mt-1"
-          style={{ color: fg }}
-        >
-          See what you'd earn
-        </h2>
-      </div>
-
-      <div
-        className="rounded-md border p-5 space-y-5"
-        style={{ backgroundColor: cardBg, borderColor }}
-      >
-        <div className="flex items-center justify-between text-sm">
-          <span style={{ color: muted }}>{planName}</span>
-          <span className="font-mono" style={{ color: fg }}>
-            ${planPrice}/mo
-          </span>
-        </div>
-
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-xs">
-            <span style={{ color: muted }}>Referrals you bring</span>
-            <span className="font-mono" style={{ color: fg }}>
-              {referrals}
-            </span>
-          </div>
-          <input
-            type="range"
-            min={1}
-            max={50}
-            value={referrals}
-            onChange={(e) => setReferrals(Number(e.target.value))}
-            className="w-full"
-            style={{ accentColor: brandColor }}
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 pt-1">
-          <div
-            className="rounded-md p-3"
-            style={{ backgroundColor: tinted }}
-          >
-            <p className="text-[10px] font-semibold tracking-[0.1em] uppercase" style={{ color: brandColor }}>
-              {isOneTime ? "One-time" : "Per month"}
-            </p>
-            <p
-              className="font-heading text-2xl mt-0.5"
-              style={{ color: fg }}
-            >
-              ${(isOneTime ? oneTimeEarnings : monthlyEarnings).toFixed(0)}
-            </p>
-          </div>
-          <div
-            className="rounded-md p-3 border"
-            style={{ borderColor }}
-          >
-            <p className="text-[10px] font-semibold tracking-[0.1em] uppercase" style={{ color: muted }}>
-              {program.type === "recurring" && program.durationMonths
-                ? `Over ${program.durationMonths} months`
-                : isOneTime
-                  ? "Total"
-                  : "Annual projection"}
-            </p>
-            <p
-              className="font-heading text-2xl mt-0.5"
-              style={{ color: fg }}
-            >
-              ${annualOrTotal.toFixed(0)}
-            </p>
-          </div>
-        </div>
-
-        <p className="text-xs" style={{ color: muted }}>
-          Based on {program.name} (
-          {isOneTime && program.flatAmount != null
-            ? `${formatProgramAmount(program.flatAmount)} flat`
-            : `${program.rate}%`}{" "}
-          {program.type}
-          {program.type === "recurring" && program.durationMonths
-            ? ` × ${program.durationMonths} mo`
-            : ""}
-          ).
-        </p>
-      </div>
-    </div>
-  );
-}
-
-// ─── Live Preview ──────────────────────────────────────────────────────────
-function PartnerPagePreview({
-  wordmark,
-  brandColor,
-  background,
-  layout,
-  headline,
-  description,
-  ctaText,
-  logoUrl,
-  heroImageUrl,
-  sections,
-  socialProofText,
-  avatarSlots,
-  faqs,
-  samplePlanName,
-  samplePlanPrice,
-  selectedProgram,
-}: {
-  wordmark: string;
-  brandColor: string;
-  background: BackgroundMode;
-  layout: Layout;
-  headline: string;
-  description: string;
-  ctaText: string;
-  logoUrl: string | null;
-  heroImageUrl: string | null;
-  sections: {
-    socialProof: boolean;
-    faq: boolean;
-    earningsCalculator: boolean;
-    termsAcceptance: boolean;
-  };
-  socialProofText: string;
-  avatarSlots: AvatarSlot[];
-  faqs: FaqItem[];
-  samplePlanName: string;
-  samplePlanPrice: number | null;
-  selectedProgram: CommissionProgram | null;
-}) {
-  const visibleAvatars = avatarSlots.filter(
-    (s) => s.imageUrl || s.initials,
-  );
-  const hasSocialProof =
-    sections.socialProof &&
-    (visibleAvatars.length > 0 || socialProofText.trim().length > 0);
-  const bg = BACKGROUNDS.find((b) => b.value === background) ?? BACKGROUNDS[0];
-  const tinted = background === "dark"
-    ? `${brandColor}33`
-    : `${brandColor}22`;
-  const isCover = layout === "cover";
-  const headerFg = isCover ? "#ffffff" : bg.fg;
-  const headerMuted = isCover ? "rgba(255,255,255,0.7)" : bg.muted;
-
-  return (
-    <div
-      style={{
-        backgroundColor: bg.bg,
-        color: bg.fg,
-        fontFamily: '"Inter", system-ui, sans-serif',
-      }}
-      className="min-h-[600px] flex flex-col relative"
-    >
-      {/* Header (overlay style in cover) */}
-      <header
-        className={cn(
-          "flex items-center justify-between px-8 py-5",
-          isCover && "absolute top-0 left-0 right-0 z-10",
-        )}
-      >
-        <div className="flex items-center gap-2.5">
-          {logoUrl ? (
-            <img src={logoUrl} alt="" className="h-7 object-contain" />
-          ) : (
-            <div
-              className="size-7 rounded-md flex items-center justify-center font-heading text-sm text-white"
-              style={{ backgroundColor: brandColor }}
-            >
-              {wordmark.charAt(0).toLowerCase() || "t"}
-            </div>
-          )}
-          <span
-            className="font-heading text-base tracking-wide"
-            style={{ color: headerFg }}
-          >
-            {wordmark}
-          </span>
-        </div>
-        <nav
-          className="flex items-center gap-6 text-sm"
-          style={{ color: headerMuted }}
-        >
-          <a href="#how">How it works</a>
-          <a href="#terms">Terms</a>
-          <a href="#signin" style={{ color: headerFg }}>
-            Sign in
-          </a>
-        </nav>
-      </header>
-
-      {/* Hero */}
-      {isCover ? (
-        <section
-          className="relative min-h-[500px] flex items-center justify-center px-8 py-24 text-center overflow-hidden"
-          style={{
-            backgroundColor: brandColor,
-            backgroundImage: heroImageUrl ? `url(${heroImageUrl})` : undefined,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-          }}
-        >
-          {heroImageUrl && (
-            <div
-              className="absolute inset-0"
-              style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
-            />
-          )}
-          <div className="relative z-[1] max-w-3xl space-y-6">
-            <span
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium"
-              style={{
-                backgroundColor: "rgba(255,255,255,0.15)",
-                color: "#ffffff",
-              }}
-            >
-              <span
-                className="size-1.5 rounded-full"
-                style={{ backgroundColor: "#ffffff" }}
-              />
-              NOW ACCEPTING
-            </span>
-
-            <h1
-              className="font-heading text-5xl md:text-6xl leading-[1.05] tracking-tight"
-              style={{ color: "#ffffff" }}
-            >
-              {headline}
-            </h1>
-
-            <p
-              className="text-base md:text-lg leading-relaxed mx-auto max-w-xl"
-              style={{ color: "rgba(255,255,255,0.85)" }}
-            >
-              {description}
-            </p>
-
-            <div className="flex items-center justify-center gap-3 pt-2">
-              <button
-                className="px-5 py-2.5 rounded-md text-sm font-medium inline-flex items-center gap-2"
-                style={{ backgroundColor: "#ffffff", color: brandColor }}
-              >
-                {ctaText} <span aria-hidden>→</span>
-              </button>
-              <button
-                className="px-5 py-2.5 rounded-md text-sm font-medium border"
-                style={{
-                  borderColor: "rgba(255,255,255,0.4)",
-                  color: "#ffffff",
-                }}
-              >
-                How it works
-              </button>
-            </div>
-
-            {hasSocialProof && (
-              <div className="flex items-center justify-center gap-3 pt-3">
-                {visibleAvatars.length > 0 && (
-                  <div className="flex -space-x-1.5">
-                    {visibleAvatars.map((slot, idx) => (
-                      <div
-                        key={idx}
-                        className="size-7 rounded-full border-2 flex items-center justify-center text-[10px] font-semibold text-white overflow-hidden"
-                        style={{
-                          backgroundColor: slot.imageUrl
-                            ? "transparent"
-                            : AVATAR_PALETTE[idx % AVATAR_PALETTE.length],
-                          borderColor: "#ffffff",
-                        }}
-                      >
-                        {slot.imageUrl ? (
-                          <img
-                            src={slot.imageUrl}
-                            alt=""
-                            className="size-full object-cover"
-                          />
-                        ) : (
-                          slot.initials
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {socialProofText.trim() && (
-                  <span
-                    className="text-sm"
-                    style={{ color: "rgba(255,255,255,0.85)" }}
-                  >
-                    {socialProofText}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-        </section>
-      ) : (
-        <section
-          className={cn(
-            "px-8 py-10 grid gap-10",
-            layout === "split"
-              ? "grid-cols-1 lg:grid-cols-[1fr_320px] items-start"
-              : "grid-cols-1",
-          )}
-        >
-          <div className={cn("space-y-5", layout === "stacked" && "max-w-3xl")}>
-            <span
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium"
-              style={{ backgroundColor: tinted, color: brandColor }}
-            >
-              <span
-                className="size-1.5 rounded-full"
-                style={{ backgroundColor: brandColor }}
-              />
-              NOW ACCEPTING
-            </span>
-
-            <h1
-              className="font-heading leading-[1.05] tracking-tight text-4xl md:text-5xl"
-              style={{ color: bg.fg }}
-            >
-              {headline}
-            </h1>
-
-            <p
-              className="text-base max-w-xl leading-relaxed"
-              style={{ color: bg.muted }}
-            >
-              {description}
-            </p>
-
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                className="px-5 py-2.5 rounded-md text-sm font-medium text-white inline-flex items-center gap-2"
-                style={{ backgroundColor: brandColor }}
-              >
-                {ctaText} <span aria-hidden>→</span>
-              </button>
-              <button
-                className="px-5 py-2.5 rounded-md text-sm font-medium border"
-                style={{ borderColor: bg.muted + "55", color: bg.fg }}
-              >
-                How it works
-              </button>
-            </div>
-
-            {hasSocialProof && (
-              <div className="flex items-center gap-3 pt-3">
-                {visibleAvatars.length > 0 && (
-                  <div className="flex -space-x-1.5">
-                    {visibleAvatars.map((slot, idx) => (
-                      <div
-                        key={idx}
-                        className="size-7 rounded-full border-2 flex items-center justify-center text-[10px] font-semibold text-white overflow-hidden"
-                        style={{
-                          backgroundColor: slot.imageUrl
-                            ? "transparent"
-                            : AVATAR_PALETTE[idx % AVATAR_PALETTE.length],
-                          borderColor: bg.bg,
-                        }}
-                      >
-                        {slot.imageUrl ? (
-                          <img
-                            src={slot.imageUrl}
-                            alt=""
-                            className="size-full object-cover"
-                          />
-                        ) : (
-                          slot.initials
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {socialProofText.trim() && (
-                  <span className="text-sm" style={{ color: bg.muted }}>
-                    {socialProofText}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-
-          {layout === "split" && (
-            <aside
-              className="rounded-md border p-6 space-y-4"
-              style={{
-                backgroundColor: background === "dark" ? "#171717" : "#ffffff",
-                borderColor: bg.muted + "33",
-              }}
-            >
-              <p className="text-eyebrow-muted">Earn alongside</p>
-              <ul className="space-y-3">
-                {[
-                  { t: "Recurring 30%", d: "For the first 3 months" },
-                  { t: "Net-15 payouts", d: "Wise, PayPal, or ACH" },
-                  { t: "Live attribution", d: "See clicks & conversions live" },
-                  { t: "Fair fraud rules", d: "No surprises, no clawbacks" },
-                ].map((item) => (
-                  <li key={item.t} className="flex items-start gap-2.5">
-                    <span
-                      className="size-5 rounded flex items-center justify-center shrink-0 mt-0.5"
-                      style={{ backgroundColor: tinted }}
-                    >
-                      <Check className="size-3" style={{ color: brandColor }} />
-                    </span>
-                    <div>
-                      <p
-                        className="text-sm font-medium"
-                        style={{ color: bg.fg }}
-                      >
-                        {item.t}
-                      </p>
-                      <p className="text-xs" style={{ color: bg.muted }}>
-                        {item.d}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </aside>
-          )}
-        </section>
-      )}
-
-      {/* Earnings Calculator */}
-      {sections.earningsCalculator &&
-        selectedProgram &&
-        samplePlanPrice != null &&
-        samplePlanPrice > 0 && (
-          <section
-            className="px-8 py-10 border-t"
-            style={{ borderColor: bg.muted + "33" }}
-          >
-            <EarningsCalculatorPreview
-              brandColor={brandColor}
-              tinted={tinted}
-              fg={bg.fg}
-              muted={bg.muted}
-              cardBg={background === "dark" ? "#171717" : "#ffffff"}
-              borderColor={bg.muted + "33"}
-              planName={samplePlanName || "Pro plan"}
-              planPrice={samplePlanPrice}
-              program={selectedProgram}
-            />
-          </section>
-        )}
-
-      {/* FAQ */}
-      {sections.faq && (
-        <section className="px-8 py-10">
-          <h2
-            className="font-heading text-3xl tracking-tight mb-6"
-            style={{ color: bg.fg }}
-          >
-            Frequently asked
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
-            {(faqs.length > 0 ? faqs : FAQ_ITEMS).map((item, idx) => (
-              <div key={`${item.q}-${idx}`} className="space-y-1.5">
-                <p className="text-sm font-semibold" style={{ color: bg.fg }}>
-                  {item.q}
-                </p>
-                <p className="text-sm" style={{ color: bg.muted }}>
-                  {item.a}
-                </p>
-              </div>
-            ))}
-          </div>
-        </section>
       )}
     </div>
   );

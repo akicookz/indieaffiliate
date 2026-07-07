@@ -3,6 +3,7 @@ import { BadgeCheck, CreditCard, FolderKanban, Mail, UserRound } from "lucide-re
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useSession } from "@/lib/auth-client";
+import PageHeader from "@/components/PageHeader";
 
 interface BillingData {
   subscription: {
@@ -53,12 +54,10 @@ function Account() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Account</h1>
-        <p className="text-muted-foreground">
-          Review your profile, current plan, and workspace summary.
-        </p>
-      </div>
+      <PageHeader
+        title="Account"
+        subtitle="Review your profile, current plan, and workspace summary."
+      />
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card>

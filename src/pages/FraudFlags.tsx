@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import StatCard from "@/components/StatCard";
+import PageHeader from "@/components/PageHeader";
 
 interface FraudFlag {
   id: string;
@@ -127,13 +128,14 @@ function FraudFlags() {
   });
 
   const projects = projectsData?.projects ?? [];
-  const activeProjectId = selectedProject !== "all" ? selectedProject : projects[0]?.id;
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["fraud-flags", activeProjectId, statusFilter, severityFilter, typeFilter],
+    queryKey: ["fraud-flags", selectedProject, statusFilter, severityFilter, typeFilter],
     queryFn: async (): Promise<FraudFlagsResponse> => {
-      if (!activeProjectId) return { flags: [], stats: { total: 0, open: 0, high: 0, dismissed: 0, confirmed: 0 } };
-      const params = new URLSearchParams({ project: activeProjectId });
+      const params = new URLSearchParams();
+      // "all" omits the project param; the server then aggregates across every
+      // project the user owns instead of just the first one.
+      if (selectedProject !== "all") params.set("project", selectedProject);
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (severityFilter !== "all") params.set("severity", severityFilter);
       if (typeFilter !== "all") params.set("type", typeFilter);
@@ -141,7 +143,6 @@ function FraudFlags() {
       if (!response.ok) throw new Error("Failed to fetch fraud flags");
       return response.json();
     },
-    enabled: !!activeProjectId,
   });
 
   const updateFlagMutation = useMutation({
@@ -218,16 +219,11 @@ function FraudFlags() {
   }
 
   return (
-    <div className="space-y-6 bg-background">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">
-          Fraud Detection
-        </h1>
-        <p className="text-muted-foreground">
-          Review flagged activity across your projects
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Fraud Detection"
+        subtitle="Review flagged activity across your projects"
+      />
 
       {/* Filters */}
       <div className="flex gap-4 items-center flex-wrap">
@@ -339,7 +335,7 @@ function FraudFlags() {
       </div>
 
       {/* Flags Table */}
-      <div className="bg-card border rounded-md p-6">
+      <div className="bg-card shadow-card rounded-lg p-6">
         <h3 className="text-sm font-medium text-foreground mb-4">
           All Fraud Flags
         </h3>

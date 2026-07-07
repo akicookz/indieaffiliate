@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import PageHeader from "@/components/PageHeader";
 
 interface BillingData {
   subscription: {
@@ -77,25 +78,21 @@ function BillingUpgrade() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <Button variant="ghost" className="mb-3 px-0" asChild>
-            <Link to="/app/billing">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to billing
-            </Link>
-          </Button>
-          <h1 className="text-2xl font-semibold tracking-tight">Upgrade plan</h1>
-          <p className="text-muted-foreground">
-            Compare plans, switch billing interval, and start checkout when you are
-            ready.
-          </p>
-        </div>
-        <Badge variant="secondary" className="gap-1 self-start">
+      <PageHeader
+        title="Upgrade plan"
+        subtitle="Compare plans, switch billing interval, and start checkout when you are ready."
+      >
+        <Button variant="ghost" asChild>
+          <Link to="/app/billing">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to billing
+          </Link>
+        </Button>
+        <Badge variant="secondary" className="gap-1">
           <Sparkles className="h-3 w-3" />
           Annual saves about 20%
         </Badge>
-      </div>
+      </PageHeader>
 
       <Card className="border-primary/20 bg-primary/5">
         <CardContent className="flex flex-col gap-4 py-6 md:flex-row md:items-center md:justify-between">

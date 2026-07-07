@@ -8,8 +8,8 @@ import {
 import {
   Search,
   Upload,
+  RefreshCw,
   Loader2,
-  ExternalLink,
   UserPlus,
   UserMinus,
   ChevronLeft,
@@ -195,6 +195,10 @@ function Payments() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [kind, setKind] = useState<Kind>("subscription");
   const [assignedFilter, setAssignedFilter] = useState<AssignedFilter>("unassigned");
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "succeeded" | "failed" | "refunded"
+  >("all");
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState(50);
@@ -230,6 +234,37 @@ function Payments() {
   const projects = projectsData?.projects ?? [];
   const fallbackProject = projects[0]?.id;
   const projectId = searchParams.get("project") ?? fallbackProject;
+
+  // Pull fresh Stripe records on demand (same sync as the daily cron).
+  const syncMutation = useMutation({
+    mutationFn: async (): Promise<{ processedCount?: number }> => {
+      const response = await fetch(`/api/projects/${projectId}/stripe/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        processedCount?: number;
+      };
+      if (!response.ok) throw new Error(body.error ?? "Sync failed.");
+      return body;
+    },
+    onSuccess: (result) => {
+      const n = result.processedCount ?? 0;
+      setSyncMessage(
+        n > 0
+          ? `Synced — ${n} new commission${n === 1 ? "" : "s"} added.`
+          : "Synced — no new commissions found.",
+      );
+      queryClient.invalidateQueries({ queryKey: ["payments-live", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["commissions-by-partner"] });
+    },
+    onError: (err) => {
+      setSyncMessage(err instanceof Error ? err.message : "Sync failed.");
+    },
+  });
 
   const { data, isLoading, isFetching, error } = useQuery({
     queryKey: [
@@ -359,7 +394,24 @@ function Payments() {
     },
   });
 
-  const rows = data?.data ?? [];
+  // Status filter is applied client-side to the loaded page (payments stream
+  // live from Stripe; "succeeded" also covers paid invoices, etc.).
+  const allRows = data?.data ?? [];
+  const rows =
+    statusFilter === "all"
+      ? allRows
+      : allRows.filter((r) => {
+          const s = (r.status ?? "").toLowerCase();
+          if (statusFilter === "succeeded") return s === "succeeded" || s === "paid";
+          if (statusFilter === "failed")
+            return (
+              s === "failed" ||
+              s === "uncollectible" ||
+              s === "past_due" ||
+              s === "open"
+            );
+          return s === "refunded";
+        });
   const hasMore = data?.hasMore ?? false;
   const nextCursor = data?.nextCursor;
 
@@ -403,11 +455,10 @@ function Payments() {
   }
 
   return (
-    <div className="p-6">
+    <div className="space-y-6">
       <PageHeader
-        eyebrow="BILLING"
         title="Payments"
-        subtitle="Start with unassigned Stripe revenue, attribute it to partners, then review commissions in Payouts."
+        subtitle="Bring in Stripe & CSV revenue, attribute it to partners, then review commissions in Payouts."
       >
         {projects.length > 1 && (
           <Select
@@ -433,6 +484,22 @@ function Payments() {
         <Button
           variant="secondary"
           size="sm"
+          onClick={() => {
+            setSyncMessage(null);
+            syncMutation.mutate();
+          }}
+          disabled={!projectId || syncMutation.isPending}
+        >
+          {syncMutation.isPending ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="size-3.5" />
+          )}
+          {syncMutation.isPending ? "Syncing…" : "Sync from Stripe"}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={() => setImportOpen(true)}
           disabled={!projectId}
         >
@@ -440,6 +507,9 @@ function Payments() {
           Import CSV
         </Button>
       </PageHeader>
+      {syncMessage && (
+        <div className="mb-4 text-xs text-muted-foreground">{syncMessage}</div>
+      )}
 
       {error && (
         <div className="mb-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm border border-destructive/30">
@@ -447,7 +517,7 @@ function Payments() {
         </div>
       )}
 
-      <div className="bg-card border rounded-md">
+      <div className="bg-card shadow-card rounded-lg">
         {/* Toolbar */}
         <div className="flex flex-col lg:flex-row gap-3 p-4">
           <div className="inline-flex items-center p-1 bg-muted rounded-md gap-1">
@@ -486,6 +556,26 @@ function Payments() {
                   )}
                 >
                   {assignedFilterLabel(a)}
+                </button>
+              );
+            })}
+          </div>
+          <div className="inline-flex items-center p-1 bg-muted rounded-md gap-1">
+            {(["all", "succeeded", "failed", "refunded"] as const).map((s) => {
+              const active = s === statusFilter;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setStatusFilter(s)}
+                  className={cn(
+                    "px-3 h-7 text-sm font-medium rounded transition-colors capitalize",
+                    active
+                      ? "bg-card text-foreground border border-border shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {s === "all" ? "Any status" : s}
                 </button>
               );
             })}
@@ -555,9 +645,15 @@ function Payments() {
           </div>
         )}
 
-        {bulkAssignMutation.error && (
+        {(bulkAssignMutation.error ||
+          assignMutation.error ||
+          unassignMutation.error) && (
           <div className="mx-4 my-2 p-2 rounded-md bg-destructive/10 text-destructive text-xs border border-destructive/30">
-            {(bulkAssignMutation.error as Error).message}
+            {(
+              (bulkAssignMutation.error ||
+                assignMutation.error ||
+                unassignMutation.error) as Error
+            ).message}
           </div>
         )}
 
@@ -565,7 +661,7 @@ function Payments() {
         <Table className="px-2 pb-2">
           <TableHeader className="[&_tr]:border-0">
             <TableRow className="hover:bg-transparent">
-              <TableHead className="text-eyebrow-muted h-12 px-4 w-10">
+              <TableHead className="w-10">
                 <Checkbox
                   checked={allSelected || (someSelected && "indeterminate")}
                   onCheckedChange={toggleSelectAll}
@@ -573,32 +669,31 @@ function Payments() {
                   disabled={rows.length === 0}
                 />
               </TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4">Customer</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4">External ID</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4">
+              <TableHead>Customer</TableHead>
+              <TableHead>External ID</TableHead>
+              <TableHead>
                 {kind === "subscription" ? "Plan" : "Description"}
               </TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4">
+              <TableHead>
                 {kind === "subscription" ? "Anchor" : "Date"}
               </TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4 text-right">
+              <TableHead className="text-right">
                 {kind === "subscription" ? "MRR" : "Amount"}
               </TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4">Attributed to</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4 w-10" />
+              <TableHead>Attributed to</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {(isLoading || isFetching) && rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-12 text-muted-foreground text-sm">
+                <TableCell colSpan={7} className="text-center py-12 text-muted-foreground text-sm">
                   Loading from Stripe…
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-16">
+                <TableCell colSpan={7} className="text-center py-16">
                   <p className="text-sm text-muted-foreground mb-1">
                     {paymentEmptyLabel(assignedFilter, kind)}
                   </p>
@@ -651,9 +746,16 @@ function Payments() {
                     )}
                   </TableCell>
                   <TableCell>
-                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
-                      {p.externalPaymentId}
-                    </code>
+                    <a
+                      href={stripeDeepLink(p)}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Open in Stripe"
+                    >
+                      <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono hover:bg-muted/70 hover:underline underline-offset-2">
+                        {p.externalPaymentId}
+                      </code>
+                    </a>
                   </TableCell>
                   <TableCell className="text-sm">
                     {p.kind === "subscription"
@@ -720,17 +822,6 @@ function Payments() {
                       />
                     </Popover>
                   </TableCell>
-                  <TableCell>
-                    <a
-                      href={stripeDeepLink(p)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-muted-foreground hover:text-foreground"
-                      title="Open in Stripe"
-                    >
-                      <ExternalLink className="size-3.5" />
-                    </a>
-                  </TableCell>
                 </TableRow>
               );
             })}
@@ -792,13 +883,7 @@ function Payments() {
           side="right"
           className="w-full sm:!w-[640px] sm:!max-w-[640px] overflow-y-auto p-6 gap-0"
         >
-          <SheetTitle
-            className="text-2xl tracking-tight mb-1"
-            style={{
-              fontFamily: `"Source Serif 4", Georgia, serif`,
-              fontWeight: 500,
-            }}
-          >
+          <SheetTitle className="text-2xl tracking-tight mb-1">
             Import payments from CSV
           </SheetTitle>
           <p className="text-sm text-muted-foreground mb-4">

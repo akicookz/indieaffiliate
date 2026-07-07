@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Settings,
   Copy,
   Check,
   Trash2,
@@ -19,7 +18,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useConfirm } from "@/components/ConfirmProvider";
 import { generateTrackingSnippet } from "@/lib/utils";
+import PageHeader from "@/components/PageHeader";
 
 interface Project {
   id: string;
@@ -52,6 +53,7 @@ interface StripeConnection {
 }
 
 function ProjectSettings() {
+  const { confirm } = useConfirm();
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -312,12 +314,16 @@ function ProjectSettings() {
     });
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (!project) return;
     if (
-      confirm(
-        `Are you sure you want to delete "${project.name}"? This will delete all partners, customers, and data associated with this project.`,
-      )
+      await confirm({
+        title: `Delete "${project.name}"?`,
+        description:
+          "This permanently deletes every partner, customer, and commission in this project. This cannot be undone.",
+        confirmText: "Delete project",
+        destructive: true,
+      })
     ) {
       deleteMutation.mutate(project.id);
     }
@@ -330,8 +336,16 @@ function ProjectSettings() {
     createKeyMutation.mutate({ projectId: project.id, name: newKeyName.trim() });
   }
 
-  function handleRevokeKey(keyId: string) {
-    if (confirm("Are you sure you want to revoke this API key? Any integrations using it will stop working.")) {
+  async function handleRevokeKey(keyId: string) {
+    if (
+      await confirm({
+        title: "Revoke this API key?",
+        description:
+          "Any integrations using it will immediately stop working. This cannot be undone.",
+        confirmText: "Revoke key",
+        destructive: true,
+      })
+    ) {
       revokeKeyMutation.mutate(keyId);
     }
   }
@@ -342,9 +356,17 @@ function ProjectSettings() {
     connectStripeMutation.mutate({ projectId: project.id, apiKey: stripeApiKey.trim() });
   }
 
-  function handleDisconnectStripe() {
+  async function handleDisconnectStripe() {
     if (!project) return;
-    if (confirm("Are you sure you want to disconnect Stripe? Automatic sync will stop.")) {
+    if (
+      await confirm({
+        title: "Disconnect Stripe?",
+        description:
+          "Automatic conversion tracking and commission sync will stop until you reconnect.",
+        confirmText: "Disconnect",
+        destructive: true,
+      })
+    ) {
       disconnectStripeMutation.mutate(project.id);
     }
   }
@@ -376,24 +398,16 @@ function ProjectSettings() {
   }
 
   return (
-    <div className="space-y-6 bg-background max-w-7xl mx-auto px-4">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-muted rounded-md flex items-center justify-center">
-          <Settings className="w-5 h-5 text-muted-foreground" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">
-            {projectName || project.name}
-          </h1>
-          <p className="text-muted-foreground">Project settings</p>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title={projectName || project.name}
+        subtitle="Project settings"
+      />
 
       <div className="grid gap-6 lg:grid-cols-2 w-full">
         <div className="space-y-6">
           {/* Project Info */}
-          <div className="bg-card border rounded-md p-6 space-y-4">
+          <div className="bg-card shadow-card rounded-lg p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-foreground">Project Details</h3>
               {isProjectDirty && (
@@ -465,7 +479,7 @@ function ProjectSettings() {
           </div>
 
           {/* API Keys */}
-          <div className="bg-card border rounded-md p-6 space-y-4">
+          <div className="bg-card shadow-card rounded-lg p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Key className="w-4 h-4 text-muted-foreground" />
@@ -594,7 +608,7 @@ function ProjectSettings() {
           </div>
 
           {/* Stripe Integration */}
-          <div className="bg-card border rounded-md p-6 space-y-4">
+          <div className="bg-card shadow-card rounded-lg p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <svg
@@ -622,7 +636,7 @@ function ProjectSettings() {
                 <p className="text-sm text-muted-foreground">
                   Stripe is connected. To sync data or assign partners to referral codes, go to the{" "}
                   <Link
-                    to="/app/import"
+                    to="/app/payments"
                     className="text-primary hover:underline font-medium"
                   >
                     Import page
@@ -658,7 +672,7 @@ function ProjectSettings() {
 
                 <div className="flex items-center gap-2">
                   <Button variant="secondary" size="sm" asChild>
-                    <Link to="/app/import">
+                    <Link to="/app/payments">
                       <Upload className="w-3 h-3 mr-1.5" />
                       Go to Import
                     </Link>
@@ -860,7 +874,7 @@ function ProjectSettings() {
             )}
           </div>
 
-          <div className="bg-card border rounded-md p-6 space-y-4 border-destructive/20">
+          <div className="bg-card shadow-card rounded-lg p-6 space-y-4">
             <h3 className="text-sm font-medium text-destructive">Danger Zone</h3>
             <p className="text-sm text-muted-foreground">
               Deleting this project will permanently remove all associated partners,
@@ -884,7 +898,7 @@ function ProjectSettings() {
 
         {/* Tracking Snippet */}
         <div className="space-y-6 lg:sticky lg:top-6 self-start">
-          <div className="bg-card border rounded-md p-6 space-y-4">
+          <div className="bg-card shadow-card rounded-lg p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Code className="w-4 h-4 text-muted-foreground" />

@@ -6,6 +6,7 @@ import {
   commissions,
   clicks,
   payouts,
+  payoutCommissions,
   commissionPrograms,
   projectBranding,
   type CommissionProgramRow,
@@ -81,6 +82,11 @@ interface PartnerCommissionProgramSummary {
   type: string;
   durationMonths: number | null;
   flatAmount: number | null;
+  minPayout: number;
+  payoutCadence: "monthly_day" | "monthly_ordinal" | "weekly" | null;
+  payoutDayOfMonth: number | null;
+  payoutDayOfWeek: number | null;
+  payoutOrdinal: number | null;
 }
 
 interface PartnerEffectiveProgram {
@@ -99,6 +105,15 @@ function summarizeProgram(
     type: program.type,
     durationMonths: program.durationMonths,
     flatAmount: program.flatAmount,
+    minPayout: program.minPayout,
+    payoutCadence: program.payoutCadence as
+      | "monthly_day"
+      | "monthly_ordinal"
+      | "weekly"
+      | null,
+    payoutDayOfMonth: program.payoutDayOfMonth,
+    payoutDayOfWeek: program.payoutDayOfWeek,
+    payoutOrdinal: program.payoutOrdinal,
   };
 }
 
@@ -365,6 +380,53 @@ export class PartnerDashboardService {
       .from(payouts)
       .where(inArray(payouts.partnerId, partnerIds))
       .orderBy(desc(payouts.createdAt));
+  }
+
+  /**
+   * Masked line items for one of the partner's payouts: which referred customers
+   * generated each commission, and the amount. Returns null if the payout does
+   * not belong to any of the given partner ids (so callers 404 instead of leaking).
+   */
+  async getPayoutLineItems(
+    payoutId: string,
+    partnerIds: string[],
+  ): Promise<
+    | {
+        commissionId: string;
+        amount: number;
+        customer: string;
+        eventDate: Date | null;
+      }[]
+    | null
+  > {
+    if (partnerIds.length === 0) return null;
+
+    const payoutRows = await this.db
+      .select({ partnerId: payouts.partnerId })
+      .from(payouts)
+      .where(eq(payouts.id, payoutId))
+      .limit(1);
+    const owner = payoutRows[0];
+    if (!owner || !partnerIds.includes(owner.partnerId)) return null;
+
+    const rows = await this.db
+      .select({
+        commissionId: commissions.id,
+        amount: payoutCommissions.amount,
+        customerEmail: customers.email,
+        eventDate: commissions.eventDate,
+      })
+      .from(payoutCommissions)
+      .innerJoin(commissions, eq(commissions.id, payoutCommissions.commissionId))
+      .leftJoin(customers, eq(customers.id, commissions.customerId))
+      .where(eq(payoutCommissions.payoutId, payoutId));
+
+    return rows.map((row) => ({
+      commissionId: row.commissionId,
+      amount: row.amount,
+      customer: row.customerEmail ? maskEmail(row.customerEmail) : "Customer",
+      eventDate: row.eventDate,
+    }));
   }
 
   /**

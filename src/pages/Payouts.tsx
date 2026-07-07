@@ -12,9 +12,9 @@ import {
   AlertTriangle,
   CreditCard,
   Calendar,
-  Copy,
-  Check,
+  MoreHorizontal,
   Loader2,
+  type LucideIcon,
 } from "lucide-react";
 import {
   Select,
@@ -38,6 +38,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import PageHeader from "@/components/PageHeader";
+import { useConfirm } from "@/components/ConfirmProvider";
 import {
   Sheet,
   SheetContent,
@@ -45,7 +47,6 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import StatCard from "@/components/StatCard";
 import {
   describeSchedule,
   formatScheduleDate,
@@ -69,6 +70,8 @@ interface CommissionDetail {
   projectName: string;
   eventDate: string | null;
   createdAt: string;
+  clawbackNeeded: boolean;
+  clawbackState: "needed" | "queued" | "dismissed" | "applied" | null;
   monthIndex: number | null;
   durationMonths: number | null;
   monthsRemaining: number | null;
@@ -166,6 +169,10 @@ interface PartnerGroup {
   paidAmount: number;
   rejectedCount: number;
   rejectedAmount: number;
+  customerCount: number;
+  referredRevenue: number;
+  atRiskAmount: number;
+  pendingClawback: number;
   commissions: CommissionDetail[];
 }
 
@@ -258,6 +265,28 @@ function formatCurrency(amount: number) {
   return `$${amount.toFixed(2)}`;
 }
 
+function MetricTile({
+  label,
+  value,
+  Icon,
+}: {
+  label: string;
+  value: string;
+  Icon: LucideIcon;
+}) {
+  return (
+    <div className="bg-card shadow-card rounded-lg p-4 space-y-1">
+      <div className="flex items-center gap-1.5">
+        <Icon className="size-3.5 text-muted-foreground" />
+        <span className="text-[13px] text-muted-foreground">{label}</span>
+      </div>
+      <p className="text-[22px] font-semibold tracking-[-0.01em] tabular-nums text-foreground">
+        {value}
+      </p>
+    </div>
+  );
+}
+
 function sumCommissionAmounts(commissions: CommissionDetail[]): number {
   return commissions.reduce((total, commission) => total + commission.amount, 0);
 }
@@ -299,10 +328,26 @@ function startOfDay(date: Date): Date {
   );
 }
 
+// Commissions are held for 30 days after the sale (refund window) before they
+// can be paid. Keep in sync with COMMISSION_HOLD_DAYS on the server.
+const COMMISSION_HOLD_DAYS = 30;
+
+function commissionHoldUntil(commission: CommissionDetail): Date {
+  const basis = commission.eventDate ?? commission.createdAt;
+  const basisDate = basis ? new Date(basis) : new Date();
+  const safe = Number.isNaN(basisDate.getTime()) ? new Date() : basisDate;
+  return new Date(
+    startOfDay(safe).getTime() + COMMISSION_HOLD_DAYS * 24 * 60 * 60 * 1000,
+  );
+}
+
 function isCommissionDue(commission: CommissionDetail): boolean {
+  const today = startOfDay(new Date()).getTime();
+  // Still inside the 30-day hold window → not payable yet.
+  if (commissionHoldUntil(commission).getTime() > today) return false;
   const dueDate = commissionDueDate(commission);
   if (!dueDate) return true;
-  return dueDate.getTime() <= startOfDay(new Date()).getTime();
+  return dueDate.getTime() <= today;
 }
 
 function getPayoutEligibility(commissions: CommissionDetail[]): PayoutEligibility {
@@ -609,65 +654,11 @@ interface MonthGroup {
   commissions: CommissionDetail[];
 }
 
-interface CustomerGroup {
-  customerKey: string;
-  customerId: string;
-  customerEmail: string;
-  customerStatus: string | null;
-  customerRevenue: number;
-  commissions: CommissionDetail[];
-  totalAmount: number;
-  mostRecentEventTs: number;
-}
-
 function commissionTimestamp(c: CommissionDetail): number {
   const raw = c.eventDate ?? c.createdAt;
   if (!raw) return 0;
   const t = new Date(raw).getTime();
   return Number.isFinite(t) ? t : 0;
-}
-
-function groupByCustomer(
-  commissions: CommissionDetail[],
-): CustomerGroup[] {
-  const byCustomer = new Map<string, CustomerGroup>();
-  for (const c of commissions) {
-    const key = c.customerId || c.customerEmail || c.id;
-    const existing = byCustomer.get(key);
-    const ts = commissionTimestamp(c);
-    if (existing) {
-      existing.commissions.push(c);
-      existing.totalAmount += c.amount;
-      if (ts > existing.mostRecentEventTs) {
-        existing.mostRecentEventTs = ts;
-      }
-      // Customer-level fields can drift if backend changes mid-list; prefer the
-      // most-recent row's snapshot so the badge matches what the user sees.
-      if (ts >= existing.mostRecentEventTs) {
-        existing.customerStatus = c.customerStatus;
-        existing.customerRevenue = c.customerRevenue;
-      }
-    } else {
-      byCustomer.set(key, {
-        customerKey: key,
-        customerId: c.customerId,
-        customerEmail: c.customerEmail,
-        customerStatus: c.customerStatus,
-        customerRevenue: c.customerRevenue,
-        commissions: [c],
-        totalAmount: c.amount,
-        mostRecentEventTs: ts,
-      });
-    }
-  }
-  for (const group of byCustomer.values()) {
-    group.commissions.sort(
-      (a, b) => commissionTimestamp(b) - commissionTimestamp(a),
-    );
-  }
-  return Array.from(byCustomer.values()).sort(
-    (a, b) => b.mostRecentEventTs - a.mostRecentEventTs,
-  );
 }
 
 function groupByMonth(commissions: CommissionDetail[]): MonthGroup[] {
@@ -723,41 +714,6 @@ function buildPaymentNote(partner: PartnerGroup) {
   )}: ${months.join(", ")} - thank you!`;
 }
 
-function CopyNoteButton({ partner }: { partner: PartnerGroup }) {
-  const [copied, setCopied] = useState(false);
-
-  function handleCopy() {
-    const note = buildPaymentNote(partner);
-    navigator.clipboard.writeText(note).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }
-
-  if (getPayoutEligibility(partner.commissions).count === 0) return null;
-
-  return (
-    <Button
-      variant="secondary"
-      size="sm"
-      className="h-7 text-xs"
-      onClick={handleCopy}
-    >
-      {copied ? (
-        <>
-          <Check className="w-3 h-3 mr-1 text-positive" />
-          Copied
-        </>
-      ) : (
-        <>
-          <Copy className="w-3 h-3 mr-1 text-muted-foreground" />
-          Copy Note
-        </>
-      )}
-    </Button>
-  );
-}
-
 const NON_ACTIVE_CUSTOMER_STATUSES = new Set([
   "cancelled",
   "past_due",
@@ -811,6 +767,159 @@ function ProgressDonut({
         );
       })}
     </svg>
+  );
+}
+
+/**
+ * Small payment-progress indicator for a single commission.
+ * - recurring + duration: ring split into `durationMonths` arc segments, the
+ *   first `monthIndex` filled with the accent color, labelled "3/6".
+ * - lifetime: solid ring, labelled "mo 7".
+ * - one-time (or unknown duration): single filled dot, labelled "one-time".
+ */
+function SegmentedRing({
+  programType,
+  monthIndex,
+  durationMonths,
+}: {
+  programType: CommissionDetail["programType"];
+  monthIndex: number | null;
+  durationMonths: number | null;
+}) {
+  const size = 20;
+  const stroke = 3;
+  const radius = (size - stroke) / 2;
+  const center = size / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  if (
+    programType === "recurring" &&
+    durationMonths != null &&
+    durationMonths > 0
+  ) {
+    const filled = Math.min(Math.max(monthIndex ?? 0, 0), durationMonths);
+    const gap =
+      durationMonths > 1
+        ? Math.min(1.5, circumference / durationMonths / 4)
+        : 0;
+    const segLen = Math.max(0.5, circumference / durationMonths - gap);
+    return (
+      <span
+        className="inline-flex items-center gap-1.5"
+        title={`Payment ${filled} of ${durationMonths}`}
+      >
+        <svg
+          width={size}
+          height={size}
+          viewBox={`0 0 ${size} ${size}`}
+          className="shrink-0"
+          aria-hidden="true"
+        >
+          {Array.from({ length: durationMonths }, (_, i) => (
+            <circle
+              key={i}
+              cx={center}
+              cy={center}
+              r={radius}
+              fill="none"
+              stroke={i < filled ? "var(--accent)" : "#e5e5e3"}
+              strokeWidth={stroke}
+              strokeDasharray={`${segLen} ${circumference}`}
+              strokeDashoffset={-((i * circumference) / durationMonths)}
+              transform={`rotate(-90 ${center} ${center})`}
+            />
+          ))}
+        </svg>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {filled}/{durationMonths}
+        </span>
+      </span>
+    );
+  }
+
+  if (programType === "lifetime") {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5"
+        title={
+          monthIndex != null
+            ? `Payment ${monthIndex} (lifetime)`
+            : "Lifetime program"
+        }
+      >
+        <svg
+          width={size}
+          height={size}
+          viewBox={`0 0 ${size} ${size}`}
+          className="shrink-0"
+          aria-hidden="true"
+        >
+          <circle
+            cx={center}
+            cy={center}
+            r={radius}
+            fill="none"
+            stroke="var(--accent)"
+            strokeWidth={stroke}
+          />
+        </svg>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {monthIndex != null ? `mo ${monthIndex}` : "lifetime"}
+        </span>
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1.5" title="One-time payment">
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        className="shrink-0"
+        aria-hidden="true"
+      >
+        <circle cx={center} cy={center} r={3.5} fill="var(--accent)" />
+      </svg>
+      <span className="text-xs text-muted-foreground">one-time</span>
+    </span>
+  );
+}
+
+/**
+ * Earliest due date among a partner's payable (approved, unflagged)
+ * commissions. "—" when nothing is approved, "Now" when approved commissions
+ * have no payout schedule (payable immediately), red when overdue.
+ */
+function PartnerDueDate({ partner }: { partner: PartnerGroup }) {
+  const approved = partner.commissions.filter(isPayEligibleCommission);
+  if (approved.length === 0) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  const dueDates = approved
+    .map(commissionDueDate)
+    .filter((date): date is Date => date != null);
+  const today = startOfDay(new Date());
+  if (dueDates.length === 0) {
+    return <span className="text-foreground">Now</span>;
+  }
+  const earliest = dueDates.reduce((a, b) =>
+    a.getTime() <= b.getTime() ? a : b,
+  );
+  const overdue = earliest.getTime() < today.getTime();
+  const label = earliest.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+  const year = earliest.getUTCFullYear();
+  return (
+    <span className={overdue ? "text-negative" : "text-foreground"}>
+      {label}
+      {year !== today.getUTCFullYear() && (
+        <span className="ml-1 text-xs text-muted-foreground">{year}</span>
+      )}
+    </span>
   );
 }
 
@@ -1041,14 +1150,14 @@ function PeriodView({
 
   if (months.length === 0) {
     return (
-      <div className="bg-card border rounded-md p-6 text-center text-sm text-muted-foreground">
+      <div className="bg-card shadow-card rounded-lg p-6 text-center text-sm text-muted-foreground">
         No commissions match the current filters.
       </div>
     );
   }
 
   return (
-    <div className="bg-card border rounded-md p-6 space-y-4">
+    <div className="bg-card shadow-card rounded-lg p-6 space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-medium text-foreground">
@@ -1089,7 +1198,7 @@ function PeriodView({
         return (
           <div
             key={month.monthKey}
-            className="border rounded-md overflow-hidden"
+            className="shadow-ring rounded-lg overflow-hidden bg-card"
           >
             <button
               type="button"
@@ -1144,14 +1253,7 @@ function PeriodView({
                   title={payBlocker ?? undefined}
                   onClick={(e) => {
                     e.stopPropagation();
-                    const ok = window.confirm(
-                      `Mark ${approvedIds.length} commission${
-                        approvedIds.length === 1 ? "" : "s"
-                      } in ${month.monthLabel} as paid? Total: ${formatCurrency(
-                        monthPayableTotal,
-                      )}.`,
-                    );
-                    if (ok) onBulkAction(approvedIds, "pay");
+                    onBulkAction(approvedIds, "pay");
                   }}
                 >
                   <CreditCard className="w-3 h-3 mr-1" />
@@ -1249,6 +1351,7 @@ function PartnerRow({
   onBulkAction,
   onSingleAction,
   onFlagCustomer,
+  onClawback,
   isMutating,
 }: {
   partner: PartnerGroup;
@@ -1257,134 +1360,88 @@ function PartnerRow({
   onBulkAction: (ids: string[], action: "approve" | "pay" | "reject") => void;
   onSingleAction: (id: string, status: "approved" | "paid" | "rejected", fraudFlag?: string) => void;
   onFlagCustomer: (customerId: string, reason: string) => void;
+  onClawback: (commissionId: string, action: "deduct" | "dismiss") => void;
   isMutating: boolean;
 }) {
-  const pendingIds = partner.commissions.filter(isApprovalEligibleCommission).map((c) => c.id);
+  const pendingIds = partner.commissions
+    .filter(isApprovalEligibleCommission)
+    .map((c) => c.id);
   const payoutEligibility = getPayoutEligibility(partner.commissions);
   const approvedIds = payoutEligibility.commissions.map((c) => c.id);
-  const flaggedPendingIds = partner.commissions.filter((c) => c.status === "pending" && c.fraudFlag).map((c) => c.id);
-  const payoutPolicy = getPartnerPayoutPolicy(partner);
+  const flaggedPendingIds = partner.commissions
+    .filter((c) => c.status === "pending" && c.fraudFlag)
+    .map((c) => c.id);
   const payBlocker = getPayBlocker(partner.commissions, partner.payoutLink);
   const canPayApproved = approvedIds.length > 0 && !payBlocker;
+  const hasMenuActions =
+    pendingIds.length > 0 ||
+    flaggedPendingIds.length > 0 ||
+    payoutEligibility.count > 0;
+
+  // Drill-down rows: cluster by customer, oldest payment first per customer.
+  const sortedCommissions = [...partner.commissions].sort((a, b) => {
+    const byCustomer = (a.customerEmail || "").localeCompare(
+      b.customerEmail || "",
+    );
+    if (byCustomer !== 0) return byCustomer;
+    return commissionTimestamp(a) - commissionTimestamp(b);
+  });
 
   return (
     <>
       {/* Partner summary row */}
-      <TableRow
-        className="cursor-pointer hover:bg-muted/50"
-        onClick={onToggle}
-      >
-        <TableCell className="w-8">
+      <TableRow className="cursor-pointer" onClick={onToggle}>
+        <TableCell className="w-8 py-2.5">
           {isExpanded ? (
             <ChevronDown className="w-4 h-4 text-muted-foreground" />
           ) : (
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
           )}
         </TableCell>
-        <TableCell>
-          <div>
+        <TableCell className="py-2.5">
+          <div className="leading-tight">
             <Link
-              to={`/app/customers?partner=${partner.partnerId}`}
-              className="font-medium text-primary hover:underline"
+              to={`/app/partners?partner=${partner.partnerId}`}
+              className="font-medium text-foreground hover:underline"
               onClick={(e) => e.stopPropagation()}
             >
               {partner.partnerName}
             </Link>
-            <div className="text-sm text-muted-foreground">
+            <div className="text-xs text-muted-foreground">
               {partner.partnerEmail}
             </div>
           </div>
         </TableCell>
-        <TableCell>
-          <PayoutMethodDisplay value={partner.payoutLink} />
+        <TableCell className="py-2.5">
+          <PartnerDueDate partner={partner} />
         </TableCell>
-        <TableCell>
-          <div className="text-xs space-y-0.5">
-            <div className="text-foreground">
-              {payoutPolicy.minPayout != null
-                ? `Min ${formatCurrency(payoutPolicy.minPayout)}`
-                : "No minimum"}
-            </div>
-            <div className="text-muted-foreground">
-              {payoutPolicy.scheduleLabel}
-            </div>
-            {payoutPolicy.nextDateLabel && !payoutPolicy.isMixedSchedule && (
-              <div className="text-muted-foreground">
-                Next {payoutPolicy.nextDateLabel}
-              </div>
-            )}
-            {payoutPolicy.belowMinimum && (
-              <div className="text-warning">
-                {formatCurrency(payoutPolicy.shortfall)} short
-              </div>
-            )}
+        <TableCell className="py-2.5 text-right tabular-nums">
+          {partner.customerCount}
+        </TableCell>
+        <TableCell className="py-2.5 text-right tabular-nums">
+          {formatCurrency(partner.referredRevenue)}
+        </TableCell>
+        <TableCell className="py-2.5 text-right tabular-nums">
+          {partner.approvedCount}
+          {partner.pendingCount > 0 && (
+            <span className="text-muted-foreground">
+              {" "}
+              +{partner.pendingCount} pending
+            </span>
+          )}
+        </TableCell>
+        <TableCell className="py-2.5 text-right tabular-nums">
+          <div className="font-semibold">
+            {formatCurrency(partner.approvedAmount)}
           </div>
-        </TableCell>
-        <TableCell>
-          {partner.pendingCount > 0 ? (
-            <div className="text-sm">
-              <span className="font-medium text-warning">
-                {formatCurrency(partner.pendingAmount)}
-              </span>
-              <span className="text-muted-foreground ml-1">({partner.pendingCount})</span>
+          {partner.pendingClawback > 0 && (
+            <div className="text-xs text-muted-foreground">
+              −{formatCurrency(partner.pendingClawback)} clawback
             </div>
-          ) : (
-            <span className="text-xs text-muted-foreground">-</span>
           )}
         </TableCell>
-        <TableCell>
-          {partner.approvedCount > 0 ? (
-            <div className="text-sm">
-              <span className="font-medium text-info">
-                {formatCurrency(partner.approvedAmount)}
-              </span>
-              <span className="text-muted-foreground ml-1">({partner.approvedCount})</span>
-              {payoutEligibility.amount !== partner.approvedAmount && (
-                <div className="text-[10px] text-muted-foreground">
-                  {formatCurrency(payoutEligibility.amount)} payable
-                </div>
-              )}
-              {payoutEligibility.flaggedApprovedCount > 0 && (
-                <div className="text-[10px] text-negative">
-                  {payoutEligibility.flaggedApprovedCount} flagged
-                </div>
-              )}
-              {payoutEligibility.futureCount > 0 && (
-                <div className="text-[10px] text-muted-foreground">
-                  {formatCurrency(payoutEligibility.futureAmount)} scheduled
-                </div>
-              )}
-            </div>
-          ) : (
-            <span className="text-xs text-muted-foreground">-</span>
-          )}
-        </TableCell>
-        <TableCell>
-          {partner.paidCount > 0 ? (
-            <div className="text-sm">
-              <span className="font-medium text-positive">
-                {formatCurrency(partner.paidAmount)}
-              </span>
-              <span className="text-muted-foreground ml-1">({partner.paidCount})</span>
-            </div>
-          ) : (
-            <span className="text-xs text-muted-foreground">-</span>
-          )}
-        </TableCell>
-        <TableCell onClick={(e) => e.stopPropagation()}>
-          <div className="flex gap-1">
-            {pendingIds.length > 0 && (
-              <Button
-                variant="secondary"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => onBulkAction(pendingIds, "approve")}
-                disabled={isMutating}
-              >
-                <CheckCircle className="w-3 h-3 mr-1 text-positive" />
-                Approve All ({pendingIds.length})
-              </Button>
-            )}
+        <TableCell className="py-2.5" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-end gap-1">
             {approvedIds.length > 0 && (
               <Button
                 variant="secondary"
@@ -1395,221 +1452,238 @@ function PartnerRow({
                 title={payBlocker ?? undefined}
               >
                 <DollarSign className="w-3 h-3 mr-1 text-info" />
-                Mark All Paid ({approvedIds.length})
+                Pay {formatCurrency(payoutEligibility.amount)}
               </Button>
             )}
-            <CopyNoteButton partner={partner} />
-            {flaggedPendingIds.length > 0 && (
-              <Button
-                variant="secondary"
-                size="sm"
-                className="h-7 text-xs text-negative hover:text-negative hover:bg-negative/10"
-                onClick={() => onBulkAction(flaggedPendingIds, "reject")}
-                disabled={isMutating}
-              >
-                <AlertTriangle className="w-3 h-3 mr-1" />
-                Reject Flagged ({flaggedPendingIds.length})
-              </Button>
+            {hasMenuActions && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    disabled={isMutating}
+                    aria-label="More actions"
+                  >
+                    <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {pendingIds.length > 0 && (
+                    <DropdownMenuItem
+                      onClick={() => onBulkAction(pendingIds, "approve")}
+                    >
+                      Approve all ({pendingIds.length})
+                    </DropdownMenuItem>
+                  )}
+                  {payoutEligibility.count > 0 && (
+                    <DropdownMenuItem
+                      onClick={() => {
+                        void navigator.clipboard.writeText(
+                          buildPaymentNote(partner),
+                        );
+                      }}
+                    >
+                      Copy payment note
+                    </DropdownMenuItem>
+                  )}
+                  {flaggedPendingIds.length > 0 && (
+                    <DropdownMenuItem
+                      className="text-negative"
+                      onClick={() => onBulkAction(flaggedPendingIds, "reject")}
+                    >
+                      Reject flagged ({flaggedPendingIds.length})
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
         </TableCell>
       </TableRow>
 
-      {/* Expanded: grouped by customer, then by month within customer */}
+      {/* Drill-down: one row per commission */}
       {isExpanded &&
-        groupByCustomer(partner.commissions).map((group) => (
-          <Fragment key={group.customerKey}>
-            {/* Customer header */}
-            <TableRow className="bg-muted/40 hover:bg-muted/40">
-              <TableCell />
-              <TableCell colSpan={7}>
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-medium text-sm text-foreground truncate">
-                      {group.customerEmail || "—"}
-                    </span>
-                    {getCustomerStatusBadge(group.customerStatus)}
-                    {group.customerRevenue > 0 && (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/80">
-                        <CreditCard className="w-3 h-3" />
-                        {formatCurrency(group.customerRevenue)} lifetime
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground tabular-nums shrink-0">
-                    {group.commissions.length} commission
-                    {group.commissions.length === 1 ? "" : "s"} ·{" "}
-                    <span className="font-medium text-foreground">
-                      {formatCurrency(group.totalAmount)}
-                    </span>
-                  </div>
-                </div>
+        sortedCommissions.map((commission) => {
+          const singlePayBlocker = getPayBlocker(
+            [commission],
+            partner.payoutLink,
+          );
+          const customerInactive =
+            commission.customerStatus != null &&
+            commission.customerStatus !== "paid" &&
+            commission.customerStatus !== "trialing";
+          return (
+            <TableRow
+              key={commission.id}
+              className="bg-muted/20 hover:bg-muted/30"
+            >
+              <TableCell className="py-2.5" />
+              <TableCell className="py-2.5">
+                <span className="text-foreground">
+                  {commission.customerEmail || "—"}
+                </span>
               </TableCell>
-            </TableRow>
-            {/* Per-month commission rows */}
-            {group.commissions.map((commission) => {
-              const ts = commissionTimestamp(commission);
-              const payBlocker = getPayBlocker(
-                [commission],
-                partner.payoutLink,
-              );
-              const monthLabel = ts
-                ? new Date(ts).toLocaleDateString("en-US", {
-                    month: "short",
-                    year: "numeric",
-                  })
-                : "—";
-              const dayLabel = ts
-                ? new Date(ts).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                  })
-                : "";
-              return (
-                <TableRow key={commission.id} className="bg-muted/10">
-                  <TableCell />
-                  <TableCell className="pl-8">
-                    <div className="flex flex-col gap-0.5">
-                      <div className="inline-flex items-center gap-1.5 text-sm text-foreground">
-                        <Calendar className="w-3 h-3 text-muted-foreground" />
-                        <span className="font-medium">{monthLabel}</span>
-                      </div>
-                      {dayLabel && (
-                        <span className="text-[11px] text-muted-foreground/70">
-                          {dayLabel}
-                          {!commission.eventDate && " (created)"}
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <MonthBadge
-                      programType={commission.programType}
-                      monthIndex={commission.monthIndex}
-                      durationMonths={commission.durationMonths}
-                      monthsRemaining={commission.monthsRemaining}
-                      isFinalMonth={
-                        commission.programType === "recurring" &&
-                        commission.monthIndex != null &&
-                        commission.durationMonths != null &&
-                        commission.monthIndex === commission.durationMonths
-                      }
-                    />
-                  </TableCell>
-                  <TableCell />
-                  <TableCell />
-                  <TableCell>
-                    <span className="text-sm font-medium tabular-nums">
-                      {formatCurrency(commission.amount)}{" "}
-                      <span className="text-muted-foreground font-normal">
-                        @ {Math.round(commission.rate * 100)}%
-                      </span>
+              <TableCell className="py-2.5">
+                <SegmentedRing
+                  programType={commission.programType}
+                  monthIndex={commission.monthIndex}
+                  durationMonths={commission.durationMonths}
+                />
+              </TableCell>
+              <TableCell className="py-2.5" />
+              <TableCell className="py-2.5 text-right tabular-nums">
+                {formatCurrency(commission.customerRevenue)}
+              </TableCell>
+              <TableCell className="py-2.5 text-right tabular-nums">
+                {formatCurrency(commission.amount)}{" "}
+                <span className="text-muted-foreground">
+                  ({Math.round(commission.rate * 100)}%)
+                </span>
+              </TableCell>
+              <TableCell className="py-2.5 text-right">
+                {getStatusBadge(commission.status)}
+              </TableCell>
+              <TableCell className="py-2.5">
+                <div className="flex items-center justify-end gap-1.5">
+                  {customerInactive &&
+                    getCustomerStatusBadge(commission.customerStatus)}
+                  {commission.fraudFlag && (
+                    <span
+                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-negative/10 text-negative border border-negative/20"
+                      title={commission.fraudFlag}
+                    >
+                      <AlertTriangle className="w-3 h-3" />
+                      {commission.fraudFlag.replace(/_/g, " ")}
                     </span>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1.5">
-                      {getStatusBadge(commission.status)}
-                      {commission.fraudFlag && (
-                        <span
-                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-negative/10 text-negative border border-negative/20"
-                          title={commission.fraudFlag}
-                        >
-                          <AlertTriangle className="w-3 h-3" />
-                          {commission.fraudFlag.replace(/_/g, " ")}
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-1">
-                      {commission.status === "pending" && (
-                        <>
-                          {!commission.fraudFlag && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 w-6 p-0 text-positive hover:text-positive hover:bg-positive/10"
-                              onClick={() =>
-                                onSingleAction(commission.id, "approved")
-                              }
-                              disabled={isMutating}
-                              aria-label="Approve"
-                            >
-                              <CheckCircle className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 px-1 text-negative hover:text-negative hover:bg-negative/10"
-                                disabled={isMutating}
-                                aria-label="Reject"
-                              >
-                                <XCircle className="w-3.5 h-3.5" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                onClick={() =>
-                                  onFlagCustomer(
-                                    commission.customerId,
-                                    "self_referral",
-                                  )
-                                }
-                                className="text-warning font-medium"
-                              >
-                                Self Referral (block future)
-                              </DropdownMenuItem>
-                              {[
-                                { label: "Bot / Fake Traffic", flag: "bot_click" },
-                                { label: "Revenue Manipulation", flag: "revenue_cap" },
-                                { label: "Suspicious Activity", flag: "suspicious_activity" },
-                                { label: "Policy Violation", flag: "policy_violation" },
-                                { label: "No Reason", flag: undefined },
-                              ].map((item) => (
-                                <DropdownMenuItem
-                                  key={item.label}
-                                  onClick={() =>
-                                    onSingleAction(
-                                      commission.id,
-                                      "rejected",
-                                      item.flag,
-                                    )
-                                  }
-                                >
-                                  {item.label}
-                                </DropdownMenuItem>
-                              ))}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </>
-                      )}
-                      {commission.status === "approved" && (
+                  )}
+                  {commission.clawbackState === "needed" && (
+                    <>
+                      <span
+                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-negative/10 text-negative border border-negative/20"
+                        title="Customer was refunded after this commission was paid"
+                      >
+                        <AlertTriangle className="w-3 h-3" />
+                        Clawback
+                      </span>
+                      <button
+                        type="button"
+                        className="text-[10px] text-negative hover:underline disabled:opacity-50"
+                        disabled={isMutating}
+                        onClick={() => onClawback(commission.id, "deduct")}
+                      >
+                        Deduct next payout
+                      </button>
+                      <button
+                        type="button"
+                        className="text-[10px] text-muted-foreground hover:underline disabled:opacity-50"
+                        disabled={isMutating}
+                        onClick={() => onClawback(commission.id, "dismiss")}
+                      >
+                        Dismiss
+                      </button>
+                    </>
+                  )}
+                  {commission.clawbackState === "queued" && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning/10 text-warning border border-warning/20">
+                      Clawback queued
+                    </span>
+                  )}
+                  {commission.clawbackState === "applied" && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground border border-border">
+                      Clawed back
+                    </span>
+                  )}
+                  {commission.clawbackState === "dismissed" && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground border border-border">
+                      Clawback dismissed
+                    </span>
+                  )}
+                  {commission.status === "pending" && (
+                    <>
+                      {!commission.fraudFlag && (
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-6 px-2 text-xs text-info hover:text-info hover:bg-info/10"
-                          onClick={() => onSingleAction(commission.id, "paid")}
-                          disabled={
-                            isMutating ||
-                            !!payBlocker ||
-                            !isPayEligibleCommission(commission)
+                          className="h-6 w-6 p-0 text-positive hover:text-positive hover:bg-positive/10"
+                          onClick={() =>
+                            onSingleAction(commission.id, "approved")
                           }
-                          title={payBlocker ?? undefined}
+                          disabled={isMutating}
+                          aria-label="Approve"
                         >
-                          Mark Paid
+                          <CheckCircle className="w-3.5 h-3.5" />
                         </Button>
                       )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </Fragment>
-        ))}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-1 text-negative hover:text-negative hover:bg-negative/10"
+                            disabled={isMutating}
+                            aria-label="Reject"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() =>
+                              onFlagCustomer(
+                                commission.customerId,
+                                "self_referral",
+                              )
+                            }
+                            className="text-warning font-medium"
+                          >
+                            Self Referral (block future)
+                          </DropdownMenuItem>
+                          {[
+                            { label: "Bot / Fake Traffic", flag: "bot_click" },
+                            { label: "Revenue Manipulation", flag: "revenue_cap" },
+                            { label: "Suspicious Activity", flag: "suspicious_activity" },
+                            { label: "Policy Violation", flag: "policy_violation" },
+                            { label: "No Reason", flag: undefined },
+                          ].map((item) => (
+                            <DropdownMenuItem
+                              key={item.label}
+                              onClick={() =>
+                                onSingleAction(
+                                  commission.id,
+                                  "rejected",
+                                  item.flag,
+                                )
+                              }
+                            >
+                              {item.label}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </>
+                  )}
+                  {commission.status === "approved" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs text-info hover:text-info hover:bg-info/10"
+                      onClick={() => onSingleAction(commission.id, "paid")}
+                      disabled={
+                        isMutating ||
+                        !!singlePayBlocker ||
+                        !isPayEligibleCommission(commission)
+                      }
+                      title={singlePayBlocker ?? undefined}
+                    >
+                      Mark Paid
+                    </Button>
+                  )}
+                </div>
+              </TableCell>
+            </TableRow>
+          );
+        })}
     </>
   );
 }
@@ -1639,14 +1713,14 @@ function CustomerView({
 
   if (rows.length === 0) {
     return (
-      <div className="bg-card border rounded-md p-6 text-center text-sm text-muted-foreground">
+      <div className="bg-card shadow-card rounded-lg p-6 text-center text-sm text-muted-foreground">
         No commissions match the current filters.
       </div>
     );
   }
 
   return (
-    <div className="bg-card rounded-md p-6">
+    <div className="bg-card shadow-card rounded-lg p-6">
       <h3 className="text-sm font-medium text-foreground mb-4">
         Customers ({rows.length})
       </h3>
@@ -2188,13 +2262,74 @@ function CommissionsTable({
   );
 }
 
+interface CreatorPayoutLineItem {
+  commissionId: string;
+  amount: number;
+  status: string;
+  customerEmail: string | null;
+  eventDate: string | null;
+}
+
+function CreatorPayoutLineItems({ payoutId }: { payoutId: string }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["payout-line-items", payoutId],
+    queryFn: async (): Promise<{ commissions: CreatorPayoutLineItem[] }> => {
+      const response = await fetch(`/api/payouts/${payoutId}/commissions`);
+      if (!response.ok) throw new Error("Failed to load payout details");
+      return response.json();
+    },
+  });
+
+  if (isLoading) {
+    return <span className="text-sm text-muted-foreground">Loading…</span>;
+  }
+  if (error) {
+    return (
+      <span className="text-sm text-destructive">
+        Could not load payout details.
+      </span>
+    );
+  }
+  const items = data?.commissions ?? [];
+  if (items.length === 0) {
+    return (
+      <span className="text-sm text-muted-foreground">
+        No commission details for this payout.
+      </span>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium text-muted-foreground">
+        Commissions in this payout:
+      </p>
+      {items.map((item) => (
+        <div
+          key={item.commissionId}
+          className="flex items-center justify-between gap-4 text-sm"
+        >
+          <span className="text-muted-foreground">
+            {item.customerEmail ?? "Customer"}
+            {item.eventDate ? ` · ${formatShortDate(item.eventDate)}` : ""}
+          </span>
+          <span className="font-medium tabular-nums">
+            {formatCurrency(item.amount)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PayoutHistorySection({
   selectedProject,
 }: {
   selectedProject: string;
 }) {
+  const { confirm } = useConfirm();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<PayoutStatusFilter>("all");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["payout-records", selectedProject, statusFilter],
@@ -2248,7 +2383,7 @@ function PayoutHistorySection({
   };
 
   return (
-    <div className="bg-card border rounded-md p-6">
+    <div className="bg-card shadow-card rounded-lg p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
         <div>
           <h3 className="text-sm font-medium text-foreground">
@@ -2354,7 +2489,8 @@ function PayoutHistorySection({
               </TableRow>
             )}
             {payouts.map((payout) => (
-              <TableRow key={payout.id}>
+              <Fragment key={payout.id}>
+              <TableRow>
                 <TableCell>
                   <div className="font-medium text-sm">
                     {payout.partnerName}
@@ -2373,9 +2509,31 @@ function PayoutHistorySection({
                       statusMutation.variables?.payout.id === payout.id
                     }
                     payout={payout}
-                    onChange={(status) =>
-                      statusMutation.mutate({ payout, status })
-                    }
+                    onChange={async (status) => {
+                      if (
+                        status === "paid" &&
+                        !(await confirm({
+                          title: "Mark this payout as paid?",
+                          description:
+                            "This records an off-platform payment and marks its commissions paid. It does not move money.",
+                          confirmText: "Mark paid",
+                        }))
+                      ) {
+                        return;
+                      }
+                      if (
+                        status === "failed" &&
+                        !(await confirm({
+                          title: "Mark this payout as failed?",
+                          description:
+                            "Its commissions return to approved so you can pay them again.",
+                          confirmText: "Mark failed",
+                        }))
+                      ) {
+                        return;
+                      }
+                      statusMutation.mutate({ payout, status });
+                    }}
                   />
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
@@ -2385,7 +2543,26 @@ function PayoutHistorySection({
                   {formatShortDate(payout.paidAt ?? payout.createdAt)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-sm text-muted-foreground">
-                  {payout.commissionCount || "-"}
+                  {payout.commissionCount > 0 ? (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 hover:text-foreground hover:underline"
+                      onClick={() =>
+                        setExpandedId((prev) =>
+                          prev === payout.id ? null : payout.id,
+                        )
+                      }
+                    >
+                      {expandedId === payout.id ? (
+                        <ChevronDown className="size-3" />
+                      ) : (
+                        <ChevronRight className="size-3" />
+                      )}
+                      {payout.commissionCount}
+                    </button>
+                  ) : (
+                    "-"
+                  )}
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-sm font-medium">
                   {formatCurrency(payout.amount)} {payout.currency}
@@ -2394,6 +2571,14 @@ function PayoutHistorySection({
                   {payout.note ?? "-"}
                 </TableCell>
               </TableRow>
+              {expandedId === payout.id && (
+                <TableRow>
+                  <TableCell colSpan={8} className="bg-muted/30">
+                    <CreatorPayoutLineItems payoutId={payout.id} />
+                  </TableCell>
+                </TableRow>
+              )}
+              </Fragment>
             ))}
           </TableBody>
         </Table>
@@ -2441,6 +2626,7 @@ function PayoutStatusMenu({
 }
 
 function Payouts() {
+  const { confirm } = useConfirm();
   const queryClient = useQueryClient();
   const [selectedProject, setSelectedProject] = useState("all");
   const [expandedPartners, setExpandedPartners] = useState<Set<string>>(new Set());
@@ -2560,12 +2746,46 @@ function Payouts() {
     },
   });
 
+  const clawbackMutation = useMutation({
+    mutationFn: async ({
+      commissionId,
+      action,
+    }: {
+      commissionId: string;
+      action: "deduct" | "dismiss";
+    }) => {
+      const response = await fetch(
+        `/api/commissions/${commissionId}/clawback`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(
+          (body as { error?: string }).error ?? "Failed to record clawback",
+        );
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["commissions-by-partner"] });
+    },
+  });
+
   const projects = projectsData?.projects ?? [];
-  const isMutating = bulkActionMutation.isPending || singleActionMutation.isPending || flagCustomerMutation.isPending;
+  const isMutating =
+    bulkActionMutation.isPending ||
+    singleActionMutation.isPending ||
+    flagCustomerMutation.isPending ||
+    clawbackMutation.isPending;
   const mutationError =
     bulkActionMutation.error ??
     singleActionMutation.error ??
-    flagCustomerMutation.error;
+    flagCustomerMutation.error ??
+    clawbackMutation.error;
 
   function togglePartner(partnerId: string) {
     setExpandedPartners((prev) => {
@@ -2579,16 +2799,38 @@ function Payouts() {
     });
   }
 
-  function handleBulkAction(ids: string[], action: "approve" | "pay" | "reject") {
+  async function handleBulkAction(ids: string[], action: "approve" | "pay" | "reject") {
+    if (action === "pay") {
+      const ok = await confirm({
+        title: `Mark ${ids.length} commission${ids.length === 1 ? "" : "s"} as paid?`,
+        description:
+          "This records that you've already sent this money to the affiliate outside the app (PayPal, Wise, etc.). It does not transfer any funds, and paid commissions cannot be undone.",
+        confirmText: "Mark paid",
+      });
+      if (!ok) return;
+    }
     bulkActionMutation.mutate({ ids, action });
   }
 
-  function handleSingleAction(id: string, status: "approved" | "paid" | "rejected", fraudFlag?: string) {
+  async function handleSingleAction(id: string, status: "approved" | "paid" | "rejected", fraudFlag?: string) {
+    if (status === "paid") {
+      const ok = await confirm({
+        title: "Mark this commission as paid?",
+        description:
+          "This records a payment you've already sent outside the app. It does not move money, and cannot be undone.",
+        confirmText: "Mark paid",
+      });
+      if (!ok) return;
+    }
     singleActionMutation.mutate({ id, status, fraudFlag });
   }
 
   function handleFlagCustomer(customerId: string, reason: string) {
     flagCustomerMutation.mutate({ customerId, reason });
+  }
+
+  function handleClawback(commissionId: string, action: "deduct" | "dismiss") {
+    clawbackMutation.mutate({ commissionId, action });
   }
 
   if (isLoading) {
@@ -2660,16 +2902,11 @@ function Payouts() {
     .filter((partner) => partner.commissions.length > 0);
 
   return (
-    <div className="space-y-6 bg-background">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Payouts</h1>
-          <p className="text-muted-foreground">
-            Review commissions, pay partners, and keep payout records aligned
-          </p>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Payouts"
+        subtitle="Review commissions, pay partners, and keep payout records aligned"
+      />
 
       {mutationError && (
         <div className="rounded-md border border-negative/20 bg-negative/5 p-3 text-sm text-negative">
@@ -2767,34 +3004,34 @@ function Payouts() {
       )}
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-2 xl:grid-cols-6 gap-6">
-        <StatCard
-          title="Pending Approval"
+      <div className="grid grid-cols-2 xl:grid-cols-6 gap-4">
+        <MetricTile
+          label="Pending approval"
           value={formatCurrency(totals.pendingAmount)}
           Icon={Clock}
         />
-        <StatCard
-          title="Ready to Pay"
+        <MetricTile
+          label="Ready to pay"
           value={formatCurrency(payoutReadiness.ready)}
           Icon={DollarSign}
         />
-        <StatCard
-          title="Below Minimum"
+        <MetricTile
+          label="Below minimum"
           value={formatCurrency(payoutReadiness.belowMinimum)}
           Icon={AlertTriangle}
         />
-        <StatCard
-          title="Needs Method"
+        <MetricTile
+          label="Needs method"
           value={formatCurrency(payoutReadiness.needsMethod)}
           Icon={CreditCard}
         />
-        <StatCard
-          title="Scheduled Later"
+        <MetricTile
+          label="Scheduled later"
           value={formatCurrency(payoutReadiness.scheduledLater)}
           Icon={Calendar}
         />
-        <StatCard
-          title="Paid"
+        <MetricTile
+          label="Paid"
           value={formatCurrency(totals.paidAmount)}
           Icon={CheckCircle}
         />
@@ -2817,21 +3054,18 @@ function Payouts() {
           isMutating={isMutating}
         />
       ) : (
-        <div className="bg-card border rounded-md p-6">
-          <h3 className="text-sm font-medium text-foreground mb-4">
-            Partner payouts ledger
-          </h3>
+        <div className="bg-card shadow-ring rounded-lg overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-8" />
                 <TableHead>Partner</TableHead>
-                <TableHead>Payout method</TableHead>
-                <TableHead>Payout Policy</TableHead>
-                <TableHead>Pending</TableHead>
-                <TableHead>Approved (Owed)</TableHead>
-                <TableHead>Paid</TableHead>
-                <TableHead>Actions</TableHead>
+                <TableHead>Due</TableHead>
+                <TableHead className="text-right">Customers</TableHead>
+                <TableHead className="text-right">Revenue brought</TableHead>
+                <TableHead className="text-right">Commissions</TableHead>
+                <TableHead className="text-right">To pay</TableHead>
+                <TableHead className="text-right" aria-label="Actions" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -2844,6 +3078,7 @@ function Payouts() {
                   onBulkAction={handleBulkAction}
                   onSingleAction={handleSingleAction}
                   onFlagCustomer={handleFlagCustomer}
+                  onClawback={handleClawback}
                   isMutating={isMutating}
                 />
               ))}
@@ -2922,7 +3157,7 @@ function PendingReviewSection({ projectId }: { projectId: string }) {
   if (error) {
     // Stripe-not-connected returns 412; render a friendly inline note.
     return (
-      <div className="bg-card border rounded-md p-4 text-sm text-muted-foreground">
+      <div className="bg-card shadow-card rounded-lg p-4 text-sm text-muted-foreground">
         {(error as Error).message}
       </div>
     );
@@ -2931,7 +3166,7 @@ function PendingReviewSection({ projectId }: { projectId: string }) {
   const rows = data?.data ?? [];
 
   return (
-    <div className="bg-card border rounded-md p-6">
+    <div className="bg-card shadow-card rounded-lg p-6">
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-sm font-medium text-foreground">

@@ -1,0 +1,1 @@
+ALTER TABLE `project_branding` ADD `theme` text DEFAULT 'minimal' NOT NULL;

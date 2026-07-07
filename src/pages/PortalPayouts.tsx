@@ -1,13 +1,18 @@
+import { Fragment, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   CalendarClock,
   CheckCircle,
+  ChevronDown,
+  ChevronRight,
   Clock,
   DollarSign,
 } from "lucide-react";
 
+import PageHeader from "@/components/PageHeader";
 import StatCard from "@/components/StatCard";
 import PartnerPayoutMethodCard from "@/components/PartnerPayoutMethodCard";
+import { describeSchedule } from "@/lib/payout-schedule";
 import {
   Table,
   TableBody,
@@ -32,6 +37,13 @@ interface Payout {
 interface PartnerDashboardStats {
   partner: {
     payoutLink: string | null;
+    commissionProgram: {
+      minPayout: number;
+      payoutCadence: "monthly_day" | "monthly_ordinal" | "weekly" | null;
+      payoutDayOfMonth: number | null;
+      payoutDayOfWeek: number | null;
+      payoutOrdinal: number | null;
+    } | null;
   };
   stats: {
     pendingEarnings: number;
@@ -77,7 +89,68 @@ function getStatusBadge(status: string) {
   );
 }
 
+interface PayoutLineItem {
+  commissionId: string;
+  amount: number;
+  customer: string;
+  eventDate: string | null;
+}
+
+function PayoutLineItems({ payoutId }: { payoutId: string }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["partner-payout-items", payoutId],
+    queryFn: async (): Promise<{ commissions: PayoutLineItem[] }> => {
+      const response = await fetch(
+        `/api/partner/payouts/${payoutId}/commissions`,
+        { credentials: "include" },
+      );
+      if (!response.ok) throw new Error("Failed to load payout details");
+      return response.json();
+    },
+  });
+
+  if (isLoading) {
+    return <p className="text-sm text-muted-foreground">Loading details…</p>;
+  }
+  if (error) {
+    return (
+      <p className="text-sm text-destructive">Could not load payout details.</p>
+    );
+  }
+  const items = data?.commissions ?? [];
+  if (items.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No commission details for this payout.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium text-muted-foreground">
+        This payout covered {items.length} commission
+        {items.length === 1 ? "" : "s"}:
+      </p>
+      {items.map((item) => (
+        <div
+          key={item.commissionId}
+          className="flex items-center justify-between text-sm"
+        >
+          <span className="text-muted-foreground">
+            {item.customer}
+            {item.eventDate ? ` · ${formatShortDate(item.eventDate)}` : ""}
+          </span>
+          <span className="font-medium tabular-nums text-foreground">
+            {formatCurrency(item.amount)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PortalPayouts() {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["partner-payouts-full"],
     queryFn: async (): Promise<{ payouts: Payout[] }> => {
@@ -122,7 +195,7 @@ function PortalPayouts() {
   const loadError = error ?? statsError;
   if (loadError) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-md border border-border bg-card p-8">
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-lg shadow-card bg-card p-8">
         <p className="text-sm text-destructive">{loadError.message}</p>
       </div>
     );
@@ -133,21 +206,28 @@ function PortalPayouts() {
   const totals = payoutsList.reduce(
     (acc, p) => {
       if (p.status === "paid") acc.paid += p.amount;
-      if (p.status === "scheduled") acc.scheduled += p.amount;
       return acc;
     },
-    { paid: 0, scheduled: 0 },
+    { paid: 0 },
   );
   const stats = statsData?.stats;
+  const program = statsData?.partner.commissionProgram ?? null;
+  const scheduleText = program
+    ? describeSchedule({
+        cadence: program.payoutCadence,
+        dayOfMonth: program.payoutDayOfMonth,
+        dayOfWeek: program.payoutDayOfWeek,
+        ordinal: program.payoutOrdinal,
+      })
+    : "No schedule set";
+  const minPayout = program?.minPayout ?? 0;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">Payouts</h1>
-        <p className="text-muted-foreground">
-          Approved earnings, scheduled payouts, and payout history
-        </p>
-      </div>
+      <PageHeader
+        title="Payouts"
+        subtitle="Your approved balance, when you get paid, and your payout history"
+      />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
@@ -161,8 +241,8 @@ function PortalPayouts() {
           Icon={DollarSign}
         />
         <StatCard
-          title="Scheduled"
-          value={formatCurrency(totals.scheduled)}
+          title="Minimum payout"
+          value={formatCurrency(minPayout)}
           Icon={CalendarClock}
         />
         <StatCard
@@ -181,19 +261,32 @@ function PortalPayouts() {
           />
         </div>
 
-        <div className="bg-card border border-border rounded-md p-5">
+        <div className="bg-card shadow-card rounded-lg p-5">
           <p className="text-sm font-medium text-foreground">Next payout basis</p>
           <p className="mt-2 text-2xl font-semibold tabular-nums text-foreground">
             {formatCurrency(stats?.approvedEarnings ?? 0)}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Approved earnings become payable when the program minimum and payout
-            schedule are met.
+            You get paid once your approved balance reaches the{" "}
+            <span className="font-medium text-foreground">
+              {formatCurrency(minPayout)}
+            </span>{" "}
+            minimum
+            {scheduleText !== "No schedule set" ? (
+              <>
+                {" "}
+                — payouts run{" "}
+                <span className="font-medium text-foreground">
+                  {scheduleText.toLowerCase()}
+                </span>
+              </>
+            ) : null}
+            . The project owner sends payment to your payout method above.
           </p>
         </div>
       </div>
 
-      <div className="bg-card border border-border rounded-md p-6">
+      <div className="bg-card shadow-card rounded-lg p-6">
         <div className="mb-4">
           <h2 className="text-sm font-medium text-foreground">Payout history</h2>
         </div>
@@ -209,21 +302,44 @@ function PortalPayouts() {
           </TableHeader>
           <TableBody>
             {payoutsList.map((payout) => (
-              <TableRow key={payout.id}>
-                <TableCell className="font-medium">
-                  ${payout.amount.toFixed(2)} {payout.currency}
-                </TableCell>
-                <TableCell>{getStatusBadge(payout.status)}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {formatPayoutPeriod(payout)}
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {formatShortDate(payout.paidAt)}
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
-                  {payout.note ?? "-"}
-                </TableCell>
-              </TableRow>
+              <Fragment key={payout.id}>
+                <TableRow
+                  className="cursor-pointer"
+                  onClick={() =>
+                    setExpandedId((prev) =>
+                      prev === payout.id ? null : payout.id,
+                    )
+                  }
+                >
+                  <TableCell className="font-medium">
+                    <span className="inline-flex items-center gap-1.5">
+                      {expandedId === payout.id ? (
+                        <ChevronDown className="size-3.5 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="size-3.5 text-muted-foreground" />
+                      )}
+                      ${payout.amount.toFixed(2)} {payout.currency}
+                    </span>
+                  </TableCell>
+                  <TableCell>{getStatusBadge(payout.status)}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {formatPayoutPeriod(payout)}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {formatShortDate(payout.paidAt)}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
+                    {payout.note ?? "-"}
+                  </TableCell>
+                </TableRow>
+                {expandedId === payout.id && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="bg-muted/30">
+                      <PayoutLineItems payoutId={payout.id} />
+                    </TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
             ))}
             {payoutsList.length === 0 && (
               <TableRow>
@@ -231,7 +347,7 @@ function PortalPayouts() {
                   colSpan={5}
                   className="text-center text-muted-foreground py-8"
                 >
-                  No payouts yet. Payouts will appear here once they are scheduled by the project owner.
+                  No payouts yet. Once the project owner pays you, your payouts appear here.
                 </TableCell>
               </TableRow>
             )}

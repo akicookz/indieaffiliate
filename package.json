@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "bun run build && vite preview",
-    "deploy": "bun run build && wrangler deploy",
+    "deploy": "bun run build && bun run db:migrate:prod && wrangler deploy",
     "cf-typegen": "wrangler types",
     "db:generate": "drizzle-kit generate",
     "db:migrate:dev": "bun run wrangler d1 migrations apply --local DB",

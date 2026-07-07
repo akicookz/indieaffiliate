@@ -8,6 +8,8 @@ import { CouponService } from "./commission-program-service";
 interface StripeCharge {
   id: string;
   amount: number; // in cents
+  amount_refunded?: number; // in cents
+  refunded?: boolean;
   currency: string;
   customer: string | null;
   status: string;
@@ -250,6 +252,24 @@ export class StripeSyncService {
             summary.failedChargeStatusCount++;
             continue;
           }
+          // USD-only at launch: non-USD amounts would be mislabeled as dollars,
+          // so we don't create commissions from them.
+          if (charge.currency && charge.currency.toLowerCase() !== "usd") {
+            continue;
+          }
+          // Clawback: if this charge was refunded, void any commission it created
+          // (that hasn't been paid yet) instead of processing it further.
+          if (
+            charge.refunded ||
+            (charge.amount_refunded ?? 0) >= charge.amount
+          ) {
+            await commissionService.voidCommissionForRefund(
+              projectId,
+              charge.id,
+              "refunded",
+            );
+            continue;
+          }
           // Skip charges linked to an invoice — these will be handled by the
           // invoice path to avoid creating duplicate commissions for the same payment.
           if (charge.invoice && mappings.source === "both") {
@@ -341,6 +361,11 @@ export class StripeSyncService {
         for (const invoice of invoices) {
           // Skip one-off invoices without a subscription (handled by charge path)
           if (!invoice.subscription) continue;
+
+          // USD-only at launch: don't record non-USD invoices as dollar amounts.
+          if (invoice.currency && invoice.currency.toLowerCase() !== "usd") {
+            continue;
+          }
 
           if (!invoice.customer) {
             summary.noCustomerCount++;
@@ -950,6 +975,17 @@ export class StripeSyncService {
     for (const charge of charges) {
       if (charge.status !== "succeeded") continue;
       if (charge.amount === 0) continue;
+      // USD-only at launch.
+      if (charge.currency && charge.currency.toLowerCase() !== "usd") continue;
+      // Clawback: void the not-yet-paid commission for a refunded charge.
+      if (charge.refunded || (charge.amount_refunded ?? 0) >= charge.amount) {
+        await commissionService.voidCommissionForRefund(
+          projectId,
+          charge.id,
+          "refunded",
+        );
+        continue;
+      }
       // Skip charges with an invoice if we also have invoices (avoid double-counting)
       if (hasInvoices && charge.invoice) continue;
 
@@ -976,6 +1012,8 @@ export class StripeSyncService {
     // Process invoices
     for (const invoice of invoices) {
       if (invoice.amount_paid === 0) continue;
+      // USD-only at launch.
+      if (invoice.currency && invoice.currency.toLowerCase() !== "usd") continue;
 
       const revenue = invoice.amount_paid / 100;
       const result = await commissionService.recordConversion({

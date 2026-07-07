@@ -1,6 +1,7 @@
 import { type DrizzleD1Database } from "drizzle-orm/d1";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { partners, customers, commissions } from "../db";
+import { roundToCents } from "../money";
 import { StripeService, type MetadataMappings } from "./stripe-service";
 import { StripeSyncService } from "./stripe-sync-service";
 import { CommissionService } from "./commission-service";
@@ -295,6 +296,33 @@ export class ImportService {
           }
         }
 
+        const status = row.status ?? "pending";
+        amount = roundToCents(amount);
+
+        // Deterministic idempotency key from the row's stable fields. Combined
+        // with the unique (projectId, externalEventId) index, re-importing the
+        // same file skips existing commissions instead of duplicating them.
+        const externalEventId =
+          `csv_import:${partnerEmail}|${customerEmail}|${amount}|${status}`;
+        const duplicate = await this.db
+          .select({ id: commissions.id })
+          .from(commissions)
+          .where(
+            and(
+              eq(commissions.projectId, projectId),
+              eq(commissions.externalEventId, externalEventId),
+            ),
+          )
+          .limit(1);
+        if (duplicate[0]) {
+          result.skipped.push({
+            row: i,
+            reason: "Duplicate commission (already imported)",
+            type: "commission",
+          });
+          continue;
+        }
+
         const id = crypto.randomUUID();
         await this.db.insert(commissions).values({
           id,
@@ -303,8 +331,8 @@ export class ImportService {
           projectId,
           amount,
           rate,
-          status: row.status ?? "pending",
-          externalEventId: `csv_import_${id}`,
+          status,
+          externalEventId,
           commissionProgramId,
           monthIndex,
           mrr,
@@ -312,11 +340,18 @@ export class ImportService {
 
         result.created.commissions++;
       } catch (err) {
-        result.errors.push({
-          row: i,
-          error: err instanceof Error ? err.message : "Unknown error",
-          type: "commission",
-        });
+        const message = err instanceof Error ? err.message : "Unknown error";
+        // A concurrent import can lose the pre-check race; the unique index still
+        // protects us, so treat the violation as a skipped duplicate, not an error.
+        if (/UNIQUE constraint failed/i.test(message)) {
+          result.skipped.push({
+            row: i,
+            reason: "Duplicate commission (already imported)",
+            type: "commission",
+          });
+        } else {
+          result.errors.push({ row: i, error: message, type: "commission" });
+        }
       }
     }
 

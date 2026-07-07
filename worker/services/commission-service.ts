@@ -2,6 +2,7 @@ import { type DrizzleD1Database } from "drizzle-orm/d1";
 import { eq, and, sql, inArray, isNull } from "drizzle-orm";
 import {
   commissions,
+  commissionAdjustments,
   commissionPrograms,
   customers,
   partners,
@@ -12,6 +13,7 @@ import {
   type NewCommissionRow,
 } from "../db";
 import { FraudService } from "./fraud-service";
+import { roundToCents } from "../money";
 
 interface CommissionSnapshot {
   amount: number;
@@ -108,11 +110,12 @@ export class CommissionService {
 
     const rate =
       data.rate ?? (program ? program.rate / 100 : partner.commissionRate);
-    const amount =
+    const amount = roundToCents(
       data.commissionAmount ??
-      (program?.type === "one-time" && program.flatAmount != null
-        ? program.flatAmount
-        : data.revenue * rate);
+        (program?.type === "one-time" && program.flatAmount != null
+          ? program.flatAmount
+          : data.revenue * rate),
+    );
 
     let monthIndex = data.monthIndex ?? null;
     let priorCount = 0;
@@ -714,6 +717,23 @@ export class CommissionService {
       : [];
     const customerMap = new Map(customerRows.map((c) => [c.id, c]));
 
+    // Clawback adjustments for these commissions (queued/dismissed/applied), so
+    // a commission that's already been handled doesn't re-surface as "needed".
+    const adjustmentRows = await this.db
+      .select({
+        commissionId: commissionAdjustments.commissionId,
+        status: commissionAdjustments.status,
+        amount: commissionAdjustments.amount,
+      })
+      .from(commissionAdjustments)
+      .where(
+        inArray(
+          commissionAdjustments.commissionId,
+          rows.map((r) => r.id),
+        ),
+      );
+    const adjustmentMap = new Map(adjustmentRows.map((a) => [a.commissionId, a]));
+
     // Fetch program info to surface programType + durationMonths so the FE
     // can render "Month X of N · {remaining} left" on each commission row.
     const programIds = [
@@ -764,11 +784,34 @@ export class CommissionService {
       let rejectedAmount = 0;
       let rejectedCount = 0;
 
+      // Decision context: how much value this partner drove and what's at risk.
+      const seenCustomers = new Set<string>();
+      let referredRevenue = 0;
+      let atRiskAmount = 0;
+      let pendingClawback = 0;
+
       for (const c of partnerCommissions) {
         if (c.status === "pending" && !c.fraudFlag) { pendingAmount += c.amount; pendingCount++; }
         if (c.status === "approved") { approvedAmount += c.amount; approvedCount++; }
         if (c.status === "paid") { paidAmount += c.amount; paidCount++; }
         if (c.status === "rejected") { rejectedAmount += c.amount; rejectedCount++; }
+
+        if (c.customerId && !seenCustomers.has(c.customerId)) {
+          seenCustomers.add(c.customerId);
+          referredRevenue += customerMap.get(c.customerId)?.revenue ?? 0;
+        }
+        const adj = adjustmentMap.get(c.id);
+        if (adj?.status === "pending") {
+          // Already queued — will be netted from the next payout.
+          pendingClawback += adj.amount;
+        } else if (
+          !adj &&
+          c.status === "paid" &&
+          customerMap.get(c.customerId)?.status === "refunded"
+        ) {
+          // Needs owner action: paid, then refunded, not yet handled.
+          atRiskAmount += c.amount;
+        }
       }
 
       totalPending += pendingAmount;
@@ -788,8 +831,22 @@ export class CommissionService {
         paidAmount,
         rejectedCount,
         rejectedAmount,
+        customerCount: seenCustomers.size,
+        referredRevenue,
+        atRiskAmount,
+        pendingClawback,
         commissions: partnerCommissions.map((c) => {
           const customer = customerMap.get(c.customerId);
+          const adj = adjustmentMap.get(c.id);
+          const clawbackState: "needed" | "queued" | "dismissed" | "applied" | null =
+            adj
+              ? adj.status === "pending"
+                ? "queued"
+                : (adj.status as "applied" | "dismissed")
+              : c.status === "paid" && customer?.status === "refunded"
+                ? "needed"
+                : null;
+          const clawbackNeeded = clawbackState === "needed";
           const program = c.commissionProgramId
             ? programMap.get(c.commissionProgramId) ?? null
             : null;
@@ -805,6 +862,8 @@ export class CommissionService {
             customerEmail: customer?.email ?? "Unknown",
             customerStatus: customer?.status ?? null,
             customerRevenue: customer?.revenue ?? 0,
+            clawbackNeeded,
+            clawbackState,
             amount: c.amount,
             rate: c.rate,
             status: c.status,
@@ -870,6 +929,106 @@ export class CommissionService {
       .where(inArray(commissions.id, ids));
 
     return ids.length;
+  }
+
+  /**
+   * Mark linked commissions paid, but only those currently `approved`. Prevents
+   * a payout status flip from resurrecting rejected/fraud commissions to paid.
+   */
+  async markApprovedCommissionsPaid(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    await this.db
+      .update(commissions)
+      .set({ status: "paid" })
+      .where(and(inArray(commissions.id, ids), eq(commissions.status, "approved")));
+    return ids.length;
+  }
+
+  /**
+   * Revert linked commissions from `paid` back to `approved` (e.g. a payout that
+   * bounced). Only touches paid rows, so rejected/fraud commissions stay rejected.
+   */
+  async revertPaidCommissionsToApproved(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    await this.db
+      .update(commissions)
+      .set({ status: "approved" })
+      .where(and(inArray(commissions.id, ids), eq(commissions.status, "paid")));
+    return ids.length;
+  }
+
+  /**
+   * Clawback: void the not-yet-paid commission for a refunded charge/invoice.
+   * Only pending/approved commissions are voided — already-paid money must be
+   * recovered manually. The 30-day hold means most refunds land before payout.
+   */
+  async voidCommissionForRefund(
+    projectId: string,
+    externalEventId: string,
+    reason: string,
+  ): Promise<void> {
+    await this.db
+      .update(commissions)
+      .set({ status: "rejected", fraudFlag: reason })
+      .where(
+        and(
+          eq(commissions.projectId, projectId),
+          eq(commissions.externalEventId, externalEventId),
+          inArray(commissions.status, ["pending", "approved"]),
+        ),
+      );
+  }
+
+  /**
+   * Record a clawback on a paid commission whose customer was refunded.
+   * `deduct` queues a pending adjustment (netted against the partner's next
+   * payout); `dismiss` records a zero-amount dismissal (recovered elsewhere).
+   * Verifies project ownership. One adjustment per commission (unique index).
+   */
+  async recordClawback(
+    commissionId: string,
+    userId: string,
+    action: "deduct" | "dismiss",
+  ): Promise<{ ok: boolean; error?: string }> {
+    const rows = await this.db
+      .select({
+        projectId: commissions.projectId,
+        partnerId: commissions.partnerId,
+        amount: commissions.amount,
+        status: commissions.status,
+        ownerId: projects.userId,
+      })
+      .from(commissions)
+      .innerJoin(projects, eq(projects.id, commissions.projectId))
+      .where(eq(commissions.id, commissionId))
+      .limit(1);
+    const commission = rows[0];
+    if (!commission || commission.ownerId !== userId) {
+      return { ok: false, error: "Commission not found" };
+    }
+    if (commission.status !== "paid") {
+      return { ok: false, error: "Only paid commissions can be clawed back" };
+    }
+
+    const existing = await this.db
+      .select({ id: commissionAdjustments.id })
+      .from(commissionAdjustments)
+      .where(eq(commissionAdjustments.commissionId, commissionId))
+      .limit(1);
+    if (existing[0]) {
+      return { ok: false, error: "This commission already has an adjustment" };
+    }
+
+    await this.db.insert(commissionAdjustments).values({
+      id: crypto.randomUUID(),
+      projectId: commission.projectId,
+      partnerId: commission.partnerId,
+      commissionId,
+      amount: action === "deduct" ? roundToCents(commission.amount) : 0,
+      reason: "refund",
+      status: action === "deduct" ? "pending" : "dismissed",
+    });
+    return { ok: true };
   }
 
   /**

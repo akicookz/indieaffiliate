@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import PageHeader from "@/components/PageHeader";
 import {
   Table,
   TableBody,
@@ -43,7 +44,7 @@ function PortalCommissions() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-md border border-border bg-card p-8">
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-lg shadow-card bg-card p-8">
         <p className="text-sm text-destructive">{error.message}</p>
       </div>
     );
@@ -83,35 +84,33 @@ function PortalCommissions() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">Commissions</h1>
-        <p className="text-muted-foreground">
-          Track your earned commissions from referred customers
-        </p>
-      </div>
+      <PageHeader
+        title="Commissions"
+        subtitle="Track your earned commissions from referred customers"
+      />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-card border border-border rounded-md p-4">
+        <div className="bg-card shadow-card rounded-lg p-4">
           <p className="text-sm text-muted-foreground">Total</p>
           <p className="text-2xl font-medium mt-1 text-foreground">${totals.total.toFixed(2)}</p>
         </div>
-        <div className="bg-card border border-border rounded-md p-4">
+        <div className="bg-card shadow-card rounded-lg p-4">
           <p className="text-sm text-muted-foreground">Pending</p>
           <p className="text-2xl font-medium mt-1 text-warning">${totals.pending.toFixed(2)}</p>
         </div>
-        <div className="bg-card border border-border rounded-md p-4">
+        <div className="bg-card shadow-card rounded-lg p-4">
           <p className="text-sm text-muted-foreground">Approved</p>
           <p className="text-2xl font-medium mt-1 text-info">${totals.approved.toFixed(2)}</p>
         </div>
-        <div className="bg-card border border-border rounded-md p-4">
+        <div className="bg-card shadow-card rounded-lg p-4">
           <p className="text-sm text-muted-foreground">Paid</p>
           <p className="text-2xl font-medium mt-1 text-positive">${totals.paid.toFixed(2)}</p>
         </div>
       </div>
 
       {/* Commission Table */}
-      <div className="bg-card border border-border rounded-md p-6">
+      <div className="bg-card shadow-card rounded-lg p-6">
         <Table>
           <TableHeader>
             <TableRow>

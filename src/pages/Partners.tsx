@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search, Upload, Download } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -50,6 +51,9 @@ export interface PartnerListRow {
   referralCode: string;
   payoutLink: string | null;
   createdAt: string;
+  cancelRate: number;
+  ltvRevenue: number;
+  ltvMonths: number;
   metrics: {
     refs: number;
     clicks: number;
@@ -208,10 +212,17 @@ function downloadCsv(rows: PartnerListRow[]) {
 }
 
 function Partners() {
-  const [tab, setTab] = useState<"all" | "active" | "review" | "paused">("all");
+  // Honor deep-links from the dashboard: ?status=pending opens the review tab,
+  // ?partner=<id> opens that partner's detail drawer.
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<"all" | "active" | "review" | "paused">(
+    searchParams.get("status") === "pending" ? "review" : "all",
+  );
   const [search, setSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState<string>("all");
-  const [selectedPartnerId, setSelectedPartnerId] = useState<string | null>(null);
+  const [selectedPartnerId, setSelectedPartnerId] = useState<string | null>(
+    searchParams.get("partner"),
+  );
   const [importOpen, setImportOpen] = useState(false);
   const [importProjectId, setImportProjectId] = useState<string>("");
 
@@ -224,7 +235,7 @@ function Partners() {
     },
   });
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["partners", tab, search, channelFilter],
     queryFn: async (): Promise<PartnersResponse> => {
       const params = new URLSearchParams();
@@ -264,8 +275,8 @@ function Partners() {
   ];
 
   return (
-    <div className="p-6">
-      <PageHeader eyebrow="NETWORK" title="Partners" subtitle={subtitle}>
+    <div className="space-y-6">
+      <PageHeader title="Partners" subtitle={subtitle}>
         <Button
           variant="secondary"
           size="sm"
@@ -291,7 +302,7 @@ function Partners() {
         <InvitePartnerDialog projects={projectsData?.projects ?? []} />
       </PageHeader>
 
-      <div className="bg-card border rounded-md">
+      <div className="bg-card shadow-card rounded-lg">
         {/* Toolbar */}
         <div className="flex flex-col lg:flex-row gap-3 p-4">
           <div className="relative flex-1 min-w-0">
@@ -342,47 +353,51 @@ function Partners() {
 
         {/* Table */}
         <Table className="px-2 pb-2">
-          <TableHeader className="[&_tr]:border-0">
+          <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead className="text-eyebrow-muted h-12 px-4">Partner</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4">Code</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4">Channel</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4">Commission</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4 text-right">Refs</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4 text-right">Conv.</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4 text-right">EPC</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4 text-right">MRR</TableHead>
-              <TableHead className="text-eyebrow-muted h-12 px-4">Status</TableHead>
+              <TableHead>Partner</TableHead>
+              <TableHead>Code</TableHead>
+              <TableHead className="text-right">Customers</TableHead>
+              <TableHead className="text-right">Revenue</TableHead>
+              <TableHead className="text-right">MRR</TableHead>
+              <TableHead className="text-right">LTV</TableHead>
+              <TableHead className="text-right">Cancel %</TableHead>
+              <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-12 text-muted-foreground text-sm">
+                <TableCell colSpan={8} className="text-center py-12 text-muted-foreground text-sm">
                   Loading partners…
                 </TableCell>
               </TableRow>
             )}
-            {!isLoading && partners.length === 0 && (
+            {!isLoading && isError && (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-12 text-muted-foreground text-sm">
+                <TableCell colSpan={8} className="text-center py-12 text-destructive text-sm">
+                  Couldn't load partners. Check your connection and try again.
+                </TableCell>
+              </TableRow>
+            )}
+            {!isLoading && !isError && partners.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={8} className="text-center py-12 text-muted-foreground text-sm">
                   No partners match these filters.
                 </TableCell>
               </TableRow>
             )}
-            {partners.map((p) => {
-              const ch = p.channel ? CHANNEL_META[p.channel] : null;
-              const commission = commissionSummary(p);
+            {!isError && partners.map((p) => {
               return (
                 <TableRow
                   key={p.id}
-                  className="cursor-pointer hover:bg-muted/30 border-0 [&>td]:py-4 [&>td]:px-4"
+                  className="cursor-pointer [&>td]:py-2.5"
                   onClick={() => setSelectedPartnerId(p.id)}
                 >
                   <TableCell>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2.5">
                       <div
-                        className="size-9 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0"
+                        className="size-7 rounded-full flex items-center justify-center text-[10px] font-semibold text-white shrink-0"
                         style={{ backgroundColor: avatarColor(p.id) }}
                       >
                         {initials(p.name || p.email)}
@@ -402,38 +417,29 @@ function Partners() {
                       {p.referralCode}
                     </code>
                   </TableCell>
-                  <TableCell>
-                    {ch ? (
-                      <span className="inline-flex items-center gap-1.5 text-sm">
-                        <span
-                          className="size-1.5 rounded-full"
-                          style={{ backgroundColor: ch.color }}
-                        />
-                        {ch.label}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground text-sm">—</span>
-                    )}
+                  <TableCell className="text-right tabular-nums">
+                    {p.referredCustomers.toLocaleString()}
                   </TableCell>
-                  <TableCell>
-                    <div className="text-sm text-foreground">
-                      {commission.primary}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {commission.secondary}
-                    </div>
+                  <TableCell className="text-right tabular-nums">
+                    {fmtMoney(p.totalRevenue)}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm">
-                    {p.metrics.refs.toLocaleString()}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm">
-                    {p.metrics.conv.toFixed(1)}%
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm">
-                    {fmtMoney(p.metrics.epc)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm">
+                  <TableCell className="text-right tabular-nums">
                     {fmtMoney(p.metrics.mrr)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {fmtMoney(p.ltvRevenue)}
+                    <span className="text-muted-foreground text-xs">
+                      {" "}
+                      · {p.ltvMonths.toFixed(1)}mo
+                    </span>
+                  </TableCell>
+                  <TableCell
+                    className={cn(
+                      "text-right tabular-nums",
+                      p.cancelRate >= 30 ? "text-negative" : "text-foreground",
+                    )}
+                  >
+                    {p.cancelRate.toFixed(0)}%
                   </TableCell>
                   <TableCell>
                     <span
@@ -478,13 +484,7 @@ function Partners() {
           side="right"
           className="w-full sm:!w-[640px] sm:!max-w-[640px] overflow-y-auto p-6 gap-0"
         >
-          <SheetTitle
-            className="text-2xl tracking-tight mb-1"
-            style={{
-              fontFamily: `"Source Serif 4", Georgia, serif`,
-              fontWeight: 500,
-            }}
-          >
+          <SheetTitle className="text-2xl tracking-tight mb-1">
             Import partners from CSV
           </SheetTitle>
           <p className="text-sm text-muted-foreground mb-4">

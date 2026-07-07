@@ -27,9 +27,19 @@ export class AnalyticsService {
       };
     }
 
+    const ownedProjectIds = userProjects.map((p) => p.id);
     const projectIds = filters?.projectId && filters.projectId !== "all"
-      ? [filters.projectId]
-      : userProjects.map((p) => p.id);
+      ? ownedProjectIds.filter((id) => id === filters.projectId)
+      : ownedProjectIds;
+    if (projectIds.length === 0) {
+      return {
+        clicksByDay: [],
+        conversionsByDay: [],
+        revenueByDay: [],
+        topPartners: [],
+        totals: { clicks: 0, conversions: 0, revenue: 0, commissions: 0 },
+      };
+    }
 
     const days = filters?.days ?? 30;
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);

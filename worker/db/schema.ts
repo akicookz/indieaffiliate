@@ -280,7 +280,10 @@ export const commissions = sqliteTable(
   (table) => [
     index("idx_commissions_partner_status").on(table.partnerId, table.status),
     index("idx_commissions_project").on(table.projectId),
-    index("idx_commissions_event").on(table.projectId, table.externalEventId),
+    uniqueIndex("idx_commissions_event_unique").on(
+      table.projectId,
+      table.externalEventId,
+    ),
   ],
 );
 
@@ -513,6 +516,8 @@ export const projectBranding = sqliteTable(
     wordmark: text("wordmark"),
     backgroundMode: text("background_mode").notNull().default("cream"),
     layout: text("layout").notNull().default("split"),
+    theme: text("theme").notNull().default("minimal"),
+    partnerAgreement: text("partner_agreement"),
     showSocialProof: integer("show_social_proof", { mode: "boolean" })
       .notNull()
       .default(true),
@@ -657,6 +662,48 @@ export const payoutCommissions = sqliteTable(
 
 export type PayoutCommissionRow = typeof payoutCommissions.$inferSelect;
 export type NewPayoutCommissionRow = typeof payoutCommissions.$inferInsert;
+
+// Commission adjustments (clawbacks) - a positive amount owed back to the
+// program when a paid commission's customer is later refunded. `pending`
+// adjustments are netted against the partner's next payout, then marked
+// `applied`; `dismissed` means the owner recovered it another way.
+export const commissionAdjustments = sqliteTable(
+  "commission_adjustments",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => partners.id, { onDelete: "cascade" }),
+    commissionId: text("commission_id")
+      .notNull()
+      .references(() => commissions.id, { onDelete: "cascade" }),
+    amount: real("amount").notNull(),
+    reason: text("reason").notNull().default("refund"),
+    status: text("status", { enum: ["pending", "applied", "dismissed"] })
+      .notNull()
+      .default("pending"),
+    appliedPayoutId: text("applied_payout_id"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    appliedAt: integer("applied_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    // One adjustment per commission — you can't claw back the same one twice.
+    uniqueIndex("idx_commission_adjustments_commission").on(table.commissionId),
+    index("idx_commission_adjustments_partner_status").on(
+      table.partnerId,
+      table.status,
+    ),
+  ],
+);
+
+export type CommissionAdjustmentRow = typeof commissionAdjustments.$inferSelect;
+export type NewCommissionAdjustmentRow =
+  typeof commissionAdjustments.$inferInsert;
 
 // User Subscriptions (billing) - selected plan (nullable until onboarding), Stripe customer/subscription, status, trial
 export const userSubscriptions = sqliteTable(

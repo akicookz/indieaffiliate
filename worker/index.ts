@@ -16,6 +16,7 @@ import {
   users,
   payments,
   commissions,
+  commissionAdjustments,
   payouts,
   payoutCommissions,
   commissionPrograms,
@@ -51,6 +52,7 @@ import { DashboardService } from "./services/dashboard-service";
 import { TrackingService } from "./services/tracking-service";
 import { hashIP } from "./services/tracking-service";
 import { CommissionService } from "./services/commission-service";
+import { roundToCents } from "./money";
 import { AnalyticsService } from "./services/analytics-service";
 import { ApiKeyService } from "./services/api-key-service";
 import { EmailService } from "./services/email-service";
@@ -109,7 +111,10 @@ import {
   updatePayoutSchema,
   updateMetadataMappingsSchema,
   updatePartnerPayoutLinkSchema,
-  csvImportSchema,
+  csvImportEnvelopeSchema,
+  csvImportPartnerSchema,
+  csvImportCustomerSchema,
+  csvImportCommissionSchema,
   stripeImportPreviewSchema,
   stripeImportExecuteSchema,
   stripeCustomerSearchSchema,
@@ -202,6 +207,65 @@ function validate<T>(
   if (result.success) return { success: true, data: result.data as T };
   const message = result.error?.issues?.[0]?.message ?? "Validation failed";
   return { success: false, error: message };
+}
+
+type ImportRowError = {
+  row: number;
+  error: string;
+  type: "partner" | "customer" | "commission";
+};
+
+// Validate CSV rows one at a time. Valid rows are returned for import; invalid
+// rows are appended to `errors` with their index, offending field, and an
+// identifying label so the user can find and fix them without the whole import
+// failing on a single bad row.
+function partitionImportRows<T>(
+  rows: unknown[],
+  schema: {
+    safeParse: (data: unknown) => {
+      success: boolean;
+      data?: T;
+      error?: {
+        issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>;
+      };
+    };
+  },
+  type: "partner" | "customer" | "commission",
+  errors: ImportRowError[],
+): T[] {
+  const valid: T[] = [];
+  rows.forEach((raw, index) => {
+    const result = schema.safeParse(raw);
+    if (result.success && result.data !== undefined) {
+      valid.push(result.data);
+      return;
+    }
+    const issue = result.error?.issues?.[0];
+    const field =
+      issue?.path && issue.path.length > 0
+        ? String(issue.path[issue.path.length - 1])
+        : "";
+    const message = issue?.message ?? "Invalid row";
+    const base = field ? `${field}: ${message}` : message;
+    const label = extractImportRowLabel(raw);
+    errors.push({
+      row: index,
+      error: label ? `${base} (${label})` : base,
+      type,
+    });
+  });
+  return valid;
+}
+
+function extractImportRowLabel(raw: unknown): string {
+  if (raw && typeof raw === "object") {
+    const record = raw as Record<string, unknown>;
+    for (const key of ["email", "partnerEmail", "name"]) {
+      const value = record[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+  }
+  return "";
 }
 
 // Shared handler for /payouts/approve and /payouts/deny. The only difference
@@ -491,14 +555,29 @@ function matchWeekly(from: Date, dayOfWeek: number): Date {
   return result;
 }
 
-function commissionPayoutDueDate(
-  commission: CommissionForPayoutRecord,
-): Date | null {
-  const start = startOfUtcDay(
+// Commissions are held for this many days after the sale (matched to a typical
+// refund window) before they can be paid out. Keep in sync with the client copy.
+const COMMISSION_HOLD_DAYS = 30;
+
+function commissionSaleDate(commission: CommissionForPayoutRecord): Date {
+  return startOfUtcDay(
     coercePayoutDate(commission.eventDate) ??
       coercePayoutDate(commission.createdAt) ??
       new Date(),
   );
+}
+
+function commissionHoldUntil(commission: CommissionForPayoutRecord): Date {
+  const start = commissionSaleDate(commission);
+  return new Date(
+    start.getTime() + COMMISSION_HOLD_DAYS * 24 * 60 * 60 * 1000,
+  );
+}
+
+function commissionScheduleDate(
+  commission: CommissionForPayoutRecord,
+): Date | null {
+  const start = commissionSaleDate(commission);
   if (commission.payoutCadence === "monthly_day") {
     if (!commission.payoutDayOfMonth) return null;
     return matchMonthlyDay(start, commission.payoutDayOfMonth);
@@ -523,6 +602,20 @@ function commissionPayoutDueDate(
   return null;
 }
 
+// Earliest date a commission may be paid: the later of its 30-day hold and its
+// program payout schedule. Always at least the hold date, so held commissions
+// cannot be paid even when no schedule is configured.
+function commissionPayoutDueDate(
+  commission: CommissionForPayoutRecord,
+): Date | null {
+  const holdUntil = commissionHoldUntil(commission);
+  const scheduleDate = commissionScheduleDate(commission);
+  if (scheduleDate && scheduleDate.getTime() > holdUntil.getTime()) {
+    return scheduleDate;
+  }
+  return holdUntil;
+}
+
 function validatePayoutSchedule(
   commissionsToPay: CommissionForPayoutRecord[],
 ): string | null {
@@ -530,9 +623,9 @@ function validatePayoutSchedule(
   for (const commission of commissionsToPay) {
     const dueDate = commissionPayoutDueDate(commission);
     if (dueDate && dueDate.getTime() > today.getTime()) {
-      return `${commission.partnerName} has a commission scheduled for payout on ${formatPayoutDate(
+      return `${commission.partnerName} has a commission that is not payable until ${formatPayoutDate(
         dueDate,
-      )}.`;
+      )} (still in its hold/payout window).`;
     }
   }
   return null;
@@ -567,9 +660,9 @@ function calculateDerivedCommissionAmount({
   flatAmount: number | null;
 }): number {
   if (programType === "one-time" && flatAmount != null) {
-    return flatAmount;
+    return roundToCents(flatAmount);
   }
-  return revenue * rate;
+  return roundToCents(revenue * rate);
 }
 
 async function createPaidPayoutRecordsFromCommissions(
@@ -593,74 +686,155 @@ async function createPaidPayoutRecordsFromCommissions(
     grouped.set(key, group);
   }
 
-  const createdPayouts = await db.transaction(async (tx) => {
-    const rows: PaidPayoutWebhookData[] = [];
-    for (const group of grouped.values()) {
-      const first = group[0];
-      if (!first) continue;
+  if (grouped.size === 0) {
+    return { payoutsCreated: 0 };
+  }
 
-      const commissionIds = group.map((commission) => commission.id);
-      const existingLinks = await tx
-        .select({ commissionId: payoutCommissions.commissionId })
-        .from(payoutCommissions)
-        .where(inArray(payoutCommissions.commissionId, commissionIds));
-      if (existingLinks.length > 0) {
-        throw new Error(
-          "One or more commissions are already attached to a payout record.",
-        );
+  // D1 does not support interactive transactions (db.transaction issues raw
+  // begin/commit, which D1 rejects). Validate every group up front, then commit
+  // all writes atomically in a single db.batch().
+  const allCommissionIds = payableCommissions.map((commission) => commission.id);
+  const existingLinks = await db
+    .select({ commissionId: payoutCommissions.commissionId })
+    .from(payoutCommissions)
+    .where(inArray(payoutCommissions.commissionId, allCommissionIds));
+  if (existingLinks.length > 0) {
+    throw new Error(
+      "One or more commissions are already attached to a payout record.",
+    );
+  }
+
+  // Pending clawback adjustments to net against these payouts, by partner.
+  const partnerIdsToPay = [
+    ...new Set(payableCommissions.map((commission) => commission.partnerId)),
+  ];
+  const pendingAdjustments =
+    partnerIdsToPay.length > 0
+      ? await db
+          .select({
+            id: commissionAdjustments.id,
+            partnerId: commissionAdjustments.partnerId,
+            amount: commissionAdjustments.amount,
+          })
+          .from(commissionAdjustments)
+          .where(
+            and(
+              inArray(commissionAdjustments.partnerId, partnerIdsToPay),
+              eq(commissionAdjustments.status, "pending"),
+            ),
+          )
+      : [];
+  const adjustmentsByPartner = new Map<
+    string,
+    { id: string; amount: number }[]
+  >();
+  for (const adj of pendingAdjustments) {
+    const list = adjustmentsByPartner.get(adj.partnerId) ?? [];
+    list.push({ id: adj.id, amount: adj.amount });
+    adjustmentsByPartner.set(adj.partnerId, list);
+  }
+
+  const createdPayouts: PaidPayoutWebhookData[] = [];
+  const statements: Parameters<typeof db.batch>[0][number][] = [];
+
+  for (const group of grouped.values()) {
+    const first = group[0];
+    if (!first) continue;
+
+    const commissionIds = group.map((commission) => commission.id);
+    const dates = group
+      .map((commission) =>
+        coercePayoutDate(commission.eventDate) ??
+        coercePayoutDate(commission.createdAt),
+      )
+      .filter((date): date is Date => !!date)
+      .sort((a, b) => a.getTime() - b.getTime());
+    const periodStart = dates[0] ?? null;
+    const periodEnd = dates[dates.length - 1] ?? null;
+    const grossAmount = Math.round(
+      group.reduce((total, commission) => total + commission.amount, 0) * 100,
+    ) / 100;
+
+    // Net pending clawbacks: apply whole adjustments up to the gross, floor the
+    // payout at $0, and leave any that don't fit pending (carry forward).
+    const partnerAdjustments = adjustmentsByPartner.get(first.partnerId) ?? [];
+    const appliedAdjustmentIds: string[] = [];
+    let clawbackApplied = 0;
+    for (const adj of partnerAdjustments) {
+      if (clawbackApplied + adj.amount <= grossAmount + 0.005) {
+        clawbackApplied += adj.amount;
+        appliedAdjustmentIds.push(adj.id);
       }
+    }
+    clawbackApplied = Math.round(clawbackApplied * 100) / 100;
+    adjustmentsByPartner.set(
+      first.partnerId,
+      partnerAdjustments.filter((a) => !appliedAdjustmentIds.includes(a.id)),
+    );
+    const amount = Math.round((grossAmount - clawbackApplied) * 100) / 100;
 
-      const dates = group
-        .map((commission) =>
-          coercePayoutDate(commission.eventDate) ??
-          coercePayoutDate(commission.createdAt),
-        )
-        .filter((date): date is Date => !!date)
-        .sort((a, b) => a.getTime() - b.getTime());
-      const periodStart = dates[0] ?? null;
-      const periodEnd = dates[dates.length - 1] ?? null;
-      const amount = Math.round(
-        group.reduce((total, commission) => total + commission.amount, 0) * 100,
-      ) / 100;
-      const payoutId = crypto.randomUUID();
-      const paidAt = new Date();
+    const payoutId = crypto.randomUUID();
+    const paidAt = new Date();
+    const baseNote = buildPaidPayoutNote(group, periodStart, periodEnd);
+    const note =
+      clawbackApplied > 0
+        ? `${baseNote} Less $${clawbackApplied.toFixed(2)} clawback (refund).`
+        : baseNote;
 
-      await tx.insert(payouts).values({
+    statements.push(
+      db.insert(payouts).values({
         id: payoutId,
         projectId: first.projectId,
         partnerId: first.partnerId,
         amount,
         currency: "USD",
         status: "paid",
-        note: buildPaidPayoutNote(group, periodStart, periodEnd),
+        note,
         periodStart,
         periodEnd,
         paidAt,
-      });
-      await tx.insert(payoutCommissions).values(
+      }),
+      db.insert(payoutCommissions).values(
         group.map((commission) => ({
           payoutId,
           commissionId: commission.id,
           amount: commission.amount,
         })),
-      );
-      await tx
+      ),
+      db
         .update(commissions)
         .set({ status: "paid" })
-        .where(inArray(commissions.id, commissionIds));
+        .where(inArray(commissions.id, commissionIds)),
+    );
 
-      rows.push({
-        id: payoutId,
-        projectId: first.projectId,
-        partnerId: first.partnerId,
-        amount,
-        currency: "USD",
-        status: "paid",
-        paidAt,
-      });
+    if (appliedAdjustmentIds.length > 0) {
+      statements.push(
+        db
+          .update(commissionAdjustments)
+          .set({
+            status: "applied",
+            appliedPayoutId: payoutId,
+            appliedAt: paidAt,
+          })
+          .where(inArray(commissionAdjustments.id, appliedAdjustmentIds)),
+      );
     }
-    return rows;
-  });
+
+    createdPayouts.push({
+      id: payoutId,
+      projectId: first.projectId,
+      partnerId: first.partnerId,
+      amount,
+      currency: "USD",
+      status: "paid",
+      paidAt,
+    });
+  }
+
+  const [firstStatement, ...restStatements] = statements;
+  if (firstStatement) {
+    await db.batch([firstStatement, ...restStatements]);
+  }
 
   for (const payout of createdPayouts) {
     await webhookService.fireEvent(payout.projectId, "payout.created", {
@@ -1003,7 +1177,9 @@ const app = new Hono<HonoAppContext>()
     return c.json(result, result.conversionCreated ? 201 : 200);
   })
   // ─── Public: Serve uploaded images from R2 ─────────────────────────────────
-  .get("/api/uploads/:key", async (c) => {
+  .get("/api/uploads/:key{.+}", async (c) => {
+    // Keys are two segments (`<userId>/<uuid>.<ext>`), so the param must capture
+    // slashes — a plain `:key` only matches one segment and 404s every upload.
     const key = c.req.param("key");
     const object = await c.env.UPLOADS.get(key);
     if (!object) return c.text("Not found", 404);
@@ -1054,6 +1230,8 @@ const app = new Hono<HonoAppContext>()
         wordmark: null,
         backgroundMode: "cream",
         layout: "split",
+        theme: "minimal",
+        partnerAgreement: null,
         showSocialProof: true,
         showFaq: true,
         showEarningsCalculator: false,
@@ -1067,13 +1245,15 @@ const app = new Hono<HonoAppContext>()
       });
     }
 
-    // Resolve commission program (rate / type / duration) for the calculator
+    // Resolve commission program (rate / type / duration / payout terms)
     let commissionProgram: {
       name: string;
       rate: number;
       type: string;
       durationMonths: number | null;
       flatAmount: number | null;
+      minPayout: number | null;
+      payoutCadence: string | null;
     } | null = null;
     if (result.branding.defaultCommissionProgramId) {
       const programService = new CommissionProgramService(db);
@@ -1088,6 +1268,8 @@ const app = new Hono<HonoAppContext>()
           type: program.type,
           durationMonths: program.durationMonths,
           flatAmount: program.flatAmount,
+          minPayout: program.minPayout,
+          payoutCadence: program.payoutCadence,
         };
       }
     }
@@ -1110,6 +1292,8 @@ const app = new Hono<HonoAppContext>()
       wordmark: result.branding.wordmark,
       backgroundMode: result.branding.backgroundMode,
       layout: result.branding.layout,
+      theme: result.branding.theme,
+      partnerAgreement: result.branding.partnerAgreement,
       showSocialProof: result.branding.showSocialProof,
       showFaq: result.branding.showFaq,
       showEarningsCalculator: result.branding.showEarningsCalculator,
@@ -2350,6 +2534,29 @@ const app = new Hono<HonoAppContext>()
 
     return c.json(result);
   })
+  .post("/api/commissions/:id/clawback", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const commissionId = c.req.param("id");
+    const body = await c.req.json().catch(() => ({}));
+    const action = (body as { action?: string }).action;
+    if (action !== "deduct" && action !== "dismiss") {
+      return c.json({ error: "action must be 'deduct' or 'dismiss'" }, 400);
+    }
+
+    const db = c.get("db");
+    const commissionService = new CommissionService(db);
+    const result = await commissionService.recordClawback(
+      commissionId,
+      user.id,
+      action,
+    );
+    if (!result.ok) {
+      return c.json({ error: result.error }, 400);
+    }
+    return c.json({ ok: true });
+  })
   .post("/api/commissions/bulk-action", async (c) => {
     const user = c.get("user");
     if (!user) return c.json({ error: "Unauthorized" }, 401);
@@ -2456,24 +2663,29 @@ const app = new Hono<HonoAppContext>()
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const projectId = c.req.query("project");
-    if (!projectId)
-      return c.json({ error: "project query param required" }, 400);
-
-    // Verify user owns the project
     const db = c.get("db");
     const projectService = new ProjectService(db);
-    const project = await projectService.getProjectById(projectId);
-    if (!project || project.userId !== user.id) {
-      return c.json({ error: "Project not found" }, 404);
+
+    // No project param → aggregate across every project the user owns.
+    let projectIds: string[];
+    if (projectId) {
+      const project = await projectService.getProjectById(projectId);
+      if (!project || project.userId !== user.id) {
+        return c.json({ error: "Project not found" }, 404);
+      }
+      projectIds = [projectId];
+    } else {
+      const owned = await projectService.getProjectsByUserId(user.id);
+      projectIds = owned.map((p) => p.id);
     }
 
     const fraudService = new FraudService(db);
-    const flags = await fraudService.getFlagsByProject(projectId, {
+    const flags = await fraudService.getFlagsByProject(projectIds, {
       status: c.req.query("status"),
       type: c.req.query("type"),
       severity: c.req.query("severity"),
     });
-    const stats = await fraudService.getFlagStats(projectId);
+    const stats = await fraudService.getFlagStats(projectIds);
 
     return c.json({ flags, stats });
   })
@@ -3094,6 +3306,10 @@ const app = new Hono<HonoAppContext>()
             .slice()
             .sort((x, y) => x.created - y.created)[0];
           if (!earliest || actionedEventIds.has(earliest.id)) return [];
+          // USD-only at launch: skip non-USD invoices (would be mislabeled).
+          if (earliest.currency && earliest.currency.toLowerCase() !== "usd") {
+            return [];
+          }
           const revenue = earliest.amount_paid / 100;
           const commissionAmount = calculateDerivedCommissionAmount({
             revenue,
@@ -3133,6 +3349,8 @@ const app = new Hono<HonoAppContext>()
         const rows = [];
         for (const inv of invoices) {
           if (actionedEventIds.has(inv.id)) continue;
+          // USD-only at launch: skip non-USD invoices (would be mislabeled).
+          if (inv.currency && inv.currency.toLowerCase() !== "usd") continue;
           const monthIndex = anchorSec
             ? monthIndexFromAnchor(inv.created, anchorSec)
             : 1;
@@ -3376,7 +3594,7 @@ const app = new Hono<HonoAppContext>()
     if (!user) return c.json({ error: "Unauthorized" }, 401);
 
     const body = await c.req.json();
-    const parsed = validate(csvImportSchema, body);
+    const parsed = validate(csvImportEnvelopeSchema, body);
     if (!parsed.success) return c.json({ error: parsed.error }, 400);
 
     const db = c.get("db");
@@ -3386,16 +3604,40 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Project not found" }, 404);
     }
 
+    // Validate each row individually so a single malformed row never rejects the
+    // whole import. Invalid rows are reported with their row number and field;
+    // valid rows still import.
+    const rowErrors: ImportRowError[] = [];
+    const partnerRows = partitionImportRows(
+      parsed.data.partners,
+      csvImportPartnerSchema,
+      "partner",
+      rowErrors,
+    );
+    const customerRows = partitionImportRows(
+      parsed.data.customers,
+      csvImportCustomerSchema,
+      "customer",
+      rowErrors,
+    );
+    const commissionRows = partitionImportRows(
+      parsed.data.commissions,
+      csvImportCommissionSchema,
+      "commission",
+      rowErrors,
+    );
+
     const importService = new ImportService(db);
     const result = await importService.importFromCsv(
       parsed.data.projectId,
       {
-        partners: parsed.data.partners,
-        customers: parsed.data.customers,
-        commissions: parsed.data.commissions,
+        partners: partnerRows,
+        customers: customerRows,
+        commissions: commissionRows,
       },
       parsed.data.options ?? {},
     );
+    result.errors = [...rowErrors, ...result.errors];
 
     return c.json(result);
   })
@@ -3922,19 +4164,30 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Payout not found" }, 404);
     }
 
+    const linkedCommissionIds = await payoutService.getLinkedCommissionIds(id);
+    const commissionService = new CommissionService(db);
+
     const paidAt = parsed.data.status === "paid" ? new Date() : undefined;
     const payout = await payoutService.updatePayoutStatus(
       id,
       parsed.data.status,
       paidAt,
     );
-    const linkedCommissionIds = await payoutService.getLinkedCommissionIds(id);
+
     if (linkedCommissionIds.length > 0) {
-      const commissionService = new CommissionService(db);
-      await commissionService.bulkUpdateStatus(
-        linkedCommissionIds,
-        parsed.data.status === "paid" ? "paid" : "approved",
-      );
+      if (parsed.data.status === "paid") {
+        // Only promote commissions that are still approved — never flip a
+        // rejected/fraud commission to paid via a ledger status change.
+        await commissionService.markApprovedCommissionsPaid(linkedCommissionIds);
+      } else {
+        // Payout failed/reverted: return its commissions to approved and drop
+        // the links so they can be paid again through the normal flow instead of
+        // erroring "already attached to a payout record".
+        await commissionService.revertPaidCommissionsToApproved(
+          linkedCommissionIds,
+        );
+        await payoutService.deleteLinks(id);
+      }
     }
     if (payout) {
       const event =
@@ -3956,6 +4209,25 @@ const app = new Hono<HonoAppContext>()
       });
     }
     return c.json({ payout });
+  })
+  .get("/api/payouts/:id/commissions", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const id = c.req.param("id");
+    const db = c.get("db");
+    const payoutService = new PayoutService(db);
+    const existing = await payoutService.getPayoutById(id);
+    if (!existing) return c.json({ error: "Payout not found" }, 404);
+
+    const projectService = new ProjectService(db);
+    const project = await projectService.getProjectById(existing.projectId);
+    if (!project || project.userId !== user.id) {
+      return c.json({ error: "Payout not found" }, 404);
+    }
+
+    const items = await payoutService.getPayoutLineItems(id);
+    return c.json({ commissions: items });
   })
   // ─── Partner Portal API (partner-facing, auth via session) ──────────────────
   .get("/api/partner/dashboard", async (c) => {
@@ -4092,6 +4364,25 @@ const app = new Hono<HonoAppContext>()
     const payoutsList = await dashboardService.getPayouts(partnerIds);
 
     return c.json({ payouts: payoutsList });
+  })
+  .get("/api/partner/payouts/:id/commissions", async (c) => {
+    const user = c.get("user");
+    if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+    const db = c.get("db");
+    const dashboardService = new PartnerDashboardService(db);
+    const partnerRecords = await dashboardService.getPartnersByUserId(user.id);
+    if (partnerRecords.length === 0) {
+      return c.json({ error: "No partner account found" }, 404);
+    }
+
+    const partnerIds = partnerRecords.map((p) => p.id);
+    const items = await dashboardService.getPayoutLineItems(
+      c.req.param("id"),
+      partnerIds,
+    );
+    if (items === null) return c.json({ error: "Payout not found" }, 404);
+    return c.json({ commissions: items });
   })
   .patch("/api/partner/payout-link", async (c) => {
     const user = c.get("user");
@@ -4675,16 +4966,20 @@ const app = new Hono<HonoAppContext>()
       return c.json({ error: "Stripe not configured" }, 500);
     }
 
-    if (c.env.STRIPE_WEBHOOK_SECRET) {
-      const valid = await verifyStripeWebhookSignature(
-        rawBody,
-        signature,
-        c.env.STRIPE_WEBHOOK_SECRET,
+    if (!c.env.STRIPE_WEBHOOK_SECRET) {
+      console.error(
+        "STRIPE_WEBHOOK_SECRET is not configured; rejecting unverifiable webhook",
       );
-      if (!valid) {
-        console.error("Stripe webhook signature verification failed");
-        return c.json({ error: "Invalid signature" }, 400);
-      }
+      return c.json({ error: "Webhook not configured" }, 500);
+    }
+    const valid = await verifyStripeWebhookSignature(
+      rawBody,
+      signature,
+      c.env.STRIPE_WEBHOOK_SECRET,
+    );
+    if (!valid) {
+      console.error("Stripe webhook signature verification failed");
+      return c.json({ error: "Invalid signature" }, 400);
     }
 
     let event: { type: string; data: { object: Record<string, unknown> } };
@@ -4789,15 +5084,19 @@ const app = new Hono<HonoAppContext>()
     if (!c.env.STRIPE_SECRET_KEY) {
       return c.json({ error: "Stripe not configured" }, 500);
     }
-    if (c.env.STRIPE_WEBHOOK_SECRET) {
-      const valid = await verifyStripeWebhookSignature(
-        rawBody,
-        signature,
-        c.env.STRIPE_WEBHOOK_SECRET,
+    if (!c.env.STRIPE_WEBHOOK_SECRET) {
+      console.error(
+        "STRIPE_WEBHOOK_SECRET is not configured; rejecting unverifiable webhook",
       );
-      if (!valid) {
-        return c.json({ error: "Invalid signature" }, 400);
-      }
+      return c.json({ error: "Webhook not configured" }, 500);
+    }
+    const valid = await verifyStripeWebhookSignature(
+      rawBody,
+      signature,
+      c.env.STRIPE_WEBHOOK_SECRET,
+    );
+    if (!valid) {
+      return c.json({ error: "Invalid signature" }, 400);
     }
 
     let event: { type: string; data: { object: Record<string, unknown> } };

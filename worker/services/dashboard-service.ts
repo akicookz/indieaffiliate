@@ -1,6 +1,6 @@
 import { type DrizzleD1Database } from "drizzle-orm/d1";
-import { eq, sql, inArray, desc } from "drizzle-orm";
-import { projects, partners, customers, clicks } from "../db";
+import { eq, and, sql, inArray, desc } from "drizzle-orm";
+import { projects, partners, customers, clicks, commissions } from "../db";
 
 export class DashboardService {
   constructor(private db: DrizzleD1Database<Record<string, unknown>>) {}
@@ -23,9 +23,20 @@ export class DashboardService {
       };
     }
 
+    const ownedProjectIds = userProjects.map((p) => p.id);
     const projectIds = projectId && projectId !== "all"
-      ? [projectId]
-      : userProjects.map((p) => p.id);
+      ? ownedProjectIds.filter((id) => id === projectId)
+      : ownedProjectIds;
+    if (projectIds.length === 0) {
+      return {
+        revenue: { total: 0, change: 0, isPositive: true },
+        clicks: 0,
+        leads: 0,
+        newCustomers: 0,
+        topReferrers: [],
+        newReferredCustomers: [],
+      };
+    }
     const projectMap = new Map(userProjects.map((p) => [p.id, p.name]));
 
     // Get revenue from customers
@@ -80,12 +91,34 @@ export class DashboardService {
       .where(inArray(clicks.projectId, projectIds));
     const totalClicks = clickStats[0]?.count ?? 0;
 
+    // Sidebar badge counts
+    const activePartnerStats = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(partners)
+      .where(
+        and(
+          inArray(partners.projectId, projectIds),
+          eq(partners.status, "active"),
+        ),
+      );
+    const pendingCommissionStats = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(commissions)
+      .where(
+        and(
+          inArray(commissions.projectId, projectIds),
+          eq(commissions.status, "pending"),
+        ),
+      );
+
     return {
       revenue: {
         total: totalRevenue,
         change: 0, // TODO: calculate period-over-period change
         isPositive: true,
       },
+      activePartners: activePartnerStats[0]?.count ?? 0,
+      pendingCommissionsCount: pendingCommissionStats[0]?.count ?? 0,
       clicks: totalClicks,
       leads: customerStats[0]?.trialing ?? 0,
       newCustomers: customerStats[0]?.total ?? 0,

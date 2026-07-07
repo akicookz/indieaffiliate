@@ -68,9 +68,13 @@ export class CustomerService {
       return { totalCustomers: 0, paidCustomers: 0, trialingCustomers: 0, cancelledCustomers: 0 };
     }
 
+    const ownedProjectIds = userProjects.map((p) => p.id);
     const projectIds = projectId && projectId !== "all"
-      ? [projectId]
-      : userProjects.map((p) => p.id);
+      ? ownedProjectIds.filter((id) => id === projectId)
+      : ownedProjectIds;
+    if (projectIds.length === 0) {
+      return { totalCustomers: 0, paidCustomers: 0, trialingCustomers: 0, cancelledCustomers: 0 };
+    }
 
     const stats = await this.db
       .select({

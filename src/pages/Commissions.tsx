@@ -5,6 +5,7 @@ import { Plus, Code2, MoreHorizontal, Loader2, CalendarClock } from "lucide-reac
 import { describeSchedule } from "@/lib/payout-schedule";
 
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ConfirmProvider";
 import PageHeader from "@/components/PageHeader";
 import { cn } from "@/lib/utils";
 import {
@@ -237,6 +238,7 @@ function getInitials(name: string): string {
 }
 
 function Commissions() {
+  const { confirm, alert } = useConfirm();
   const { slug } = useParams<{ slug: string }>();
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<CommissionDialogState | null>(null);
@@ -361,9 +363,11 @@ function Commissions() {
       queryClient.invalidateQueries({ queryKey: ["coupons", projectId] });
     },
     onError: (error) => {
-      window.alert(
-        error instanceof Error ? error.message : "Failed to delete coupon"
-      );
+      alert({
+        title: "Couldn't delete coupon",
+        description:
+          error instanceof Error ? error.message : "Failed to delete coupon",
+      });
     },
   });
 
@@ -412,9 +416,11 @@ function Commissions() {
       queryClient.invalidateQueries({ queryKey: ["branding", projectId] });
     },
     onError: (error) => {
-      window.alert(
-        error instanceof Error ? error.message : "Failed to archive program"
-      );
+      alert({
+        title: "Couldn't archive program",
+        description:
+          error instanceof Error ? error.message : "Failed to archive program",
+      });
     },
   });
 
@@ -439,11 +445,13 @@ function Commissions() {
       });
     },
     onError: (error) => {
-      window.alert(
-        error instanceof Error
-          ? error.message
-          : "Failed to set default program",
-      );
+      alert({
+        title: "Couldn't set default program",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to set default program",
+      });
     },
   });
 
@@ -501,14 +509,17 @@ function Commissions() {
     createProgramMutation.mutate(input);
   }
 
-  function handleArchiveCommission(commission: Commission) {
+  async function handleArchiveCommission(commission: Commission) {
     const defaultCopy =
       commission.id === defaultProgramId
         ? " This program is currently the join-page default and will be cleared."
         : "";
-    const confirmed = window.confirm(
-      `Archive ${commission.name}? Existing partner assignments and historical commissions stay intact.${defaultCopy}`
-    );
+    const confirmed = await confirm({
+      title: `Archive ${commission.name}?`,
+      description: `Existing partner assignments and historical commissions stay intact.${defaultCopy}`,
+      confirmText: "Archive program",
+      destructive: true,
+    });
     if (!confirmed) return;
     archiveProgramMutation.mutate(commission.id);
   }
@@ -521,10 +532,13 @@ function Commissions() {
     setDefaultProgramMutation.mutate(commission.id);
   }
 
-  function handleDeleteCoupon(coupon: Coupon) {
-    const confirmed = window.confirm(
-      `Delete coupon ${coupon.code}? Existing attribution totals stay in history.`
-    );
+  async function handleDeleteCoupon(coupon: Coupon) {
+    const confirmed = await confirm({
+      title: `Delete coupon ${coupon.code}?`,
+      description: "Existing attribution totals stay in history.",
+      confirmText: "Delete coupon",
+      destructive: true,
+    });
     if (!confirmed) return;
     deleteCouponMutation.mutate(coupon.id);
   }
@@ -541,9 +555,8 @@ function Commissions() {
   const couponError = mutationErrorMessage(createCouponMutation.error);
 
   return (
-    <div className="p-6 space-y-8 max-w-7xl">
+    <div className="space-y-6">
       <PageHeader
-        eyebrow="Programs"
         title="Commission rules"
         subtitle="Define how partners earn — recurring, lifetime, one-time, or tiered."
       >
@@ -565,9 +578,9 @@ function Commissions() {
           <Loader2 className="size-4 animate-spin" /> Loading programs…
         </div>
       ) : programs.length === 0 ? (
-        <div className="bg-card border rounded-md px-6 py-16 text-center space-y-3">
+        <div className="bg-card shadow-card rounded-lg px-6 py-16 text-center space-y-3">
           <p className="text-eyebrow-muted">No programs yet</p>
-          <h2 className="font-heading text-2xl text-foreground">
+          <h2 className="text-2xl text-foreground">
             Define how partners earn
           </h2>
           <p className="text-sm text-muted-foreground max-w-md mx-auto">
@@ -610,7 +623,7 @@ function Commissions() {
       )}
 
       {/* Coupon code attribution */}
-      <div className="bg-card border rounded-md">
+      <div className="bg-card shadow-card rounded-lg">
         <div className="flex items-center justify-between px-5 py-4">
           <h2 className="text-card-title text-foreground">
             Coupon code attribution
@@ -777,7 +790,7 @@ function CommissionCard({
     commission.flatAmount > 0;
 
   return (
-    <div className="bg-card border rounded-md p-6 space-y-4">
+    <div className="bg-card shadow-card rounded-lg p-6 space-y-4">
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-2">
           <span
@@ -835,11 +848,11 @@ function CommissionCard({
       </div>
 
       <div className="space-y-3">
-        <h3 className="font-heading text-2xl text-foreground tracking-tight">
+        <h3 className="text-2xl text-foreground tracking-tight">
           {commission.name}
         </h3>
         <div className="flex items-baseline gap-2">
-          <span className="font-heading text-5xl text-foreground tabular-nums leading-none">
+          <span className="text-5xl text-foreground tabular-nums leading-none">
             {isFlatOneTime ? formatProgramAmount(commission.flatAmount!) : commission.rate}
             {!isFlatOneTime && (
               <span className="text-2xl text-muted-foreground">%</span>

@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ConfirmProvider";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
@@ -177,6 +178,10 @@ interface DetailResponse {
     clicks: number;
     refs: number;
     epc: number;
+    cancelRate: number;
+    churnedCustomers: number;
+    ltvRevenue: number;
+    ltvMonths: number;
   };
   monthlyMrr: { month: string; mrr: number; pending: number }[];
   subscriptions: {
@@ -251,7 +256,7 @@ function PartnerDetailDrawer({
     setEditing(false);
   }, [partnerId]);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ["partner-detail", partnerId],
     queryFn: async (): Promise<DetailResponse> => {
       const r = await fetch(`/api/partners/${partnerId}/detail`);
@@ -267,9 +272,18 @@ function PartnerDetailDrawer({
         side="right"
         className="w-full sm:!w-[50vw] sm:!max-w-[50vw] overflow-y-auto p-0 gap-0"
       >
-        {!data || isLoading ? (
+        {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : error || !data ? (
+          <div className="flex flex-col items-center justify-center h-full gap-2 p-8 text-center">
+            <p className="text-sm text-destructive">
+              Couldn't load this partner.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Check your connection and try reopening.
+            </p>
           </div>
         ) : editing ? (
           <EditView
@@ -309,6 +323,7 @@ function DetailView({
   onEdit: () => void;
   onClose: () => void;
 }) {
+  const { confirm } = useConfirm();
   const p = data.partner;
   const ch = p.channel ? CHANNEL_META[p.channel] : null;
   const queryClient = useQueryClient();
@@ -341,8 +356,16 @@ function DetailView({
     },
   });
 
-  function handleDelete() {
-    if (confirm(`Delete ${p.name || p.email}? This cannot be undone.`)) {
+  async function handleDelete() {
+    if (
+      await confirm({
+        title: `Delete ${p.name || p.email}?`,
+        description:
+          "This removes the partner and their attribution. This cannot be undone.",
+        confirmText: "Delete partner",
+        destructive: true,
+      })
+    ) {
       deleteMutation.mutate();
     }
   }
@@ -468,7 +491,7 @@ function DetailView({
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-border">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-px bg-border">
         <DrawerStat
           label="Lifetime earned"
           value={fmtMoney(data.stats.lifetimeEarned, { compact: true })}
@@ -482,6 +505,16 @@ function DetailView({
               ? `next ${formatScheduleDate(nextPayout)}`
               : "awaiting next cycle"
           }
+        />
+        <DrawerStat
+          label="Customer LTV"
+          value={fmtMoney(data.stats.ltvRevenue, { compact: true })}
+          subtitle={`${data.stats.ltvMonths.toFixed(1)} mo avg retained`}
+        />
+        <DrawerStat
+          label="Cancel rate"
+          value={`${data.stats.cancelRate.toFixed(0)}%`}
+          subtitle={`${data.stats.churnedCustomers} of ${data.stats.refs} churned`}
         />
         <DrawerStat
           label="Conversion rate"
@@ -564,7 +597,7 @@ function DetailView({
                 <Tooltip
                   formatter={(value: number) => fmtMoney(value)}
                   contentStyle={{
-                    backgroundColor: "#fdfcf9",
+                    backgroundColor: "var(--card)",
                     border: "1px solid #e7e5e4",
                     borderRadius: 6,
                     fontSize: 12,

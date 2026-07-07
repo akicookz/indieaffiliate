@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "react-router-dom";
+import PageHeader from "@/components/PageHeader";
 
 interface BillingData {
   subscription: {
@@ -107,33 +108,31 @@ function Billing() {
 
   return (
     <div className="space-y-6">
+      <PageHeader
+        title="Billing"
+        subtitle={isLoading ? "Loading…" : "Manage your plan and subscription."}
+      />
       {showSuccess && (
         <div className="rounded-lg border border-positive/30 bg-positive/10 px-4 py-3 text-sm text-positive flex items-center gap-2">
           <CheckCircle2 className="h-5 w-5 shrink-0" />
           Your subscription was updated successfully.
         </div>
       )}
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Billing</h1>
-        <p className="text-muted-foreground">
-          {isLoading ? "Loading…" : "Manage your plan and subscription."}
-        </p>
-        {stripeConnection && (
-          <div className="mt-2 flex items-center gap-2 text-sm">
-            {stripeConnection.connected ? (
-              <>
-                <CheckCircle2 className="h-4 w-4 text-positive" />
-                <span className="text-muted-foreground">Stripe: {stripeConnection.message}</span>
-              </>
-            ) : (
-              <>
-                <XCircle className="h-4 w-4 text-warning" />
-                <span className="text-muted-foreground">Stripe: {stripeConnection.message}</span>
-              </>
-            )}
-          </div>
-        )}
-      </div>
+      {stripeConnection && (
+        <div className="flex items-center gap-2 text-sm">
+          {stripeConnection.connected ? (
+            <>
+              <CheckCircle2 className="h-4 w-4 text-positive" />
+              <span className="text-muted-foreground">Stripe: {stripeConnection.message}</span>
+            </>
+          ) : (
+            <>
+              <XCircle className="h-4 w-4 text-warning" />
+              <span className="text-muted-foreground">Stripe: {stripeConnection.message}</span>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card>

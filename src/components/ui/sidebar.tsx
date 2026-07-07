@@ -309,7 +309,9 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
     <main
       data-slot="sidebar-inset"
       className={cn(
-        "bg-background relative flex min-w-0 w-full flex-1 flex-col",
+        // Attio-style content pane: white surface with a hairline against the
+        // gray sidebar, so the workspace reads as sidebar + document.
+        "bg-card relative flex min-w-0 w-full flex-1 flex-col border-l border-border",
         "md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-md md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2",
         className
       )}

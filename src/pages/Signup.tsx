@@ -64,7 +64,7 @@ function Signup() {
               UnlockAffiliate
             </span>
           </Link>
-          <h1 className="text-2xl font-semibold">Create your account</h1>
+          <h1 className="text-lg font-semibold">Create your account</h1>
           <p className="text-sm text-muted-foreground mt-1">
             Start your affiliate program for free
           </p>

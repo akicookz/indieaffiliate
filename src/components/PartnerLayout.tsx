@@ -4,6 +4,7 @@ import {
   BarChart3,
   LayoutDashboard,
   DollarSign,
+  Users,
   Wallet,
   LogOut,
 } from "lucide-react";
@@ -12,6 +13,7 @@ import { Button } from "@/components/ui/button";
 
 const navItems = [
   { label: "Dashboard", icon: LayoutDashboard, path: "/portal" },
+  { label: "Referrals", icon: Users, path: "/portal/referrals" },
   { label: "Commissions", icon: DollarSign, path: "/portal/commissions" },
   { label: "Payouts", icon: Wallet, path: "/portal/payouts" },
 ];
@@ -56,20 +58,18 @@ function PartnerLayout() {
                 <img
                   src={branding.logo}
                   alt=""
-                  className="w-8 h-8 rounded-md object-contain bg-card border border-border"
+                  className="w-7 h-7 rounded-md object-contain bg-card shadow-ring"
                 />
               ) : (
                 <div
-                  className="w-8 h-8 rounded-md flex items-center justify-center"
+                  className="w-7 h-7 rounded-md flex items-center justify-center"
                   style={{ backgroundColor: brandColor }}
                 >
-                  <BarChart3 className="w-5 h-5 text-white" />
+                  <BarChart3 className="w-4 h-4 text-white" />
                 </div>
               )}
-              <span
-                className="text-lg font-semibold"
-                style={{ color: brandColor }}
-              >
+              {/* Neutral title — the accent belongs to the logo chip, not text */}
+              <span className="text-sm font-semibold text-foreground">
                 {portalTitle}
               </span>
             </Link>
@@ -84,10 +84,9 @@ function PartnerLayout() {
                   <Link
                     key={item.path}
                     to={item.path}
-                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      isActive ? "" : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                    className={`flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                      isActive ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"
                     }`}
-                    style={isActive ? { color: brandColor, backgroundColor: `${brandColor}20` } : undefined}
                   >
                     <item.icon className="w-4 h-4" />
                     <span>{item.label}</span>
@@ -119,10 +118,9 @@ function PartnerLayout() {
                 <Link
                   key={item.path}
                   to={item.path}
-                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
-                    isActive ? "" : "text-muted-foreground hover:text-foreground"
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-sm font-medium whitespace-nowrap transition-colors ${
+                    isActive ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted"
                   }`}
-                  style={isActive ? { color: brandColor, backgroundColor: `${brandColor}20` } : undefined}
                 >
                   <item.icon className="w-3.5 h-3.5" />
                   <span>{item.label}</span>
@@ -134,7 +132,7 @@ function PartnerLayout() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
         <Outlet />
       </main>
     </div>

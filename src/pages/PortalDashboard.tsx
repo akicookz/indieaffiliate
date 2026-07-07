@@ -10,6 +10,7 @@ import {
   Copy,
 } from "lucide-react";
 
+import PageHeader from "@/components/PageHeader";
 import StatCard from "@/components/StatCard";
 import PartnerPayoutMethodCard from "@/components/PartnerPayoutMethodCard";
 import {
@@ -119,7 +120,7 @@ function CommissionPlanCard({
 }) {
   const copy = commissionPlanCopy(partner);
   return (
-    <div className="bg-card border border-border rounded-md p-5">
+    <div className="bg-card shadow-card rounded-lg p-5">
       <p className="text-sm font-medium text-foreground">Commission plan</p>
       <p className="mt-2 text-2xl font-semibold tabular-nums text-foreground">
         {copy.primary}
@@ -168,7 +169,7 @@ function PortalDashboard() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-md border border-border bg-card p-8">
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-lg shadow-card bg-card p-8">
         <p className="text-sm text-destructive">{error.message}</p>
       </div>
     );
@@ -202,19 +203,15 @@ function PortalDashboard() {
   const recentPayouts = payoutsData?.payouts.slice(0, 5) ?? [];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Welcome + Referral Link */}
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">
-          Welcome back{data?.partner?.name?.trim() ? `, ${data.partner.name}` : ""}
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          {commissionPlanCopy(data?.partner).secondary}
-        </p>
-      </div>
+      <PageHeader
+        title={`Welcome back${data?.partner?.name?.trim() ? `, ${data.partner.name}` : ""}`}
+        subtitle={commissionPlanCopy(data?.partner).secondary}
+      />
 
       {/* Referral Link Card */}
-      <div className="bg-card border border-border rounded-md p-5">
+      <div className="bg-card shadow-card rounded-lg p-5">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-medium text-foreground">
             Your Referral Link
@@ -287,7 +284,7 @@ function PortalDashboard() {
       </div>
 
       {/* Recent Payouts */}
-      <div className="bg-card border border-border rounded-md p-6">
+      <div className="bg-card shadow-card rounded-lg p-6">
         <h3 className="text-sm font-medium text-foreground mb-4">
           Recent Payouts
         </h3>

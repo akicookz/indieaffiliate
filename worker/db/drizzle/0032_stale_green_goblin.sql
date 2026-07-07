@@ -1,0 +1,1 @@
+ALTER TABLE `project_branding` ADD `partner_agreement` text;

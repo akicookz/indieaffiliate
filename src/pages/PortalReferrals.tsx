@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import PageHeader from "@/components/PageHeader";
 import {
   Table,
   TableBody,
@@ -76,7 +77,7 @@ function PortalReferrals() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-md border border-border bg-card p-8">
+      <div className="flex flex-col items-center justify-center min-h-[16rem] gap-3 rounded-lg shadow-card bg-card p-8">
         <p className="text-sm text-destructive">{error.message}</p>
       </div>
     );
@@ -86,17 +87,12 @@ function PortalReferrals() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">
-          Referred Customers
-        </h1>
-        <p className="text-muted-foreground">
-          Customers who signed up using your referral link.
-          Names are masked for privacy.
-        </p>
-      </div>
+      <PageHeader
+        title="Referred Customers"
+        subtitle="Customers who signed up using your referral link. Names are masked for privacy."
+      />
 
-      <div className="bg-card border border-border rounded-md p-6">
+      <div className="bg-card shadow-card rounded-lg p-6">
         <Table>
           <TableHeader>
             <TableRow>

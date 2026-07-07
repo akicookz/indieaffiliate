@@ -11,7 +11,7 @@ function Layout() {
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
-        <div className="flex min-w-0 flex-1 flex-col gap-4 p-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-4 px-6 py-5">
           <main className="min-h-screen min-w-0">
             <Outlet />
           </main>

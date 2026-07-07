@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ConfirmProvider";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -40,6 +41,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import PageHeader from "@/components/PageHeader";
 
 const WEBHOOK_EVENT_OPTIONS = [
   "partner.created",
@@ -90,6 +92,7 @@ function parseEvents(eventsJson: string): string[] {
 }
 
 function Webhooks() {
+  const { confirm } = useConfirm();
   const { slug } = useParams<{ slug: string }>();
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
@@ -225,19 +228,16 @@ function Webhooks() {
   const logsEndpoint = endpoints.find((e) => e.id === logsEndpointId);
 
   return (
-    <div className="space-y-6 p-4 md:p-6">
-      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Webhooks</h1>
-          <p className="text-muted-foreground text-sm">
-            Receive events for {project.name} at your endpoints.
-          </p>
-        </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Webhooks"
+        subtitle={`Receive events for ${project.name} at your endpoints.`}
+      >
         <Button onClick={() => { setCreateOpen(true); setCreatedSecret(""); }} className="gap-2">
           <Plus className="h-4 w-4" />
           Add endpoint
         </Button>
-      </div>
+      </PageHeader>
 
       <Card>
         <CardHeader>
@@ -312,8 +312,16 @@ function Webhooks() {
                           variant="ghost"
                           size="sm"
                           className="h-8 text-destructive hover:text-destructive"
-                          onClick={() => {
-                            if (confirm("Delete this webhook endpoint? Delivery history will be removed.")) {
+                          onClick={async () => {
+                            if (
+                              await confirm({
+                                title: "Delete this webhook endpoint?",
+                                description:
+                                  "Its delivery history will be removed. This cannot be undone.",
+                                confirmText: "Delete endpoint",
+                                destructive: true,
+                              })
+                            ) {
                               deleteMutation.mutate(ep.id);
                             }
                           }}

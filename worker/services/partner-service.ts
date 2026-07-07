@@ -119,7 +119,34 @@ export class PartnerService {
       programRows.map((program) => [program.id, summarizeProgram(program)]),
     );
 
+    // Per-partner customer stats for the Cancel% / LTV list columns.
+    const customerStats = rows.length
+      ? await this.db
+          .select({
+            partnerId: customers.partnerId,
+            total: sql<number>`count(*)`,
+            churned: sql<number>`sum(case when ${customers.status} in ('cancelled','refunded') then 1 else 0 end)`,
+            avgRevenue: sql<number>`coalesce(avg(${customers.revenue}), 0)`,
+            avgTenureSec: sql<number>`coalesce(avg(case when ${customers.status} in ('cancelled','refunded') then (${customers.updatedAt} - ${customers.createdAt}) else (unixepoch() - ${customers.createdAt}) end), 0)`,
+          })
+          .from(customers)
+          .where(
+            inArray(
+              customers.partnerId,
+              rows.map((r) => r.id),
+            ),
+          )
+          .groupBy(customers.partnerId)
+      : [];
+    const customerStatsMap = new Map(
+      customerStats.map((s) => [s.partnerId, s]),
+    );
+
     return rows.map((row) => {
+      const cs = customerStatsMap.get(row.id);
+      const cancelRate = cs && cs.total > 0 ? (cs.churned / cs.total) * 100 : 0;
+      const ltvRevenue = cs?.avgRevenue ?? 0;
+      const ltvMonths = (cs?.avgTenureSec ?? 0) / (30 * 24 * 3600);
       const defaultProgramId = defaultProgramMap.get(row.projectId) ?? null;
       const effectiveProgramId = row.commissionProgramId ?? defaultProgramId;
       const commissionProgram = effectiveProgramId
@@ -132,6 +159,9 @@ export class PartnerService {
         usesDefaultCommissionProgram:
           !row.commissionProgramId && !!defaultProgramId && !!commissionProgram,
         defaultCommissionProgramId: defaultProgramId,
+        cancelRate,
+        ltvRevenue,
+        ltvMonths,
       };
     });
   }
@@ -222,6 +252,10 @@ export class PartnerService {
       clicks: number;
       refs: number;
       epc: number;
+      cancelRate: number;
+      churnedCustomers: number;
+      ltvRevenue: number;
+      ltvMonths: number;
     };
     monthlyMrr: { month: string; mrr: number; pending: number }[];
     subscriptions: {
@@ -361,8 +395,16 @@ export class PartnerService {
       .from(clicks)
       .where(eq(clicks.partnerId, id));
 
+    // Referred-customer stats: count, churn (cancel rate), and LTV (avg revenue
+    // + avg months retained). Tenure is approximate: churned customers use
+    // updated_at - created_at; active customers use now - created_at.
     const refRow = await this.db
-      .select({ count: sql<number>`count(*)` })
+      .select({
+        count: sql<number>`count(*)`,
+        churned: sql<number>`sum(case when ${customers.status} in ('cancelled','refunded') then 1 else 0 end)`,
+        avgRevenue: sql<number>`coalesce(avg(${customers.revenue}), 0)`,
+        avgTenureSec: sql<number>`coalesce(avg(case when ${customers.status} in ('cancelled','refunded') then (${customers.updatedAt} - ${customers.createdAt}) else (unixepoch() - ${customers.createdAt}) end), 0)`,
+      })
       .from(customers)
       .where(eq(customers.partnerId, id));
 
@@ -377,6 +419,10 @@ export class PartnerService {
     const commissionCount = earnedRow[0]?.commissionCount ?? 0;
     const totalClicks = clicksRow[0]?.unique ?? 0;
     const refs = refRow[0]?.count ?? 0;
+    const churnedCustomers = refRow[0]?.churned ?? 0;
+    const cancelRate = refs > 0 ? (churnedCustomers / refs) * 100 : 0;
+    const ltvRevenue = refRow[0]?.avgRevenue ?? 0;
+    const ltvMonths = (refRow[0]?.avgTenureSec ?? 0) / (30 * 24 * 3600);
     const conversionRate = totalClicks > 0 ? (refs / totalClicks) * 100 : 0;
     const epc = totalClicks > 0 ? lifetimeEarned / totalClicks : 0;
     const payoutCount = payoutRow[0]?.count ?? 0;
@@ -547,6 +593,10 @@ export class PartnerService {
         clicks: totalClicks,
         refs,
         epc,
+        cancelRate,
+        churnedCustomers,
+        ltvRevenue,
+        ltvMonths,
       },
       monthlyMrr,
       subscriptions,

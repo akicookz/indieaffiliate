@@ -8,7 +8,6 @@ import {
   Palette,
   Webhook,
   Sliders,
-  Plug,
 } from "lucide-react";
 
 import {
@@ -40,7 +39,6 @@ const subMenuItems = [
   { name: "Commissions", url: "commissions", icon: Sliders },
   { name: "Partner page", url: "partner-page", icon: Palette },
   { name: "Webhooks", url: "webhooks", icon: Webhook },
-  { name: "Integrations & API", url: "settings", icon: Plug },
   { name: "Settings", url: "settings", icon: Settings },
 ];
 
@@ -66,7 +64,12 @@ export function NavProjects() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
-      if (!response.ok) throw new Error("Failed to create project");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(
+          (body as { error?: string }).error ?? "Failed to create project",
+        );
+      }
       return response.json();
     },
     onSuccess: () => {
@@ -132,22 +135,29 @@ export function NavProjects() {
         })}
 
         {showNewForm ? (
-          <form onSubmit={handleCreateProject} className="flex gap-2 px-2 mt-2">
-            <Input
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-              placeholder="Project name"
-              className="h-8 text-sm"
-              autoFocus
-            />
-            <Button
-              type="submit"
-              size="sm"
-              disabled={createMutation.isPending}
-            >
-              {createMutation.isPending ? "..." : "Add"}
-            </Button>
-          </form>
+          <div className="mt-2">
+            <form onSubmit={handleCreateProject} className="flex gap-2 px-2">
+              <Input
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                placeholder="Project name"
+                className="h-8 text-sm"
+                autoFocus
+              />
+              <Button
+                type="submit"
+                size="sm"
+                disabled={createMutation.isPending}
+              >
+                {createMutation.isPending ? "..." : "Add"}
+              </Button>
+            </form>
+            {createMutation.error && (
+              <p className="px-2 mt-1 text-xs text-destructive">
+                {(createMutation.error as Error).message}
+              </p>
+            )}
+          </div>
         ) : (
           <Button
             variant="ghost"

@@ -60,24 +60,18 @@ function Landing() {
             className="rounded-full mb-6 px-4 py-1.5"
           >
             <Zap className="w-3 h-3 mr-1" />
-            We have a free plan 
+            Free until it pays off
           </Badge>
 
-          <h1 className="text-4xl md:text-6xl lg:text-7xl font-semibold mb-6 text-foreground leading-tight">
-            Unlock{" "}
-            <span className="text-primary font-[family-name:var(--font-heading)] italic">
-              Affiliate Marketing
-            </span>{" "}
-            as a channel for free.
+          <h1 className="text-4xl md:text-6xl lg:text-7xl font-semibold mb-6 text-foreground leading-[1.05]">
+            Launch an affiliate program.{" "}
+            <span className="text-primary">Pay nothing until it works.</span>
           </h1>
 
-          <p className="text-lg text-muted-foreground mb-8 max-w-3xl mx-auto">
-            <span className="text-primary italic">
-              Reach your first $1,000 affiliate MRR before you pay us a dime.
-            </span>
-            <br />
-            Most affiliate softwares are one way exchange. They start charging
-            you before you even make a dollar. We are here to change that.
+          <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto leading-relaxed">
+            The affiliate program built for Stripe SaaS. Track referrals,
+            calculate commissions, and pay your partners — free until they bring
+            you your first $1,000 in monthly recurring revenue.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
@@ -87,12 +81,12 @@ function Landing() {
                 <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
             </Link>
-            <Link to="/app">
+            <Link to="/login">
               <Button
                 variant="ghost"
                 className="border-border/60 bg-card text-primary"
               >
-                View Demo
+                Sign in
               </Button>
             </Link>
           </div>
@@ -109,7 +103,7 @@ function Landing() {
                 />
               ))}
             </div>
-            <span>Helping 8 founders reach 1st $1k affiliate MRR</span>
+            <span>Helping indie founders reach their first $1k in affiliate revenue</span>
           </div>
         </div>
       </section>
@@ -251,28 +245,18 @@ function Landing() {
             <Card>
               <CardHeader className="pb-6">
                 <div className="flex items-center mb-4">
-                  <div className="w-10 h-10 bg-primary rounded-md flex items-center justify-center">
-                    <img
-                      src="/logos/paddle.svg"
-                      alt="Paddle"
-                      className="w-8 h-8"
-                    />
-                  </div>
-                  <div className="w-12 h-12 rounded-md flex items-center justify-center -ml-3">
+                  <div className="w-12 h-12 rounded-md flex items-center justify-center">
                     <img
                       src="/logos/stripe.svg"
                       alt="Stripe"
                       className="w-full h-full"
                     />
                   </div>
-                  <Badge>Coming Soon</Badge>
                 </div>
-                <CardTitle className="text-xl">
-                  Stripe and Paddle Integration
-                </CardTitle>
+                <CardTitle className="text-xl">Stripe Integration</CardTitle>
                 <CardDescription>
-                  Integrate with Stripe and Paddle to automatically track
-                  conversions and calculate commissions.
+                  Connect Stripe to automatically track conversions and
+                  calculate commissions. Paddle support is coming soon.
                 </CardDescription>
               </CardHeader>
             </Card>
@@ -285,7 +269,7 @@ function Landing() {
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl mb-4">
-              <span className="pr-2text-primary font-heading italic">
+              <span className="pr-2 text-primary font-heading italic">
                 Unbeatable
               </span>{" "}
               pricing
@@ -306,9 +290,9 @@ function Landing() {
                   <span className="text-muted-foreground">/month</span>
                 </div>
                 <p className="text-sm text-muted-foreground mt-2">
-                  Up to $2k referral MRR
+                  1 project
                   <br />
-                  9% fee above $2k MRR
+                  Free until $1,000 referral MRR
                 </p>
               </CardHeader>
               <CardContent className="space-y-3 flex-grow flex flex-col">
@@ -361,9 +345,9 @@ function Landing() {
                   <span className="text-muted-foreground">/month</span>
                 </div>
                 <p className="text-sm text-muted-foreground mt-2">
-                  Up to $10k referral MRR
+                  Up to 5 projects
                   <br />
-                  3% overage above $10k MRR
+                  No revenue caps or overage fees
                 </p>
               </CardHeader>
               <CardContent className="space-y-3 flex-grow flex flex-col">
@@ -428,9 +412,9 @@ function Landing() {
                   <span className="text-muted-foreground">/month</span>
                 </div>
                 <p className="text-sm text-muted-foreground mt-2">
-                  Up to $20k referral MRR
+                  Unlimited projects
                   <br />
-                  1% overage above $20k MRR
+                  No revenue caps or overage fees
                 </p>
               </CardHeader>
               <CardContent className="space-y-3 flex-grow flex flex-col">
@@ -498,7 +482,7 @@ function Landing() {
                       <span className="text-muted-foreground ml-1">/month</span>
                     </div>
                     <p className="text-sm text-muted-foreground mt-2">
-                      Unlimited referral MRR • No overage fees
+                      Unlimited projects & seats • Priority support
                     </p>
                   </div>
 
@@ -536,13 +520,18 @@ function Landing() {
                       </div>
                     </div>
 
-                    <Button
-                      size="lg"
-                      variant="default"
-                      className="w-full md:w-auto"
+                    <a
+                      href="mailto:hello@unlockaffiliate.com?subject=UnlockAffiliate%20Enterprise"
+                      className="inline-block w-full md:w-auto"
                     >
-                      Contact Sales
-                    </Button>
+                      <Button
+                        size="lg"
+                        variant="default"
+                        className="w-full md:w-auto"
+                      >
+                        Contact Sales
+                      </Button>
+                    </a>
                   </div>
                 </div>
               </CardContent>

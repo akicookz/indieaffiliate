@@ -2,6 +2,7 @@ import { type DrizzleD1Database } from "drizzle-orm/d1";
 import { eq, and, sql, inArray, desc } from "drizzle-orm";
 import {
   commissions,
+  customers,
   payouts,
   payoutCommissions,
   partners,
@@ -256,6 +257,47 @@ export class PayoutService {
         commissions,
         eq(commissions.id, payoutCommissions.commissionId),
       )
+      .where(eq(payoutCommissions.payoutId, payoutId));
+  }
+
+  /**
+   * Line items for a payout: which commissions it covered, each with the
+   * referred customer's email/name and the commission amount. Used by the
+   * payout drill-down so both creator and partner can see what a payout paid for.
+   */
+  async getPayoutLineItems(payoutId: string): Promise<
+    {
+      commissionId: string;
+      amount: number;
+      status: "pending" | "approved" | "paid" | "rejected";
+      customerEmail: string | null;
+      customerName: string | null;
+      eventDate: Date | null;
+    }[]
+  > {
+    return await this.db
+      .select({
+        commissionId: commissions.id,
+        amount: payoutCommissions.amount,
+        status: commissions.status,
+        customerEmail: customers.email,
+        customerName: customers.name,
+        eventDate: commissions.eventDate,
+      })
+      .from(payoutCommissions)
+      .innerJoin(commissions, eq(commissions.id, payoutCommissions.commissionId))
+      .leftJoin(customers, eq(customers.id, commissions.customerId))
+      .where(eq(payoutCommissions.payoutId, payoutId));
+  }
+
+  /**
+   * Remove all commission links for a payout. Called when a payout is marked
+   * failed/reverted so its commissions are freed and can be paid again through
+   * the normal flow (which errors if a commission is still attached).
+   */
+  async deleteLinks(payoutId: string): Promise<void> {
+    await this.db
+      .delete(payoutCommissions)
       .where(eq(payoutCommissions.payoutId, payoutId));
   }
 }

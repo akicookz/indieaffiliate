@@ -45,7 +45,7 @@ function PartnerLogin() {
             <Mail className="w-8 h-8 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-semibold">Check your email</h1>
+            <h1 className="text-lg font-semibold">Check your email</h1>
             <p className="text-muted-foreground mt-2">
               We sent a sign-in link to{" "}
               <strong className="text-foreground">{email}</strong>
@@ -83,7 +83,7 @@ function PartnerLogin() {
               UnlockAffiliate
             </span>
           </Link>
-          <h1 className="text-2xl font-semibold">Partner Dashboard</h1>
+          <h1 className="text-lg font-semibold">Partner Dashboard</h1>
           <p className="text-sm text-muted-foreground mt-1">
             Enter your email to receive a sign-in link
           </p>
